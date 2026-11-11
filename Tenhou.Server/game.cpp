@@ -348,7 +348,7 @@ namespace authority {
             return;
         }
         if (pending_riichi >= 0) {
-            auto s = pending_riichi;
+            const auto s = pending_riichi;
             players[s].riichi = players[s].ippatsu = true;
             scores[s] -= 1000;
             ++sticks;
@@ -376,22 +376,18 @@ namespace authority {
         }
         if (n() == 4 && !interrupted && std::all_of(players.begin(), players.end(),
                                                     [](const Player &p) { return p.river.size() == 1; })) {
-            int k = players[0].river[0] / 4;
-            if (k >= 27 && k < 31 && std::all_of(players.begin(), players.end(),
-                                                 [&](const Player &p) { return p.river[0] / 4 == k; })) {
+            if (const int k = players[0].river[0] / 4; k >= 27 && k < 31 && std::all_of(players.begin(), players.end(), [&](const Player &p) { return p.river[0] / 4 == k; })) {
                 draw_end("kaze4");
                 return;
             }
         }
         int chosen = -1;
         Action action;
-        std::pair<int, int> order{4, 4};
-        for (const auto &e: responses) if (e.second.kind == "chi" || e.second.kind == "pon" || e.second.kind ==
-                                           "open_kan") {
-            auto rank = std::make_pair(priority(e.second), (e.first - last_actor + 4) % 4);
-            if (rank < order) {
-                chosen = e.first;
-                action = e.second;
+        std::pair order{4, 4};
+        for (const auto &[fst, snd]: responses) if (snd.kind == "chi" || snd.kind == "pon" || snd.kind == "open_kan") {
+            if (auto rank = std::make_pair(priority(snd), (fst - last_actor + 4) % 4); rank < order) {
+                chosen = fst;
+                action = snd;
                 order = rank;
             }
         }
@@ -404,14 +400,14 @@ namespace authority {
         for (auto &p: players) p.ippatsu = false;
     }
 
-    void Game::call(int s, const Action &a) {
+    void Game::call(const int s, const Action &a) {
         auto &p = players[s];
-        for (auto t: a.tiles) remove(p.hand, t);
+        for (const auto t: a.tiles) remove(p.hand, t);
         players[last_actor].called.insert(last_tile);
         auto tiles = a.tiles;
         tiles.push_back(last_tile);
         std::sort(tiles.begin(), tiles.end());
-        Meld m{a.kind, tiles, s, last_actor, last_tile};
+        const Meld m{a.kind, tiles, s, last_actor, last_tile};
         p.melds.push_back(m);
         interrupt();
         if (m.opened() && m.kind != "chi") {
@@ -426,11 +422,7 @@ namespace authority {
         phase = "turn";
         rinshan = false;
         p.drawn = -1;
-        p.forbidden = a.kind == "pon"
-                          ? std::set<int>{last_tile / 4}
-                          : a.kind == "chi"
-                                ? kuikae(last_tile / 4, tiles[0] / 4)
-                                : std::set<int>{};
+        p.forbidden = a.kind == "pon" ? std::set{last_tile / 4} : a.kind == "chi" ? kuikae(last_tile / 4, tiles[0] / 4) : std::set<int>{};
         emit("N", {{"who", std::to_string(s)}, {"m", std::to_string(m.encode())}});
         if (a.kind == "open_kan") {
             ++pending_dora;
@@ -438,17 +430,17 @@ namespace authority {
         }
     }
 
-    void Game::kan(int s, const Action &a) {
+    void Game::kan(const int s, const Action &a) {
         auto &p = players[s];
         Meld m;
         if (a.kind == "closed_kan") {
             m = {a.kind, a.tiles, s, s};
-            for (auto t: a.tiles) remove(p.hand, t);
+            for (const auto t: a.tiles) remove(p.hand, t);
             p.melds.push_back(m);
             last_tile = has(a.tiles, p.drawn) ? p.drawn : a.tiles[0];
         } else {
             last_tile = a.tiles[0];
-            auto old = std::find_if(p.melds.begin(), p.melds.end(), [&](const Meld &z) {
+            const auto old = std::find_if(p.melds.begin(), p.melds.end(), [&](const Meld &z) {
                 return z.kind == "pon" && z.tiles[0] / 4 == last_tile / 4;
             });
             m = *old;
@@ -485,23 +477,20 @@ namespace authority {
         emit("DORA", {{"hai", std::to_string(dora().back())}});
     }
 
-    std::array<int, 4> Game::transfers(int s, int source, const Value &v, bool tsumo) const {
+    std::array<int, 4> Game::transfers(const int s, const int source, const Value &v, const bool tsumo) const {
         std::array < int, 4 > delta{};
         std::vector<std::pair<int, int> > liable;
-        for (auto k: v.yakuman) {
-            auto i = players[s].pao.find(k);
-            if (i != players[s].pao.end()) liable.emplace_back(i->second, k == 49 ? 2 : 1);
-        }
+        for (auto k: v.yakuman) { if (auto i = players[s].pao.find(k); i != players[s].pao.end()) liable.emplace_back(i->second, k == 49 ? 2 : 1); }
         int main = v.main, additional = v.additional;
         if (!liable.empty()) {
             int remaining = v.han / 13;
             const int unit = s == dealer ? 48000 : 32000;
-            for (auto l: liable) {
-                remaining -= l.second;
-                if (tsumo || source == l.first) delta[l.first] -= unit * l.second;
+            for (const auto [fst, snd]: liable) {
+                remaining -= snd;
+                if (tsumo || source == fst) delta[fst] -= unit * snd;
                 else {
-                    delta[source] -= unit * l.second / 2;
-                    delta[l.first] -= unit * l.second / 2;
+                    delta[source] -= unit * snd / 2;
+                    delta[fst] -= unit * snd / 2;
                 }
             }
             main = (tsumo ? 16000 : unit) * remaining;
@@ -516,15 +505,15 @@ namespace authority {
         return delta;
     }
 
-    void Game::win(const std::vector<int> &winners, int source, bool tsumo) {
+    void Game::win(const std::vector<int> &winners, const int source, const bool tsumo) {
         const int tile = tsumo ? players[source].drawn : last_tile;
         std::vector<Value> values;
-        for (auto s: winners) {
+        for (const auto s: winners) {
             auto v = value(s, tile, tsumo, !tsumo && claim_kind != "discard", !tsumo && claim_kind == "closed_kan");
             if (!v.han) throw std::runtime_error("Unvalidated win");
             values.push_back(v);
         }
-        auto first = events.size();
+        const auto first = events.size();
         for (std::size_t i = 0; i < winners.size(); ++i) {
             const int s = winners[i];
             const auto &p = players[s];
@@ -550,8 +539,9 @@ namespace authority {
             };
             a[v.yakuman.empty() ? "yaku" : "yakuman"] = list(v.yakuman.empty() ? v.yaku : v.yakuman);
             std::vector<int> ms;
+            ms.reserve(p.melds.size());
             for (const auto &m: p.melds) ms.push_back(m.encode());
-            for (auto t: p.nuki) ms.push_back((t << 8) | 32);
+            for (const auto t: p.nuki) ms.push_back((t << 8) | 32);
             if (!ms.empty()) a["m"] = list(ms);
             if (p.riichi) a["doraHaiUra"] = list(dora(true));
             emit("AGARI", std::move(a));
@@ -560,25 +550,20 @@ namespace authority {
     }
 
     void Game::draw_end(const std::string &reason) {
-        auto base = scores;
+        const auto base = scores;
         std::array < int, 4 > delta{};
         Attrs a;
         if (!reason.empty()) a["type"] = reason;
         std::vector<int> ready, nagashi;
         for (int s = 0; s < n(); ++s) {
             if (!waits(players[s].hand, n()).empty()) ready.push_back(s);
-            const auto &p = players[s];
-            if (!p.river.empty() && p.called.empty() && std::all_of(p.river.begin(), p.river.end(),
-                                                                    [](int t) {
-                                                                        return terminal(t / 4);
-                                                                    })) nagashi.push_back(s);
+            if (const auto &p = players[s]; !p.river.empty() && p.called.empty() && std::all_of(p.river.begin(), p.river.end(), [](const int t) { return terminal(t / 4); })) nagashi.push_back(s);
         }
         if (reason.empty()) {
-            if (cfg.minimum == "haneman" || cfg.minimum == "baiman" || cfg.minimum == "sanbaiman" || cfg.minimum ==
-                "yakuman") nagashi.clear();
+            if (cfg.minimum == "haneman" || cfg.minimum == "baiman" || cfg.minimum == "sanbaiman" || cfg.minimum == "yakuman") nagashi.clear();
             if (!nagashi.empty()) {
                 a["type"] = "nm";
-                for (auto s: nagashi) {
+                for (const auto s: nagashi) {
                     Value v;
                     v.han = 5;
                     v.fu = 30;
@@ -587,18 +572,16 @@ namespace authority {
                     auto d = transfers(s, s, v, true);
                     for (int j = 0; j < 4; ++j) delta[j] += d[j];
                 }
-                int recipient = *std::min_element(nagashi.begin(), nagashi.end(), [&](int s, int t) {
+                const int recipient = *std::min_element(nagashi.begin(), nagashi.end(), [&](const int s, const int t) {
                     return (s - dealer + 4) % 4 < (t - dealer + 4) % 4;
                 });
                 delta[recipient] += sticks * 1000;
                 sticks = 0;
             } else if (!ready.empty() && ready.size() < static_cast<std::size_t>(n())) {
-                int pool = n() == 3 ? 2000 : 3000;
-                for (int s = 0; s < n(); ++s) delta[s] = has(ready, s)
-                                                             ? pool / static_cast<int>(ready.size())
-                                                             : -pool / (n() - static_cast<int>(ready.size()));
+                const int pool = n() == 3 ? 2000 : 3000;
+                for (int s = 0; s < n(); ++s) delta[s] = has(ready, s) ? pool / static_cast<int>(ready.size()) : -pool / (n() - static_cast<int>(ready.size()));
             }
-            for (auto s: ready) a["hai" + std::to_string(s)] = list(players[s].hand);
+            for (const auto s: ready) a["hai" + std::to_string(s)] = list(players[s].hand);
         }
         std::vector<int> sc;
         for (int s = 0; s < 4; ++s) {
@@ -607,12 +590,12 @@ namespace authority {
             sc.push_back(delta[s] / 100);
         }
         a["sc"] = list(sc);
-        auto first = events.size();
+        const auto first = events.size();
         emit("RYUUKYOKU", a);
         end(!reason.empty() || has(nagashi.empty() ? ready : nagashi, dealer), true, first);
     }
 
-    void Game::end(bool stays, bool drawn, std::size_t first) {
+    void Game::end(const bool stays, const bool drawn, const std::size_t first) {
         next_round = stays ? round : round + 1;
         next_honba = drawn || stays ? honba + 1 : 0;
         int top = 0;
@@ -637,16 +620,14 @@ namespace authority {
                 sticks = 0;
             }
             std::vector<int> order;
+            order.reserve(n());
             for (int s = 0; s < n(); ++s) order.push_back(s);
-            std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return scores[a] > scores[b]; });
+            std::stable_sort(order.begin(), order.end(), [&](const int a, const int b) { return scores[a] > scores[b]; });
             std::array < double, 4 > points{};
-            const std::vector<int> uma = n() == 3 ? std::vector<int>{20, 0, -20} : std::vector<int>{20, 10, -10, -20};
+            const std::vector<int> uma = n() == 3 ? std::vector{20, 0, -20} : std::vector{20, 10, -10, -20};
             for (int rank = 0; rank < n(); ++rank) {
-                int s = order[rank];
-                points[s] = (scores[s] - cfg.target) / 1000.0 + uma[rank] + (rank == 0
-                                                                                 ? n() * (cfg.target - cfg.starting) /
-                                                                                     1000.0
-                                                                                 : 0);
+                const int s = order[rank];
+                points[s] = (scores[s] - cfg.target) / 1000.0 + uma[rank] + (rank == 0 ? n() * (cfg.target - cfg.starting) / 1000.0 : 0);
             }
             std::string owari;
             for (int s = 0; s < 4; ++s) {
@@ -662,7 +643,7 @@ namespace authority {
 
     void Game::invariants() const {
         if (dead.empty()) return;
-        std::vector<int> used(live.begin(), live.end());
+        std::vector used(live.begin(), live.end());
         used.insert(used.end(), dead.begin() + replacements, dead.end());
         used.insert(used.end(), sealed.begin(), sealed.end());
         for (const auto &p: players) {
@@ -679,19 +660,19 @@ namespace authority {
                 std::runtime_error("Point conservation");
     }
 
-    Action Game::bot(int s) const {
-        auto opts = options(s);
+    Action Game::bot(const int s) const {
+        const auto opts = options(s);
         for (const char *k: {"ron", "tsumo", "nuki"}) for (const auto &a: opts) if (a.kind == k) return a;
         if (phase == "claims") return {"skip"};
         const auto &p = players[s];
         auto visible = counts(p.hand);
         for (const auto &q: players) {
-            for (auto t: q.nuki) ++visible[t / 4];
+            for (const auto t: q.nuki) ++visible[t / 4];
             for (auto t: q.river) if (!q.called.count(t)) ++visible[t / 4];
-            for (const auto &m: q.melds) for (auto t: m.tiles) ++visible[t / 4];
+            for (const auto &m: q.melds) for (const auto t: m.tiles) ++visible[t / 4];
         }
         std::map<int, std::pair<int, int> > evaluated;
-        std::tuple<int, int, bool, bool, int> best{99, 0, true, true, 999};
+        std::tuple best{99, 0, true, true, 999};
         Action chosen;
         for (const auto &a: opts)
             if (a.kind == "discard" || a.kind == "riichi") {
@@ -710,9 +691,7 @@ namespace authority {
                     }
                     i = evaluated.emplace(k, std::make_pair(base, -improving)).first;
                 }
-                auto key = std::make_tuple(i->second.first, i->second.second, a.kind != "riichi",
-                                           has(cfg.red_tiles(), t), t);
-                if (key < best) {
+                if (auto key = std::make_tuple(i->second.first, i->second.second, a.kind != "riichi", has(cfg.red_tiles(), t), t); key < best) {
                     best = key;
                     chosen = a;
                 }
@@ -724,7 +703,7 @@ namespace authority {
     std::string project(const Event &e, int viewer, bool open) {
         auto a = e.attrs;
         auto tag = e.tag;
-        auto rotate = [&](int s) { return (s - viewer + 4) % 4; };
+        auto rotate = [&](const int s) { return (s - viewer + 4) % 4; };
         if (tag == "INIT") {
             a["hai"] = a.at("hai" + std::to_string(viewer));
             for (int s = 0; s < 4; ++s) {
@@ -735,6 +714,7 @@ namespace authority {
             a["oya"] = std::to_string(rotate(number(a.at("oya"))));
             auto ten = integers(a.at("ten"));
             std::vector<int> r;
+            r.reserve(4);
             for (int s = 0; s < 4; ++s) r.push_back(ten[(s + viewer) % 4]);
             a["ten"] = list(r);
         } else if (tag.size() > 1 && std::string("TUVWDEFGtuvwdefg").find(tag[0]) != std::string::npos) {
@@ -753,31 +733,27 @@ namespace authority {
             std::size_t p = 0;
             for (;;) {
                 auto end = raw.find(',', p);
-                fields.push_back(raw.substr(p, end == raw.npos ? end : end - p));
-                if (end == raw.npos) break;
+                fields.push_back(raw.substr(p, end == std::string::npos ? end : end - p));
+                if (end == std::string::npos) break;
                 p = end + 1;
             }
             std::string r;
             for (int s = 0; s < 4; ++s) for (int j = 0; j < 2; ++j) {
                 if (!r.empty()) r += ',';
-                r += fields[((s + viewer) % 4) * 2 + j];
+                r += fields[(s + viewer) % 4 * 2 + j];
             }
             a[k] = r;
         }
         if (e.tag == "RYUUKYOKU") {
             auto before = a;
             for (int s = 0; s < 4; ++s) a.erase("hai" + std::to_string(s));
-            for (int s = 0; s < 4; ++s) {
-                auto k = "hai" + std::to_string(s);
-                if (before.count(k)) a["hai" + std::to_string(rotate(s))] = before.at(k);
-            }
+            for (int s = 0; s < 4; ++s) if (auto k = "hai" + std::to_string(s); before.count(k)) a["hai" + std::to_string(rotate(s))] = before.at(k);
         }
-        auto h = e.hints.find(viewer);
-        if (h != e.hints.end() && h->second) a["t"] = std::to_string(h->second);
+        if (auto h = e.hints.find(viewer); h != e.hints.end() && h->second) a["t"] = std::to_string(h->second);
         return xml(tag, a);
     }
 
-    Action decode(const Message &m, const std::vector<Action> &opts, int declared) {
+    Action decode(const Message &m, const std::vector<Action> &options, const int declared) {
         const auto &a = m.attrs;
         auto tile = [&](const char *k) { return number(a.at(k), 0, 135); };
         if (m.tag == "D" && a.size() == 1 && a.count("p")) {
@@ -790,24 +766,24 @@ namespace authority {
             {1, "pon"}, {2, "open_kan"}, {3, "chi"}, {4, "closed_kan"}, {5, "added_kan"}, {6, "ron"}, {7, "tsumo"},
             {9, "draw"}, {10, "nuki"}
         };
-        auto i = kinds.find(number(a.at("type"), 1, 10));
+        const auto i = kinds.find(number(a.at("type"), 1, 10));
         if (i == kinds.end()) throw std::runtime_error("Unsupported action");
         const auto &k = i->second;
         if (k == "pon" || k == "chi") {
             if (a.size() != 3) throw std::runtime_error("Unexpected action fields");
-            std::vector<int> ts{tile("hai0"), tile("hai1")};
+            std::vector ts{tile("hai0"), tile("hai1")};
             std::sort(ts.begin(), ts.end());
             return {k, ts};
         }
         if (k == "closed_kan" || k == "added_kan" || k == "nuki") {
             if (a.size() != 2) throw std::runtime_error("Unexpected action fields");
-            int t = tile("hai");
-            for (const auto &o: opts) if (o.kind == k && has(o.tiles, t)) return o;
+            const int t = tile("hai");
+            for (const auto &o: options) if (o.kind == k && has(o.tiles, t)) return o;
             throw std::runtime_error("Unavailable kan/nuki");
         }
         if (a.size() != 1) throw std::runtime_error("Unexpected action fields");
         if (k == "open_kan") {
-            for (const auto &o: opts) if (o.kind == k) return o;
+            for (const auto &o: options) if (o.kind == k) return o;
             throw std::runtime_error("Unavailable kan");
         }
         return {k};

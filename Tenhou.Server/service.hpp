@@ -88,9 +88,9 @@ namespace authority {
 
         void record(const std::string &event, int value = 0);
 
-        void send(Connection &c, const std::string &text);
+        static void send(Connection &c, const std::string &text);
 
-        void send(Session &p, const std::string &text);
+        void send(const Session &p, const std::string &text);
 
         void close(SOCKET socket);
 
@@ -100,13 +100,13 @@ namespace authority {
 
         void lobby(Session &p, const std::string &rid = "");
 
-        void room_snapshot(Session &p, const std::string &rid = "");
+        void room_snapshot(const Session &p, const std::string &rid = "");
 
-        void save();
+        void save() const;
 
         void load();
 
-        std::string state() const;
+        [[nodiscard]] std::string state() const;
 
         void match();
 
@@ -116,7 +116,7 @@ namespace authority {
 
         void flush(Table &t, bool opening = false);
 
-        void identity(Table &t, Session &p);
+        void identity(Table &t, const Session &p);
 
         void restore(Table &t, Session &p);
 
@@ -126,7 +126,7 @@ namespace authority {
 
         void clock(Table &t, Session &p);
 
-        void apply(Table &t, const std::string &command);
+        static void apply(Table &t, const std::string &command);
 
         void start(Table &t);
 

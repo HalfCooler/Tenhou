@@ -18,7 +18,7 @@ namespace tenhou {
         bool inside = false;
         if (message != WM_MOUSELEAVE) {
             const auto target = FitNativeCanvas(board, width);
-            const double fit = double(target.right - target.left) / width;
+            const double fit = static_cast<double>(target.right - target.left) / width;
             const auto hud = BuildOriginalHud({}, width);
             const double x = (static_cast<short>(LOWORD(point)) - target.left) / fit;
             const double y = (static_cast<short>(HIWORD(point)) - target.top) / fit;

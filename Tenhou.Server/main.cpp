@@ -6,8 +6,7 @@
 
 namespace {
     HANDLE stop_event = nullptr;
-
- BOOL WINAPI control(DWORD) {
+    BOOL WINAPI control(DWORD) {
         if (stop_event) SetEvent(stop_event);
         return TRUE;
     }
@@ -31,9 +30,9 @@ int wmain(int argc, wchar_t **argv) {
             std::istringstream input(authority::read_state(diagnostic));
             std::string line;
             if (!std::getline(input, line)) throw std::runtime_error("Missing diagnostic record");
-            auto header = authority::parse(line);
-            if (header.tag != "DIAGNOSTIC") throw std::runtime_error("Invalid diagnostic record");
-            auto a = header.attrs;
+            auto [header_tag, header_attrs] = authority::parse(line);
+            if (header_tag != "DIAGNOSTIC") throw std::runtime_error("Invalid diagnostic record");
+            auto a = header_attrs;
             auto seed = std::stoull(a.at("seed"));
             bool general = a.at("general") == "1";
             int type = authority::number(a.at("type"));
@@ -41,17 +40,13 @@ int wmain(int argc, wchar_t **argv) {
             authority::Game game(general ? authority::Config::general(type) : authority::Config::from(a), seed);
             unsigned commands = 0;
             while (std::getline(input, line)) {
-                auto m = authority::parse(line);
-                if (m.tag == "START") game.start();
-                else if (m.tag == "ACT") game.submit(authority::number(m.attrs.at("seat")), {
-                                                         m.attrs.at("kind"), authority::integers(m.attrs.at("tiles"))
-                                                     });
+                if (auto [tag, attrs] = authority::parse(line); tag == "START") game.start();
+                else if (tag == "ACT") game.submit(authority::number(attrs.at("seat")), { attrs.at("kind"), authority::integers(attrs.at("tiles")) });
                 else throw std::runtime_error("Unsupported diagnostic command");
                 game.invariants();
                 ++commands;
             }
-            std::cout << "{\"verified_commands\":" << commands << ",\"hands\":" << game.hand_number << ",\"phase\":\""
-                    << game.phase << "\"}" << std::endl;
+            std::cout << "{\"verified_commands\":" << commands << ",\"hands\":" << game.hand_number << R"(,"phase":")" << game.phase << "\"}" << std::endl;
             return 0;
         }
         if (!std::filesystem::is_regular_file(path)) throw std::runtime_error("Missing explicit server.ini");
@@ -62,13 +57,13 @@ int wmain(int argc, wchar_t **argv) {
         };
         auto ascii = [](const std::wstring &value) {
             std::string result;
-            for (auto c: value) {
+            for (const auto c: value) {
                 if (c > 127) throw std::runtime_error("Expected ASCII endpoint/number");
                 result += static_cast<char>(c);
             }
             return result;
         };
-        auto num = [&](const wchar_t *key, int fallback, int low, int high) {
+        auto num = [&](const wchar_t *key, const int fallback, const int low, const int high) {
             return authority::number(ascii(text(key, std::to_wstring(fallback).c_str())), low, high);
         };
         authority::Settings settings;

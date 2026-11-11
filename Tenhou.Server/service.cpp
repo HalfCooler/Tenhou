@@ -8,26 +8,26 @@
 
 namespace authority {
     namespace {
-        std::string room_name(int room) {
-            auto s = std::to_string(room);
+        std::string room_name(const int room) {
+            const auto s = std::to_string(room);
             return "L" + std::string(4 - s.size(), '0') + s;
         }
 
         std::string attr(const Message &m, const char *k, const std::string &fallback = "") {
-            auto i = m.attrs.find(k);
+            const auto i = m.attrs.find(k);
             return i == m.attrs.end() ? fallback : i->second;
         }
 
-        std::string offer(const Game &g, int s) {
+        std::string offer(const Game &g, const int s) {
             std::string r;
-            for (const auto &a: g.options(s)) r += a.kind + ":" + list(a.tiles) + ";";
+            for (const auto &[kind, tiles]: g.options(s)) r += kind + ":" + list(tiles) + ";";
             return r;
         }
 
         ULONGLONG utc_ms() {
             FILETIME ft{};
             GetSystemTimeAsFileTime(&ft);
-            ULARGE_INTEGER value{};
+            ULARGE_INTEGER value;
             value.LowPart = ft.dwLowDateTime;
             value.HighPart = ft.dwHighDateTime;
             return value.QuadPart / 10000;
@@ -41,13 +41,12 @@ namespace authority {
         load();
         listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (listener == INVALID_SOCKET) throw std::runtime_error("Socket creation failed");
-        BOOL exclusive = TRUE;
-        setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char *>(&exclusive),
-                   sizeof(exclusive));
+        constexpr BOOL exclusive = TRUE;
+        setsockopt(listener, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char *>(&exclusive), sizeof(exclusive));
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_port = htons(static_cast<u_short>(cfg.port));
-        if (InetPtonA(AF_INET, cfg.listen.c_str(), &address.sin_addr) != 1 || (ntohl(address.sin_addr.s_addr) >> 24) !=
+        if (InetPtonA(AF_INET, cfg.listen.c_str(), &address.sin_addr) != 1 || ntohl(address.sin_addr.s_addr) >> 24 !=
             127) throw std::runtime_error("Stage 26 supports explicit IPv4 loopback listening only");
         if (bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) != 0 || listen(listener, SOMAXCONN)
             != 0) throw std::runtime_error("Cannot bind configured endpoint");
@@ -57,12 +56,12 @@ namespace authority {
     }
 
     Service::~Service() {
-        for (auto &e: connections) closesocket(e.first);
+        for (const auto &[fst, snd]: connections) closesocket(fst);
         if (listener != INVALID_SOCKET) closesocket(listener);
     }
 
-    void Service::record(const std::string &event, int value) {
-        log << "{\"event\":\"" << event << "\",\"value\":" << value << ",\"tick_ms\":" << GetTickCount64() << "}\n";
+    void Service::record(const std::string &event, const int value) {
+        log << R"({"event":")" << event << R"(","value":)" << value << ",\"tick_ms\":" << GetTickCount64() << "}\n";
         log.flush();
     }
 
@@ -77,23 +76,19 @@ namespace authority {
         c.output += '\0';
     }
 
-    void Service::send(Session &p, const std::string &text) {
-        auto c = connections.find(p.socket);
-        if (c != connections.end()) send(c->second, text);
+    void Service::send(const Session &p, const std::string &text) {
+        if (const auto c = connections.find(p.socket); c != connections.end()) send(c->second, text);
     }
 
-    void Service::close(SOCKET socket_) {
-        auto i = connections.find(socket_);
+    void Service::close(const SOCKET socket_) {
+        const auto i = connections.find(socket_);
         if (i == connections.end()) return;
-        auto p = sessions.find(i->second.token);
-        if (p != sessions.end() && p->second.socket == socket_) {
+        if (const auto p = sessions.find(i->second.token); p != sessions.end() && p->second.socket == socket_) {
             p->second.socket = INVALID_SOCKET;
             p->second.queued = false;
             if (!p->second.table.empty()) {
-                auto t = tables.find(p->second.table);
-                if (t != tables.end()) {
-                    auto seat = std::find(t->second.humans.begin(), t->second.humans.end(), p->first) - t->second.humans
-                                .begin();
+                if (const auto t = tables.find(p->second.table); t != tables.end()) {
+                    const auto seat = std::find(t->second.humans.begin(), t->second.humans.end(), p->first) - t->second.humans.begin();
                     t->second.declared[seat] = -1;
                     pause(t->second);
                 }
@@ -131,7 +126,7 @@ namespace authority {
         send(p, xml("PROFILE", a));
     }
 
-    void Service::room_snapshot(Session &p, const std::string &rid) {
+    void Service::room_snapshot(const Session &p, const std::string &rid) {
         const auto &r = rooms.at(p.room);
         auto a = r.config.wire();
         a["room"] = std::to_string(p.room);
@@ -143,40 +138,30 @@ namespace authority {
 
     std::string Service::state() const {
         std::string r = xml("STATE", {{"version", "27"}, {"order", std::to_string(order)}}) + "\n";
-        for (const auto &e: accounts) {
-            const auto &a = e.second;
-            r += xml("ACCOUNT", {
-                         {"id", a.id}, {"nickname", a.nickname}, {"salt", a.salt}, {"hash", a.password_hash},
-                         {"played", std::to_string(a.played)}
-                     }) + "\n";
+        for (const auto &[fst, snd]: accounts) {
+            const auto &[id, nickname, salt, password_hash, ranks, played] = snd;
+            r += xml("ACCOUNT", {{"id", id}, {"nickname", nickname}, {"salt", salt}, {"hash", password_hash}, {"played", std::to_string(played)}}) + "\n";
             for (int i = 0; i < 2; ++i) {
-                const auto &rank = a.ranks[i];
-                r += xml("RANK", {
-                             {"id", a.id}, {"kind", std::to_string(i)}, {"level", std::to_string(rank.level)},
-                             {"points", std::to_string(rank.points)}, {"rating", std::to_string(rank.rating)},
-                             {"games", std::to_string(rank.games)}, {"places", list(rank.places)}
-                         }) + "\n";
+                const auto &[level, points, games, rating, places] = ranks[i];
+                r += xml("RANK", {{"id", id}, {"kind", std::to_string(i)}, {"level", std::to_string(level)}, {"points", std::to_string(points)},
+                                  {"rating", std::to_string(rating)}, {"games", std::to_string(games)}, {"places", list(places)}}) + "\n";
             }
         }
-        for (const auto &e: sessions) {
-            const auto &p = e.second;
-            r += xml("SESSION", {
-                         {"token", p.token}, {"gender", p.gender}, {"room", std::to_string(p.room)}, {"table", p.table},
-                         {"presentation", std::to_string(p.presentation)},
-                         {"rid", std::to_string(p.last_request)}, {"request", p.request_text},
-                         {"reply", p.request_reply}, {"account", p.account}
-                     }) + "\n";
+        for (const auto &[fst, snd]: sessions) {
+            const auto &p = snd;
+            r += xml("SESSION", {{"token", p.token}, {"gender", p.gender}, {"room", std::to_string(p.room)}, {"table", p.table}, {"presentation", std::to_string(p.presentation)},
+                                 {"rid", std::to_string(p.last_request)}, {"request", p.request_text}, {"reply", p.request_reply}, {"account", p.account}}) + "\n";
         }
-        for (const auto &e: rooms) {
-            auto a = e.second.config.wire();
-            a["number"] = std::to_string(e.first);
-            a["owner"] = e.second.owner;
-            a["revision"] = std::to_string(e.second.revision);
-            a["closed"] = std::to_string(e.second.closed);
+        for (const auto &[fst, snd]: rooms) {
+            auto a = snd.config.wire();
+            a["number"] = std::to_string(fst);
+            a["owner"] = snd.owner;
+            a["revision"] = std::to_string(snd.revision);
+            a["closed"] = std::to_string(snd.closed);
             r += xml("ROOM", a) + "\n";
         }
-        for (const auto &e: tables) {
-            const auto &t = e.second;
+        for (const auto &[fst, snd]: tables) {
+            const auto &t = snd;
             if (t.stage == "aborted") continue;
             auto a = t.config.wire();
             a["id"] = t.id;
@@ -187,7 +172,7 @@ namespace authority {
             a["exit_revision"] = std::to_string(t.exit_revision);
             a["vote_until"] = std::to_string(t.vote_until);
             a["exit_votes"] = list(t.exit_votes);
-            auto now = t.paused ? t.paused_at : GetTickCount64();
+            const auto now = t.paused ? t.paused_at : GetTickCount64();
             for (int s = 0; s < 4; ++s) {
                 if (s) a["remaining"] += ',';
                 a["remaining"] += std::to_string(t.deadlines[s]
@@ -210,7 +195,7 @@ namespace authority {
         return r + "<END/>\n";
     }
 
-    void Service::save() { write_state(cfg.state, state()); }
+    void Service::save() const { write_state(cfg.state, state()); }
 
     void Service::load() {
         auto raw = read_state(cfg.state);
@@ -238,14 +223,14 @@ namespace authority {
                 if (account.salt.size() != 64 || account.password_hash.size() != 64 || !accounts.
                     emplace(account.id, account).second) throw std::runtime_error("Invalid account record");
             } else if (m.tag == "RANK") {
-                auto &rank = accounts.at(a.at("id")).ranks[number(a.at("kind"), 0, 1)];
-                rank.level = number(a.at("level"), 0, 18);
-                rank.points = number(a.at("points"), 0, 3600);
-                rank.games = number(a.at("games"), 0);
-                rank.rating = std::stod(a.at("rating"));
-                auto places = integers(a.at("places"));
-                if (!std::isfinite(rank.rating) || places.size() != 4) throw std::runtime_error("Invalid rank record");
-                std::copy(places.begin(), places.end(), rank.places.begin());
+                auto &[level, points, games, rating, places] = accounts.at(a.at("id")).ranks[number(a.at("kind"), 0, 1)];
+                level = number(a.at("level"), 0, 18);
+                points = number(a.at("points"), 0, 3600);
+                games = number(a.at("games"), 0);
+                rating = std::stod(a.at("rating"));
+                auto places_at = integers(a.at("places"));
+                if (!std::isfinite(rating) || places_at.size() != 4) throw std::runtime_error("Invalid rank record");
+                std::copy(places_at.begin(), places_at.end(), places_at.begin());
             } else if (m.tag == "SESSION") {
                 Session p;
                 p.token = a.at("token");
@@ -331,17 +316,17 @@ namespace authority {
         }
         if (!header || !ended || sessions.size() > static_cast<std::size_t>(cfg.max_sessions) || tables.size() >
             static_cast<std::size_t>(cfg.max_tables)) throw std::runtime_error("Incomplete/oversized state");
-        for (const auto &e: rooms) if (!sessions.count(e.second.owner)) throw std::runtime_error("Missing room owner");
-        for (const auto &e: sessions) {
-            const auto &p = e.second;
-            if (p.token.size() != 64 || !std::all_of(p.token.begin(), p.token.end(), [](char c) {
+        for (const auto &[fst, snd]: rooms) if (!sessions.count(snd.owner)) throw std::runtime_error("Missing room owner");
+        for (const auto &[fst, snd]: sessions) {
+            const auto &p = snd;
+            if (p.token.size() != 64 || !std::all_of(p.token.begin(), p.token.end(), [](const char c) {
                 return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
             }) || (p.gender != "M" && p.gender != "F")) throw std::runtime_error("Invalid persisted session");
             if (p.room && (!rooms.count(p.room) || rooms.at(p.room).closed)) throw std::runtime_error(
                 "Invalid persisted membership");
         }
-        for (auto &e: tables) {
-            auto &t = e.second;
+        for (auto &[fst, snd]: tables) {
+            auto &t = snd;
             t.cursor = t.game->events.size();
             for (std::size_t s = 0; s < t.humans.size(); ++s) {
                 if (!sessions.count(t.humans[s])) throw std::runtime_error("Missing table session");
@@ -349,7 +334,7 @@ namespace authority {
                 t.windows[s] = t.offers[s].empty() ? 0 : t.game->events.size();
             }
         }
-        for (const auto &e: sessions) if (!e.second.table.empty() && !tables.count(e.second.table)) throw
+        for (const auto &[fst, snd]: sessions) if (!snd.table.empty() && !tables.count(snd.table)) throw
                 std::runtime_error("Missing table");
         record("restored", static_cast<int>(tables.size()));
     }
@@ -424,8 +409,8 @@ namespace authority {
                     return;
                 }
                 token.clear();
-                for (const auto &e: sessions) if (e.second.account == c.login_name) {
-                    token = e.first;
+                for (const auto &[fst, snd]: sessions) if (snd.account == c.login_name) {
+                    token = fst;
                     break;
                 }
                 if (token.empty()) {
@@ -455,7 +440,7 @@ namespace authority {
                 if (p.gender != "M" && p.gender != "F") throw std::runtime_error("Invalid gender");
                 sessions.emplace(token, std::move(p));
             }
-            auto i = sessions.find(token);
+            const auto i = sessions.find(token);
             if (i == sessions.end()) {
                 send(c, "<ERR code=\"401\"/>");
                 c.closing = true;
@@ -490,9 +475,7 @@ namespace authority {
         const auto &tag = m.tag;
         auto a = m.attrs;
         const auto rid = attr(m, "rid");
-        const bool request = tag == "ROOMCREATE" || tag == "ROOMJOIN" || tag == "ROOMLEAVE" || tag == "ROOMCLOSE" || tag
-                             == "SETROOM";
-        if (request) {
+        if (tag == "ROOMCREATE" || tag == "ROOMJOIN" || tag == "ROOMLEAVE" || tag == "ROOMCLOSE" || tag == "SETROOM") {
             std::vector<std::string> changed_members;
             const auto id = number(rid, 1);
             if (static_cast<std::uint64_t>(id) == p.last_request) {
@@ -507,7 +490,7 @@ namespace authority {
                 return;
             }
             auto reject = [&](const std::string &code) {
-                auto reply = xml("REJECT", {{"rid", rid}, {"code", code}});
+                const auto reply = xml("REJECT", {{"rid", rid}, {"code", code}});
                 p.last_request = id;
                 p.request_text = raw;
                 p.request_reply = reply;
@@ -529,8 +512,7 @@ namespace authority {
                 const int start = 1000 + static_cast<int>(std::stoul(secret().substr(0, 6), nullptr, 16) % 9000);
                 for (int j = 0; j < 9000; ++j) {
                     int n = 1000 + (start - 1000 + j) % 9000;
-                    auto r = rooms.find(n);
-                    if (r == rooms.end() || r->second.closed) {
+                    if (auto r = rooms.find(n); r == rooms.end() || r->second.closed) {
                         chosen = n;
                         break;
                     }
@@ -557,9 +539,9 @@ namespace authority {
                     return;
                 }
                 int count = 0;
-                for (const auto &e: sessions) if (e.second.room == target) {
+                for (const auto &[fst, snd]: sessions) if (snd.room == target) {
                     ++count;
-                    if (!e.second.table.empty()) {
+                    if (!snd.table.empty()) {
                         reject("IN_PROGRESS");
                         return;
                     }
@@ -574,35 +556,35 @@ namespace authority {
                     reject("NOT_IN_ROOM");
                     return;
                 }
-                auto &room = rooms.at(p.room);
-                if (room.owner != p.token) {
+                auto &[config, owner, revision, closed] = rooms.at(p.room);
+                if (owner != p.token) {
                     reject("OWNER_REQUIRED");
                     return;
                 }
-                for (const auto &e: sessions) if (
-                    e.second.room == p.room && (e.second.queued || !e.second.table.empty())) {
+                for (const auto &[fst, snd]: sessions) if (
+                    snd.room == p.room && (snd.queued || !snd.table.empty())) {
                     reject("BUSY");
                     return;
                 }
                 if (tag == "ROOMCLOSE") {
-                    auto closed = p.room;
-                    room.closed = true;
-                    ++room.revision;
-                    for (auto &e: sessions) if (e.second.room == closed) {
-                        changed_members.push_back(e.first);
-                        e.second.room = 0;
+                    auto closed_room = p.room;
+                    closed_room = true;
+                    ++revision;
+                    for (auto &[fst, snd]: sessions) if (snd.room == closed_room) {
+                        changed_members.push_back(fst);
+                        snd.room = 0;
                     }
                 } else {
-                    auto revision = number(a.at("revision"), 1);
-                    if (static_cast<unsigned>(revision) != room.revision) {
+                    auto revision_conflict = number(a.at("revision"), 1);
+                    if (static_cast<unsigned>(revision_conflict) != revision_conflict) {
                         reject("REVISION_CONFLICT");
                         room_snapshot(p);
                         return;
                     }
                     a.erase("rid");
                     a.erase("revision");
-                    room.config = Config::from(a);
-                    ++room.revision;
+                    config = Config::from(a);
+                    ++revision_conflict;
                 }
             }
             p.last_request = id;
@@ -612,8 +594,8 @@ namespace authority {
             send(c, p.request_reply);
             lobby(p, rid);
             for (const auto &token: changed_members) if (token != p.token) lobby(sessions.at(token));
-            if (tag == "SETROOM") for (auto &e: sessions) if (e.second.room == p.room && e.first != p.token)
-                room_snapshot(e.second);
+            if (tag == "SETROOM") for (auto &[fst, snd]: sessions) if (snd.room == p.room && fst != p.token)
+                room_snapshot(snd);
             return;
         }
         if (tag == "PRESENTATION" && a.empty()) {
@@ -668,13 +650,12 @@ namespace authority {
                     room_snapshot(p);
                     return;
                 }
-                for (const auto &e: sessions) if (e.second.room == p.room && !e.second.table.empty()) {
+                for (const auto &[fst, snd]: sessions) if (snd.room == p.room && !snd.table.empty()) {
                     send(p, "<QUEUEREJECT code=\"IN_PROGRESS\"/>");
                     return;
                 }
             }
-            Config config = p.room ? rooms.at(p.room).config : Config::general(fields[1]);
-            if (p.room && config.type() != fields[1]) throw std::runtime_error("Room rule mismatch");
+            if (Config config = p.room ? rooms.at(p.room).config : Config::general(fields[1]); p.room && config.type() != fields[1]) throw std::runtime_error("Room rule mismatch");
             p.rule = fields[1];
             p.queued = true;
             p.queued_at = GetTickCount64();
@@ -686,12 +667,11 @@ namespace authority {
         }
         if (tag == "BYE" && a.empty()) {
             if (p.table.empty()) throw std::runtime_error("No table to return from");
-            auto &t = tables.at(p.table);
-            if (t.game->phase != "complete") throw std::runtime_error("Table is not complete");
+            if (auto &t = tables.at(p.table); t.game->phase != "complete") throw std::runtime_error("Table is not complete");
             auto id = p.table;
             p.table.clear();
             bool used = false;
-            for (const auto &e: sessions) used = used || e.second.table == id;
+            for (const auto &[fst, snd]: sessions) used = used || snd.table == id;
             if (!used) tables.erase(id);
             save();
             if (!draining) match();
@@ -730,8 +710,7 @@ namespace authority {
                     t.exit_votes[seat] = yes;
                     save();
                 }
-                if (std::all_of(t.exit_votes.begin(), t.exit_votes.begin() + t.humans.size(),
-                                [](int v) { return v >= 0; })) {
+                if (std::all_of(t.exit_votes.begin(), t.exit_votes.begin() + static_cast<int>(t.humans.size()), [](const int v) { return v >= 0; })) {
                     resolve_exit(t);
                     return;
                 }
@@ -741,11 +720,10 @@ namespace authority {
         }
         // Packets queued before the abort receipt belong to the removed table.
         // This transient guard ends on the next explicit match (or TCP reconnect).
-        if (p.table.empty() && p.exited && (tag == "D" || tag == "N" || tag == "REACH" || tag == "GOK" || tag ==
-                                            "STARTREADY" || tag == "NEXTREADY")) return;
+        if (p.table.empty() && p.exited && (tag == "D" || tag == "N" || tag == "REACH" || tag == "GOK" || tag == "STARTREADY" || tag == "NEXTREADY")) return;
         if (p.table.empty()) throw std::runtime_error("No active table");
         auto &t = tables.at(p.table);
-        int seat = static_cast<int>(std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin());
+        int seat = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
         if (tag == "GOK" && a.empty() && t.stage == "gok") {
             t.ready.insert(p.token);
             save();
@@ -766,8 +744,7 @@ namespace authority {
             return;
         }
         if (t.stage != "play") throw std::runtime_error("Table not accepting actions");
-        auto window = number(attr(m, "window"), 1);
-        if (static_cast<std::size_t>(window) != t.windows[seat]) {
+        if (auto window = number(attr(m, "window"), 1); static_cast<std::size_t>(window) != t.windows[seat]) {
             t.declared[seat] = -1;
             restore(t, p);
             record("stale_action");
@@ -783,8 +760,8 @@ namespace authority {
             t.declared[seat] = tile;
             return;
         }
-        auto action = decode(action_message, opts, t.declared[seat]);
-        if (t.declared[seat] >= 0 && action.kind != "riichi") throw std::runtime_error(
+        auto [kind, tiles] = decode(action_message, opts, t.declared[seat]);
+        if (t.declared[seat] >= 0 && kind != "riichi") throw std::runtime_error(
             "REACH requires selected discard");
         t.declared[seat] = -1;
         if (t.started[seat]) {
@@ -792,36 +769,29 @@ namespace authority {
             int base = number(t.config.time.substr(0, t.config.time.find('+'))) * 1000;
             t.reserve[seat] = std::max(0, t.reserve[seat] - std::max(0, elapsed - base));
         }
-        apply(t, xml("ACT", {{"seat", std::to_string(seat)}, {"kind", action.kind}, {"tiles", list(action.tiles)}}));
+        apply(t, xml("ACT", {{"seat", std::to_string(seat)}, {"kind", kind}, {"tiles", list(tiles)}}));
         t.deadlines[seat] = t.started[seat] = 0;
         t.offers[seat].clear();
         save();
         flush(t);
     }
 
-    void Service::apply(Table &t, const std::string &text) {
+    void Service::apply(Table &t, const std::string &command) {
         if (t.commands.size() >= 100000) throw std::runtime_error("Table command capacity");
-        auto m = parse(text);
-        if (m.tag == "START") t.game->start();
-        else if (m.tag == "ACT") t.game->submit(number(m.attrs.at("seat"), 0, 3),
-                                                {m.attrs.at("kind"), integers(m.attrs.at("tiles"))});
+        if (const auto [tag, attrs] = parse(command); tag == "START") t.game->start();
+        else if (tag == "ACT") t.game->submit(number(attrs.at("seat"), 0, 3), {attrs.at("kind"), integers(attrs.at("tiles"))});
         else throw std::runtime_error("Invalid replay command");
-        t.commands.push_back(text);
+        t.commands.push_back(command);
     }
 
-    void Service::identity(Table &t, Session &p) {
-        int viewer = static_cast<int>(std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin());
+    void Service::identity(Table &t, const Session &p) {
+        const int viewer = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
         Attrs names;
         std::string genders;
         for (int j = 0; j < 4; ++j) {
-            int s = (j + viewer) % 4;
-            names["n" + std::to_string(j)] = s >= t.config.n()
-                                                 ? ""
-                                                 : s < static_cast<int>(t.humans.size())
-                                                       ? (sessions.at(t.humans[s]).account.empty()
-                                                              ? "NoName"
-                                                              : accounts.at(sessions.at(t.humans[s]).account).nickname)
-                                                       : "人机" + std::to_string(s + 1);
+            const int s = (j + viewer) % 4;
+            names["n" + std::to_string(j)] = s >= t.config.n() ? "" : s < static_cast<int>(t.humans.size()) ?
+                (sessions.at(t.humans[s]).account.empty() ? "NoName" : accounts.at(sessions.at(t.humans[s]).account).nickname) : "人机" + std::to_string(s + 1);
             genders += s < static_cast<int>(t.humans.size()) ? sessions.at(t.humans[s]).gender : "M";
         }
         names["sx"] = genders;
@@ -831,49 +801,42 @@ namespace authority {
                 ranks += ',';
                 ratings += ',';
             }
-            int s = (j + viewer) % 4;
+            const int s = (j + viewer) % 4;
             const bool registered = s < static_cast<int>(t.humans.size()) && !sessions.at(t.humans[s]).account.empty();
-            const Rank rank = registered
-                                  ? accounts.at(sessions.at(t.humans[s]).account).ranks[t.config.n() == 3 ? 1 : 0]
-                                  : Rank{};
+            const Rank rank = registered ? accounts.at(sessions.at(t.humans[s]).account).ranks[t.config.n() == 3 ? 1 : 0] : Rank{};
             ranks += std::to_string(rank.level);
             ratings += std::to_string(rank.rating);
         }
         names["dan"] = ranks;
         names["rate"] = ratings;
         send(p, xml("UN", names));
-        auto plus = t.config.time.find('+');
+        const auto plus = t.config.time.find('+');
         send(p, xml("GO", {
-                        {"type", std::to_string(t.config.type())}, {"table", t.id}, {"ranked", t.ranked ? "1" : "0"},
-                        {"exit", (!t.ranked && (!t.general || t.humans.size() == 1)) ? "1" : "0"},
-                        {"open_hands", std::to_string(t.config.open_hands)}, {"red_tiles", list(t.config.red_tiles())},
-                        {"room_length", t.config.length},
-                        {
-                            "local_time",
-                            std::to_string(
-                                (number(t.config.time.substr(0, plus)) + number(t.config.time.substr(plus + 1))) * 1000)
-                        }
-                    }));
+            {"type", std::to_string(t.config.type())},
+            {"table", t.id},
+            {"ranked", t.ranked ? "1" : "0"},
+            {"exit", !t.ranked && (!t.general || t.humans.size() == 1) ? "1" : "0"},
+            {"open_hands", std::to_string(t.config.open_hands)}, {"red_tiles", list(t.config.red_tiles())},
+            {"room_length", t.config.length},
+            {"local_time", std::to_string((number(t.config.time.substr(0, plus)) + number(t.config.time.substr(plus + 1))) * 1000)}
+        }));
     }
 
     void Service::match() {
         std::map<std::pair<int, int>, std::vector<Session *> > queues;
-        for (auto &e: sessions) if (e.second.queued && e.second.socket != INVALID_SOCKET) queues[{
-            e.second.room, e.second.rule
-        }].push_back(&e.second);
-        for (auto &q: queues) {
-            auto &queue = q.second;
+        for (auto &[fst, snd]: sessions) if (snd.queued && snd.socket != INVALID_SOCKET) queues[{snd.room, snd.rule}].push_back(&snd);
+        for (auto &[fst, snd]: queues) {
+            auto &queue = snd;
             std::sort(queue.begin(), queue.end(), [](auto a, auto b) { return a->order < b->order; });
-            Config config = q.first.first ? rooms.at(q.first.first).config : Config::general(q.first.second);
+            Config config = fst.first ? rooms.at(fst.first).config : Config::general(fst.second);
             while (!queue.empty() && tables.size() < static_cast<std::size_t>(cfg.max_tables)) {
-                if (q.first.first && queue.size() < static_cast<std::size_t>(config.n()) && GetTickCount64() - queue.
-                    front()->queued_at < 10000) break;
-                const int humans = q.first.first ? std::min(config.n(), static_cast<int>(queue.size())) : 1;
+                if (fst.first && queue.size() < static_cast<std::size_t>(config.n()) && GetTickCount64() - queue.front()->queued_at < 10000) break;
+                const int humans = fst.first ? std::min(config.n(), static_cast<int>(queue.size())) : 1;
                 Table t;
                 t.id = secret().substr(0, 24);
                 t.seed = std::stoull(secret().substr(0, 16), nullptr, 16);
                 t.config = config;
-                t.general = q.first.first == 0;
+                t.general = fst.first == 0;
                 t.game = std::make_unique<Game>(config, t.seed);
                 t.due = GetTickCount64() + 10000;
                 for (int s = 0; s < humans; ++s) {
@@ -883,10 +846,7 @@ namespace authority {
                     p.queued = false;
                     p.exited = false;
                 }
-                t.ranked = !t.general && humans == config.n() && std::all_of(
-                               t.humans.begin(), t.humans.end(), [&](const std::string &token) {
-                                   return !sessions.at(token).account.empty();
-                               });
+                t.ranked = !t.general && humans == config.n() && std::all_of(t.humans.begin(), t.humans.end(), [&](const std::string &token) { return !sessions.at(token).account.empty(); });
                 queue.erase(queue.begin(), queue.begin() + humans);
                 auto &stored = tables.emplace(t.id, std::move(t)).first->second;
                 save();
@@ -902,7 +862,7 @@ namespace authority {
         t.started = {};
         t.offers = {};
         t.elapsed = {};
-        auto plus = t.config.time.find('+');
+        const auto plus = t.config.time.find('+');
         t.reserve.fill(number(t.config.time.substr(plus + 1)) * 1000);
         apply(t, "<START/>");
         bool presentation = false;
@@ -915,7 +875,7 @@ namespace authority {
         flush(t, presentation);
     }
 
-    void Service::flush(Table &t, bool opening) {
+    void Service::flush(Table &t, const bool opening) {
         if (t.game->phase == "complete" && !t.settled) settle(t);
         const bool paced = std::any_of(t.humans.begin(), t.humans.end(), [&](const std::string &token) {
             return sessions.at(token).presentation;
@@ -953,8 +913,8 @@ namespace authority {
         if (t.vote_due || t.stage == "aborted") return;
         for (const auto &token: t.humans) if (sessions.at(token).socket == INVALID_SOCKET) return;
         if (!t.paused) return;
-        auto now = GetTickCount64();
-        auto delay = now - t.paused_at;
+        const auto now = GetTickCount64();
+        const auto delay = now - t.paused_at;
         if (t.due) t.due += delay;
         if (t.next_event) t.next_event += delay;
         for (int s = 0; s < 4; ++s) {
@@ -974,7 +934,7 @@ namespace authority {
     }
 
     void Service::clock(Table &t, Session &p) {
-        int s = static_cast<int>(std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin());
+        const int s = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
         if (t.paused || !t.deadlines[s] || t.game->options(s).empty()) return;
         auto now = GetTickCount64();
         int remaining = t.deadlines[s] > now ? static_cast<int>(t.deadlines[s] - now) : 0;

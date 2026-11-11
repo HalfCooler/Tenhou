@@ -36,7 +36,7 @@ namespace authority {
         a.erase(i);
     }
 
-    inline bool terminal(int k) { return k >= 27 || k % 9 == 0 || k % 9 == 8; }
+    inline bool terminal(const int k) { return k >= 27 || k % 9 == 0 || k % 9 == 8; }
     using Counts = std::array<int, 34>;
 
     Counts counts(const std::vector<int> &hand);
