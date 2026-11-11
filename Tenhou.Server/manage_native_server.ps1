@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 $taskServerRoot=$PSScriptRoot
 $taskCandidates=@(
     (Join-Path $taskServerRoot 'tenhou_server.exe'),
+    (Join-Path $taskServerRoot '../build-Release/Tenhou.Server/tenhou_server.exe'),
     (Join-Path $taskServerRoot 'build-Release/tenhou_server.exe'),
     (Join-Path $taskServerRoot '../build-Release/native_server/tenhou_server.exe')
 )

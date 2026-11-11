@@ -89,16 +89,16 @@ uLong ZEXPORT adler32_z(uLong adler, const Bytef *buf, z_size_t len) {
         }
         if (adler >= BASE)
             adler -= BASE;
-        MOD28(sum2);            /* only added so many BASE's */
+        MOD28(sum2); /* only added so many BASE's */
         return adler | (sum2 << 16);
     }
 
     /* do length NMAX blocks -- requires just one modulo operation */
     while (len >= NMAX) {
         len -= NMAX;
-        n = NMAX / 16;          /* NMAX is divisible by 16 */
+        n = NMAX / 16; /* NMAX is divisible by 16 */
         do {
-            DO16(buf);          /* 16 sums unrolled */
+            DO16(buf); /* 16 sums unrolled */
             buf += 16;
         } while (--n);
         MOD(adler);
@@ -106,7 +106,8 @@ uLong ZEXPORT adler32_z(uLong adler, const Bytef *buf, z_size_t len) {
     }
 
     /* do remaining bytes (less than NMAX, still just one modulo) */
-    if (len) {                  /* avoid modulos if none remaining */
+    if (len) {
+        /* avoid modulos if none remaining */
         while (len >= 16) {
             len -= 16;
             DO16(buf);
@@ -140,8 +141,8 @@ local uLong adler32_combine_(uLong adler1, uLong adler2, z_off64_t len2) {
         return 0xffffffffUL;
 
     /* the derivation of this formula is left as an exercise for the reader */
-    MOD63(len2);                /* assumes len2 >= 0 */
-    rem = (unsigned)len2;
+    MOD63(len2); /* assumes len2 >= 0 */
+    rem = (unsigned) len2;
     sum1 = adler1 & 0xffff;
     sum2 = rem * sum1;
     MOD(sum2);
@@ -149,7 +150,7 @@ local uLong adler32_combine_(uLong adler1, uLong adler2, z_off64_t len2) {
     sum2 += ((adler1 >> 16) & 0xffff) + ((adler2 >> 16) & 0xffff) + BASE - rem;
     if (sum1 >= BASE) sum1 -= BASE;
     if (sum1 >= BASE) sum1 -= BASE;
-    if (sum2 >= ((unsigned long)BASE << 1)) sum2 -= ((unsigned long)BASE << 1);
+    if (sum2 >= ((unsigned long) BASE << 1)) sum2 -= ((unsigned long) BASE << 1);
     if (sum2 >= BASE) sum2 -= BASE;
     return sum1 | (sum2 << 16);
 }
