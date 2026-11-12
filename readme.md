@@ -9,6 +9,13 @@ build.cmd Release
 build.cmd Debug
 ```
 
+清理构建产物：
+
+```bat
+build.cmd Release -Target clean
+build.cmd Debug -Target clean
+```
+
 不传参数时默认构建 Release，统一配置并编译所有子项目。也可以指定 CMake target 或构建目录：
 
 ```bat
