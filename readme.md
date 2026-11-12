@@ -35,4 +35,5 @@ PowerShell 中使用 `./build.ps1 -Configuration Release -Target tenhou_server`�
 
 Debug 产物位于对应的 `build-Debug/` 目录。子项目只需在 CMake 中声明自己的目标，并由根目录 `CMakeLists.txt` 引入，无需另写编译脚本。
 
-构建 Release 后，可用 `Tenhou.Server/start-server.cmd` 后台启动服务，使用 `Tenhou.Server/server.ini`；`Tenhou.Server/stop-server.cmd` 优雅停止。客户端和服务运行说明见各子项目 README。
+构建 Release 后，可用 `Tenhou.Server/start-server.cmd` 后台启动服务，使用 `Tenhou.Server/server.ini`；
+`Tenhou.Server/stop-server.cmd` 优雅停止。客户端和服务运行说明见各子项目 README。
