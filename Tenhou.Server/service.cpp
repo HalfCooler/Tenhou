@@ -933,21 +933,21 @@ namespace authority {
         record("table_resumed");
     }
 
-    void Service::clock(Table &t, Session &p) {
+    void Service::clock(Table &t, const Session &p) {
         const int s = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
         if (t.paused || !t.deadlines[s] || t.game->options(s).empty()) return;
-        auto now = GetTickCount64();
-        int remaining = t.deadlines[s] > now ? static_cast<int>(t.deadlines[s] - now) : 0;
-        int base = number(t.config.time.substr(0, t.config.time.find('+'))) * 1000;
-        int spent = t.elapsed[s] + (t.started[s] ? static_cast<int>(now - t.started[s]) : 0);
+        const auto now = GetTickCount64();
+        const int remaining = t.deadlines[s] > now ? static_cast<int>(t.deadlines[s] - now) : 0;
+        const int base = number(t.config.time.substr(0, t.config.time.find('+'))) * 1000;
+        const int spent = t.elapsed[s] + (t.started[s] ? static_cast<int>(now - t.started[s]) : 0);
         send(p, xml("CLOCK",
                     {{"ms", std::to_string(remaining)}, {"base_ms", std::to_string(std::max(0, base - spent))}}));
     }
 
-    void Service::restore(Table &t, Session &p) {
+    void Service::restore(Table &t, const Session &p) {
         send(p, "<RESTORE/>");
         identity(t, p);
-        int viewer = static_cast<int>(std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin());
+        const int viewer = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
         std::size_t begin = 0;
         for (std::size_t i = 0; i < t.game->events.size(); ++i) if (t.game->events[i].tag == "INIT") begin = i;
         for (auto i = begin; i < t.cursor; ++i) {
@@ -963,20 +963,20 @@ namespace authority {
         if (t.vote_due) exit_snapshot(t, p);
     }
 
-    void Service::exit_snapshot(Table &t, Session &p) {
-        auto seat = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
-        auto now = GetTickCount64();
+    void Service::exit_snapshot(Table &t, const Session &p) {
+        const auto seat = std::find(t.humans.begin(), t.humans.end(), p.token) - t.humans.begin();
+        const auto now = GetTickCount64();
         int yes = 0, no = 0;
         for (std::size_t s = 0; s < t.humans.size(); ++s) {
             yes += t.exit_votes[s] == 1;
             no += t.exit_votes[s] == 0;
         }
         send(p, xml("EXITVOTE", {
-                        {"table", t.id}, {"show", "1"}, {"id", std::to_string(t.exit_revision)},
-                        {"ms", std::to_string(t.vote_due > now ? t.vote_due - now : 0)},
-                        {"total", std::to_string(t.humans.size())}, {"yes", std::to_string(yes)},
-                        {"no", std::to_string(no)}, {"choice", std::to_string(t.exit_votes[seat])}
-                    }));
+            {"table", t.id}, {"show", "1"}, {"id", std::to_string(t.exit_revision)},
+            {"ms", std::to_string(t.vote_due > now ? t.vote_due - now : 0)},
+            {"total", std::to_string(t.humans.size())}, {"yes", std::to_string(yes)},
+            {"no", std::to_string(no)}, {"choice", std::to_string(t.exit_votes[seat])}
+        }));
     }
 
     void Service::end_exit(Table &t) {
@@ -1007,20 +1007,16 @@ namespace authority {
         }
         t.vote_due = t.vote_until = 0;
         save();
-        for (const auto &token: t.humans) send(sessions.at(token),
-                                               xml("EXITVOTE", {
-                                                       {"table", t.id}, {"show", "0"},
-                                                       {"result", approved ? "exit" : "continue"}
-                                                   }));
+        for (const auto &token: t.humans) send(sessions.at(token), xml("EXITVOTE", {{"table", t.id}, {"show", "0"}, {"result", approved ? "exit" : "continue"}}));
         unpause(t);
         record("exit_vote_rejected");
     }
 
     void Service::settle(Table &t) {
         std::vector<int> seats;
+        seats.reserve(t.config.n());
         for (int s = 0; s < t.config.n(); ++s) seats.push_back(s);
-        std::stable_sort(seats.begin(), seats.end(),
-                         [&](int a, int b) { return t.game->scores[a] > t.game->scores[b]; });
+        std::stable_sort(seats.begin(), seats.end(), [&](const int a, const int b) { return t.game->scores[a] > t.game->scores[b]; });
         const auto kind = t.config.n() == 3 ? 1 : 0;
         double average = 0;
         if (t.ranked) {
@@ -1032,10 +1028,7 @@ namespace authority {
             if (p.account.empty()) continue;
             auto &account = accounts.at(p.account);
             ++account.played;
-            if (t.ranked) update_rank(account.ranks[kind],
-                                      static_cast<int>(
-                                          std::find(seats.begin(), seats.end(), static_cast<int>(s)) - seats.begin()),
-                                      t.config.n(), t.config.length == "south", average);
+            if (t.ranked) update_rank(account.ranks[kind], std::find(seats.begin(), seats.end(), static_cast<int>(s)) - seats.begin(), t.config.n(), t.config.length == "south", average);
         }
         t.settled = true;
         save();
@@ -1044,31 +1037,24 @@ namespace authority {
     }
 
     std::string Service::replay_xml(const Table &t) const {
-        Attrs go{{"type", std::to_string(t.config.type())}, {"red_tiles", list(t.config.red_tiles())}};
+        const Attrs go{{"type", std::to_string(t.config.type())}, {"red_tiles", list(t.config.red_tiles())}};
         Attrs names;
-        for (int s = 0; s < 4; ++s) names["n" + std::to_string(s)] = s >= t.config.n()
-                                                                         ? ""
-                                                                         : s < static_cast<int>(t.humans.size())
-                                                                               ? (sessions.at(t.humans[s]).account.
-                                                                                   empty()
-                                                                                       ? "NoName"
-                                                                                       : accounts.at(
-                                                                                           sessions.at(t.humans[s]).
-                                                                                           account).nickname)
-                                                                               : "人机" + std::to_string(s + 1);
+        for (int s = 0; s < 4; ++s) names["n" + std::to_string(s)] = s >= t.config.n() ? "" :
+            s < static_cast<int>(t.humans.size()) ? (sessions.at(t.humans[s]).account.empty() ? "NoName" :
+                accounts.at(sessions.at(t.humans[s]).account).nickname) : "人机" + std::to_string(s + 1);
         std::string result = "<mjloggm ver=\"2.3\">\n" + xml("GO", go) + "\n" + xml("UN", names) + "\n";
         for (const auto &e: t.game->events) if (e.tag != "PROF") result += xml(e.tag, e.attrs) + "\n";
         return result + "</mjloggm>\n";
     }
 
-    void Service::replay(Table &t) {
+    void Service::replay(Table &t) const {
         // Guests have no replay/statistics archive. Registered participants may
         // save their completed non-ranked games as well as ranked games.
         if (std::none_of(t.humans.begin(), t.humans.end(), [&](const std::string &token) {
             return !sessions.at(token).account.empty();
         })) return;
         std::filesystem::create_directories(cfg.replays);
-        auto path = cfg.replays / (t.id + ".xml");
+        const auto path = cfg.replays / (t.id + ".xml");
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         if (!out) throw std::runtime_error("Replay write failed");
         out << replay_xml(t);
@@ -1144,23 +1130,16 @@ namespace authority {
                 t.offers[s] = current;
                 t.started[s] = now;
                 t.elapsed[s] = 0;
-                auto plus = t.config.time.find('+');
-                int base = number(t.config.time.substr(0, plus)) * 1000;
+                const auto plus = t.config.time.find('+');
+                const int base = number(t.config.time.substr(0, plus)) * 1000;
                 t.deadlines[s] = now + base + t.reserve[s];
                 save();
-                send(sessions.at(t.humans[s]), xml("CLOCK", {
-                                                       {"ms", std::to_string(base + t.reserve[s])},
-                                                       {"base_ms", std::to_string(base)}
-                                                   }));
+                send(sessions.at(t.humans[s]), xml("CLOCK", {{"ms", std::to_string(base + t.reserve[s])}, {"base_ms", std::to_string(base)}}));
             }
             if (now >= t.deadlines[s]) {
-                Action a = t.game->phase == "claims"
-                               ? Action{"skip"}
-                               : *std::find_if(opts.begin(), opts.end(), [](const Action &a) {
-                                   return a.kind == "discard";
-                               });
+                auto [kind, tiles] = t.game->phase == "claims" ? Action{"skip"} : *std::find_if(opts.begin(), opts.end(), [](const Action &action) {return action.kind == "discard";});
                 t.reserve[s] = 0;
-                apply(t, xml("ACT", {{"seat", std::to_string(s)}, {"kind", a.kind}, {"tiles", list(a.tiles)}}));
+                apply(t, xml("ACT", {{"seat", std::to_string(s)}, {"kind", kind}, {"tiles", list(tiles)}}));
                 t.offers[s].clear();
                 t.deadlines[s] = t.started[s] = 0;
                 save();
@@ -1171,15 +1150,15 @@ namespace authority {
         for (int s = static_cast<int>(t.humans.size()); s < t.config.n(); ++s)
             if (!t.game->options(s).empty()) {
                 if (!t.due) {
-                    bool paced = std::any_of(t.humans.begin(), t.humans.end(), [&](const std::string &token) {
+                    const bool paced = std::any_of(t.humans.begin(), t.humans.end(), [&](const std::string &token) {
                         return sessions.at(token).presentation;
                     });
                     t.due = now + (paced ? std::max(900, cfg.bot_delay) : cfg.bot_delay);
                     return;
                 }
                 if (now < t.due) return;
-                auto a = t.game->bot(s);
-                apply(t, xml("ACT", {{"seat", std::to_string(s)}, {"kind", a.kind}, {"tiles", list(a.tiles)}}));
+                auto [kind, tiles] = t.game->bot(s);
+                apply(t, xml("ACT", {{"seat", std::to_string(s)}, {"kind", kind}, {"tiles", list(tiles)}}));
                 t.due = 0;
                 save();
                 flush(t);
@@ -1190,9 +1169,8 @@ namespace authority {
     }
 
     void Service::tick() {
-        for (auto &e: tables) try { table_tick(e.second); } catch (const StorageFailure &) { throw; } catch (const
-            std::exception &) {
-            auto &t = e.second;
+        for (auto &[fst, snd]: tables) try { table_tick(snd); } catch (const StorageFailure &) { throw; } catch (const std::exception &) {
+            auto &t = snd;
             pause(t);
             for (const auto &token: t.humans) send(sessions.at(token), "<TABLEERROR code=\"TABLE_STOPPED\"/>");
             save();
@@ -1209,7 +1187,8 @@ namespace authority {
         if (!draining) match();
     }
 
-    int Service::run(HANDLE stop) {
+    // TODO: difference from HANDLE const and const HANDLE
+    int Service::run(HANDLE const stop) {
         std::cout << "Native authority ready " << cfg.listen << ':' << cfg.port << std::endl;
         ULONGLONG accept_at = GetTickCount64(), checkpoint_at = accept_at;
         unsigned accept_count = 0;
@@ -1218,15 +1197,15 @@ namespace authority {
                 draining = true;
                 drain_until = GetTickCount64() + cfg.shutdown_ms;
                 record("draining");
-                for (auto &e: sessions) {
-                    e.second.queued = false;
-                    send(e.second, "<DRAINING/>");
+                for (auto &[fst, snd]: sessions) {
+                    snd.queued = false;
+                    send(snd, "<DRAINING/>");
                 }
                 save();
             }
             if (draining && GetTickCount64()>=drain_until)
             {
-                for (auto &e: tables) pause(e.second);
+                for (auto &[fst, snd]: tables) pause(snd);
                 save();
                 record("stopped");
                 return 0;
@@ -1235,16 +1214,15 @@ namespace authority {
             FD_ZERO(&readers);
             FD_ZERO(&writers);
             if (!draining) FD_SET(listener, &readers);
-            for (auto &e: connections) {
-                FD_SET(e.first, &readers);
-                if (e.second.sent < e.second.output.size()) FD_SET(e.first, &writers);
+            for (auto &[fst, snd]: connections) {
+                FD_SET(fst, &readers);
+                if (snd.sent < snd.output.size()) FD_SET(fst, &writers);
             }
             timeval timeout{0, 20000};
             if (select(0, &readers, &writers, nullptr, &timeout) == SOCKET_ERROR) throw std::runtime_error(
                 "Socket select failed");
             if (FD_ISSET(listener, &readers)) {
-                auto socket_ = accept(listener, nullptr, nullptr);
-                if (socket_ != INVALID_SOCKET) {
+                if (auto socket_ = accept(listener, nullptr, nullptr); socket_ != INVALID_SOCKET) {
                     if (GetTickCount64() - accept_at >= 1000) {
                         accept_at = GetTickCount64();
                         accept_count = 0;
@@ -1263,8 +1241,8 @@ namespace authority {
                 }
             }
             std::vector<SOCKET> closed;
-            for (auto &e: connections) {
-                auto &c = e.second;
+            for (auto &[fst, snd]: connections) {
+                auto &c = snd;
                 try {
                     if (!c.replay_data.empty() && c.output.size() - c.sent < 128 * 1024) {
                         for (int batch = 0; batch < 8 && c.replay_offset < c.replay_data.size(); ++batch) {
@@ -1305,8 +1283,7 @@ namespace authority {
                             if (end > 4096 || ++batch > 128) throw std::runtime_error("Frame/work limit");
                             auto raw = c.input.substr(0, end);
                             c.input.erase(0, end + 1);
-                            auto now = GetTickCount64();
-                            if (now - c.rate_at >= 1000) {
+                            if (auto now = GetTickCount64(); now - c.rate_at >= 1000) {
                                 c.rate_at = now;
                                 c.rate = 0;
                             }
@@ -1329,10 +1306,10 @@ namespace authority {
                             }
                         } else if (WSAGetLastError() != WSAEWOULDBLOCK) closed.push_back(c.socket);
                     }
-                    auto now = GetTickCount64();
-                    if ((c.token.empty() && now - c.created >= 10000) || now - c.last >= 60000 || (
-                            c.frame_start && now - c.frame_start >= 10000) || (c.out_at && now - c.out_at >= 10000) || (
-                            c.closing && c.output.empty())) closed.push_back(c.socket);
+                    if (auto now = GetTickCount64();
+                        (c.token.empty() && now - c.created >= 10000) || now - c.last >= 60000 ||
+                        (c.frame_start && now - c.frame_start >= 10000) || (c.out_at && now - c.out_at >= 10000) ||
+                        (c.closing && c.output.empty())) closed.push_back(c.socket);
                 } catch (const StorageFailure &) { throw; } catch (const std::exception &) {
                     record("protocol_error");
                     c.closing = true;
@@ -1344,7 +1321,7 @@ namespace authority {
             tick();
             if (GetTickCount64() - checkpoint_at >= 1000) {
                 bool active = false;
-                for (const auto &e: tables) active = active || (!e.second.paused && e.second.stage != "complete");
+                for (const auto &[fst, snd]: tables) active = active || (!snd.paused && snd.stage != "complete");
                 if (active) save();
                 checkpoint_at = GetTickCount64();
             }

@@ -118,19 +118,19 @@ namespace authority {
 
         void identity(Table &t, const Session &p);
 
-        void restore(Table &t, Session &p);
+        void restore(Table &t, const Session &p);
 
         void pause(Table &t);
 
         void unpause(Table &t);
 
-        void clock(Table &t, Session &p);
+        void clock(Table &t, const Session &p);
 
         static void apply(Table &t, const std::string &command);
 
         void start(Table &t);
 
-        void replay(Table &t);
+        void replay(Table &t) const;
 
         void profile(Session &p);
 
@@ -138,7 +138,7 @@ namespace authority {
 
         std::string replay_xml(const Table &t) const;
 
-        void exit_snapshot(Table &t, Session &p);
+        void exit_snapshot(Table &t, const Session &p);
 
         void resolve_exit(Table &t);
 
