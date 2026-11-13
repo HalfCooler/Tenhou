@@ -40,7 +40,7 @@
 
 基础牌 ID 与现有资源一致：`0..35`万、`36..71`筒、`72..107`索、`108..123`东南西北、`124..127`白、`128..131`发、`132..135`中；国标花牌 `136..143` 为梅兰竹菊春夏秋冬。
 
-`phase="exchange"` 等待换三张，`missing` 等待定缺，`turn` 为摸打阶段，`claims` 等待响应，`ended` 等待 NEXTREADY，`complete` 可返回大厅。血流的单次和牌只更新分数与历史，不进入 ended。
+`phase="exchange"` 等待换三张，`missing` 等待定缺，`turn` 为摸打阶段，`claims` 等待响应，`ended` 等待 NEXTREADY，`complete` 可返回大厅。血战和牌后 `retired0..3="1"` 标记本手退场，其 `actions` 为空；尚有两家以上未和时继续对局，三家和完即进入 ended/complete。`exchange_direction` 为 clockwise/counterclockwise/opposite/none，按八局局序确定。
 
 `CLOCK ms/base_ms` 为剩余动作时间；`PAUSED`、`RESTORE`、`RESTORED`、`READYREQUEST` 用于恢复。`EXIT table` 和 `EXITVOTE table/id/yes` 用于退出；通过后收到 `TABLEEND reason="exit"`。
 

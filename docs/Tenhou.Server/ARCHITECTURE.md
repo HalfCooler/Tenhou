@@ -7,7 +7,7 @@
 - `IRuleSet`：稳定规则 ID、设置描述、参数校验及 `IMatch` 创建。规则目录通过注册表下发。
 - `IMatch`：一场对局的状态、合法动作、操作提交、人机选择、事件、牌山和不变量校验。和牌是否结束当前手牌由实现决定。
 
-立直的三/四人、局数、古役等是同一个 `RiichiRuleSet` 的选项。四川与国标分别实现 `SichuanRuleSet`、`GuobiaoRuleSet`。四川与国标共享不含立直语义的 `Common/VariantMatch` 牌张机制；各自决定特殊阶段、和牌资格、计分、连续和牌与终局。国标算番器独立于网络和文件系统。
+立直的三/四人、局数、古役等是同一个 `RiichiRuleSet` 的选项。四川与国标分别实现 `SichuanRuleSet`、`GuobiaoRuleSet`。四川与国标共享不含立直语义的 `Common/VariantMatch` 牌张机制；各自决定特殊阶段、和牌资格、计分、和牌退场或终局。国标算番器独立于网络和文件系统。
 
 `Application/Platform` 负责账号、房间归属、排队、准备屏障、计时、断线暂停、退出投票和结算提交。它通过 `IMatch` 推进对局，不直接访问某个规则的玩家结构。规则实现不依赖 Socket、存储或真实时钟。
 

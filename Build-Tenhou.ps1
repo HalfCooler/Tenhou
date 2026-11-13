@@ -47,12 +47,16 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# Local environment: fill in absolute paths as needed; '' enables discovery.
+# ---------- If auto discover fails, fill in absolute paths below. ----------
+
+# Local environment: fill in absolute paths as needed; '' enables auto discover.
 $LocalEnvironment = @{
     CMake = ''       # e.g. C:/Program Files/CMake/bin/cmake.exe
-    VsDevCmd = ''    # e.g. C:/BuildTools/Common7/Tools/VsDevCmd.bat
+    VsDevCmd = ''    # e.g. C:/Program Files/Microsoft Visual Studio/18/Community/Common7/Tools/VsDevCmd.bat
     DotNet = ''      # e.g. C:/Program Files/dotnet/dotnet.exe
 }
+
+# ---------- End of local environment ---------------------------------------
 
 if ($Help) { Get-Help $PSCommandPath -Full; return }
 if ($NativeReference -and $Target -notin @('All', 'Tenhou.Server.Tests')) {

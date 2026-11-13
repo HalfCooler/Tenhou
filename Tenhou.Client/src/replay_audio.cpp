@@ -127,6 +127,9 @@ namespace tenhou {
         for (const auto &key: SoundKeys()) {
             const auto source = original.find(DefaultSoundResource(key.first));
             if (source != original.end()) candidate[key.first] = source->second;
+            // The bundled pack has no game-end/login/logout WAV. These optional
+            // settings remain configurable; previewing their default is silent.
+            else if (key.first >= 115 && key.first <= 117) candidate[key.first].reset();
             wchar_t path[32768]{};
             const std::wstring name(key.second.begin(), key.second.end());
             const auto count = GetPrivateProfileStringW(L"RESOURCE", name.c_str(), L"", path, 32768, config.c_str());

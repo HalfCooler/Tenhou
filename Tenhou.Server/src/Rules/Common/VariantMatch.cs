@@ -52,6 +52,10 @@ public abstract class VariantMatch : IMatch
     protected abstract bool CanChow { get; }
     protected abstract bool IsMcr { get; }
     protected abstract int TotalHands { get; }
+    protected virtual int SelectDealer() => (HandNumber - 1) % 4;
+    protected virtual bool Participating(int seat) => true;
+    protected virtual bool ShouldEndMatch => false;
+    protected virtual void AddState(Dictionary<string, string> state) { }
     protected VariantMatch(Random random, int starting) { Random = random; Array.Fill(Points, starting); InitialTotal = starting * 4; }
     private int InitialTotal { get; }
     public void Start(int[]? wall = null)
@@ -63,7 +67,7 @@ public abstract class VariantMatch : IMatch
             if (!wall.Order().SequenceEqual(tiles)) throw new ArgumentException("Invalid wall"); tiles = (int[])wall.Clone();
         }
         else Random.Shuffle(tiles);
-        WallLog.Add((int[])tiles.Clone()); Wall.Clear(); Wall.AddRange(tiles); ++HandNumber; Dealer = (HandNumber - 1) % 4; Turn = Dealer;
+        WallLog.Add((int[])tiles.Clone()); Wall.Clear(); Wall.AddRange(tiles); ++HandNumber; Dealer = SelectDealer(); Turn = Dealer;
         Players = Enumerable.Range(0, 4).Select(_ => new VariantPlayer()).ToArray();
         Claims.Clear(); Responses.Clear(); PendingKong = null; Replacement = Interrupted = false; Result = ""; History.Clear();
         for (int i = 0; i < 52; ++i)
@@ -87,6 +91,8 @@ public abstract class VariantMatch : IMatch
     }
     protected void Draw(int seat, bool replacement = false)
     {
+        if (ShouldEndMatch) { Result = "击飞终局"; History.Add(Result); FinishHand(); return; }
+        while (!Participating(seat)) seat = (seat + 1) % 4;
         int tile = TakeTile(seat, replacement);
         if (tile < 0) { Exhausted(); return; }
         VariantPlayer p = Players[seat]; p.Hand.Add(tile); p.Hand.Sort(); p.Drawn = tile; ++p.Draws;
@@ -125,7 +131,7 @@ public abstract class VariantMatch : IMatch
     protected virtual void SpecialSubmit(int seat, MatchAction action) => throw new ArgumentException("No special action");
     public IReadOnlyList<MatchAction> GetActions(int seat)
     {
-        if (seat is < 0 or >= 4) return [];
+        if (seat is < 0 or >= 4 || !Participating(seat)) return [];
         IReadOnlyList<MatchAction>? special = SpecialActions(seat); if (special is not null) return Unique(special);
         if (Phase == "claims") return !Responses.ContainsKey(seat) && Claims.TryGetValue(seat, out List<MatchAction>? options) ? Unique(options) : [];
         if (Phase != "turn" || seat != Turn) return [];
@@ -180,7 +186,7 @@ public abstract class VariantMatch : IMatch
         Phase = "claims"; Claims.Clear(); Responses.Clear(); int kind = LastTile / 4;
         for (int s = 0; s < 4; ++s)
         {
-            if (s == LastActor) continue;
+            if (s == LastActor || !Participating(s)) continue;
             VariantPlayer p = Players[s]; List<MatchAction> actions = [];
             if (CanWin(s, LastTile, false, ClaimKind == "added_kan")) actions.Add(new("ron"));
             if (ClaimKind == "discard" && CanCall(s, LastTile) && Wall.Count > 0)
@@ -209,7 +215,7 @@ public abstract class VariantMatch : IMatch
             {
                 Players[LastActor].Hand.Remove(LastTile); Players[LastActor].WinningTiles.Add(LastTile); Players[LastActor].Drawn = -1; PendingKong = null;
             }
-            Win(IsMcr ? winners.Take(1).ToArray() : winners, LastActor, false); return;
+            Win(winners.Take(1).ToArray(), LastActor, false); return;
         }
         if (ClaimKind == "added_kan") { CompleteKong(LastActor, PendingKong ?? throw new InvalidOperationException()); PendingKong = null; return; }
         AfterDiscardClaims();
@@ -237,7 +243,7 @@ public abstract class VariantMatch : IMatch
     protected virtual void Exhausted() { Result = "荒牌流局"; FinishHand(); }
     protected void FinishHand()
     {
-        Phase = HandNumber >= TotalHands ? "complete" : "ended"; Claims.Clear(); Responses.Clear();
+        Phase = HandNumber >= TotalHands || ShouldEndMatch ? "complete" : "ended"; Claims.Clear(); Responses.Clear();
     }
     protected void Transfer(int payer, int recipient, int amount)
     {
@@ -259,9 +265,10 @@ public abstract class VariantMatch : IMatch
             state["melds" + s] = string.Join(';', p.Melds.Select(m => m.Kind + ":" + string.Join(',', m.Tiles)));
             state["flowers" + s] = string.Join(',', p.Flowers); state["winning" + s] = string.Join(',', p.WinningTiles);
             state["missing" + s] = p.MissingSuit.ToString(CultureInfo.InvariantCulture); state["wins" + s] = p.Wins.ToString(CultureInfo.InvariantCulture);
+            state["retired" + s] = Participating(s) ? "0" : "1";
             state["actions" + s] = string.Join(';', GetActions(s).Select(a => a.Kind + ":" + string.Join(',', a.Tiles)));
         }
-        EventLog.Add(new("MATCHVIEW", state));
+        AddState(state); EventLog.Add(new("MATCHVIEW", state));
     }
     public void Validate()
     {

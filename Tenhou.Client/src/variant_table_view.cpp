@@ -108,6 +108,12 @@ namespace tenhou {
         RECT heading{24, 20, r.right - 20, 55}; DrawTextW(dc, title.c_str(), -1, &heading, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
         const auto stage = value("phase");
         std::wstring instruction = stage == "exchange" ? L"选择同一花色的三张牌交换" : stage == "missing" ? L"选择定缺花色" : stage == "claims" ? L"响应其他玩家的出牌" : stage == "ended" ? L"本盘结束，请确认下一盘" : stage == "complete" ? L"本场结束" : L"选择右侧合法操作";
+        if (stage == "exchange") {
+            const auto direction = value("exchange_direction");
+            instruction += direction == "clockwise" ? L"（顺时针）" : direction == "counterclockwise" ? L"（逆时针）" : direction == "opposite" ? L"（对侧）" : L"";
+        }
+        if ((stage == "turn" || stage == "claims") && value("retired" + value("seat")) == "1")
+            instruction = L"你已和牌退场，等待本局结束";
         if (snapshot_.table_paused) instruction = L"牌桌暂停，等待重连或退出投票";
         else if (stage == "ended" && snapshot_.actions.choices.empty()) instruction = L"已准备，等待其他玩家进入下一盘";
         else if (!snapshot_.actions.pending.empty()) instruction = L"已提交，等待其他玩家与服务器";
@@ -118,13 +124,16 @@ namespace tenhou {
             std::getline(score_input, score, ','); const std::string key = std::to_string(seat);
             std::wstring text = NetworkWide(value("n" + key)) + L"  " + NetworkWide(score) + L"分";
             if (value("seat") == key) text += L"（你）";
-            if (value("turn") == key) text += L"  ←";
+            if (value("dealer") == key) text += L"  庄";
+            if (value("turn") == key && value("retired" + key) != "1") text += L"  ←";
             if (value("missing" + key) != "-1" && !value("missing" + key).empty()) text += L"  缺" + std::wstring(1, L"万筒索"[std::stoi(value("missing" + key))]);
             text += L"\n手牌：" + (value("hand" + key).empty() ? NetworkWide(value("hidden" + key)) + L"张暗牌" : Tiles(value("hand" + key)));
             text += L"\n副露：" + Melds(value("melds" + key));
             if (!value("flowers" + key).empty()) text += L"  花：" + Tiles(value("flowers" + key));
             text += L"\n牌河：" + Tiles(value("river" + key));
-            if (!value("wins" + key).empty() && value("wins" + key) != "0") text += L"  已和 " + NetworkWide(value("wins" + key)) + L" 次";
+            if (value("retired" + key) == "1") text += L"  已和退场";
+            else if (!value("wins" + key).empty() && value("wins" + key) != "0") text += L"  已和 " + NetworkWide(value("wins" + key)) + L" 次";
+            if (!value("winning" + key).empty()) text += L"  和牌：" + Tiles(value("winning" + key));
             RECT panel{24, 105 + seat * panel_height, r.right - 325, 105 + (seat + 1) * panel_height};
             DrawTextW(dc, text.c_str(), -1, &panel, DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
         }

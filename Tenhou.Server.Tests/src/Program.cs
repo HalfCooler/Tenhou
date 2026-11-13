@@ -147,7 +147,6 @@ internal static class Program
         TcpListener reserve = new(IPAddress.Loopback, 0); reserve.Start(); int port = ((IPEndPoint)reserve.LocalEndpoint).Port; reserve.Stop();
         ServerSettings settings = new() { Port = port, DataDirectory = directory, BotDelayMs = 0, MatchWaitMs = 0 };
         settings.Queues[0].Options["length"] = "single";
-        settings.Queues[4].Options["hands"] = "4";
         settings.Queues[5].Options["hands"] = "4";
         var registry = Registries(); string token;
         using (JsonStore store = new(directory))
@@ -224,7 +223,7 @@ internal static class Program
         {
             for (int i = 0; i < clients.Length; ++i)
             { await clients[i].Connect(port); await clients[i].Login(name: i == 0 ? "test_owner" : "NoName", register: i == 0); }
-            await clients[0].Send("<ROOMCREATE rid=\"1\" rule=\"sichuan-bloodflow\" hands=\"1\"/>");
+            await clients[0].Send("<ROOMCREATE rid=\"1\" rule=\"sichuan-bloodbattle\"/>");
             string room = (await clients[0].Until("ACCEPT")).Get("room"); await clients[0].Until("ROOM");
             for (int i = 1; i < clients.Length; ++i)
             { await clients[i].Send($"<ROOMJOIN rid=\"1\" room=\"{room}\"/>"); await clients[i].Until("ROOM"); }

@@ -183,7 +183,7 @@ namespace tenhou {
         std::string lobby_music_key_;
         bool music_preview_ = false;
         ReplaySoundBank sounds_;
-        bool sound_enabled_ = false, sound_loaded_ = false;
+        bool sound_enabled_ = true, sound_loaded_ = false;
         bool animation_enabled_ = true;
         bool effects_only_ = false;
         bool individual_voices_ = false;

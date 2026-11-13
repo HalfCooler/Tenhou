@@ -9,4 +9,4 @@
 
 相关文件为 `Tenhou.Server/src/Rules/Guobiao/FanCatalog.cs`、`Tenhou.Server/src/Rules/Guobiao/McrScoring.cs` 和测试工程的 `McrFixtures.json`。服务端运行时使用本项目的托管 C# 实现，不加载该项目的 C++ 代码。
 
-四川规则还参考竞技世界的公开[血流成河说明](https://www.jj.cn/news/320/20120925153300025557.shtml)，项目内可配置的计分约定以 RULES.md 为准。
+旧四川血流实现曾参考竞技世界的公开[血流成河说明](https://www.jj.cn/news/320/20120925153300025557.shtml)。当前四川血战到底采用项目约定的村规，以 [RULES.md](RULES.md) 为准。

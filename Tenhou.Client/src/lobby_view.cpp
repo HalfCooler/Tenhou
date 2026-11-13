@@ -10,6 +10,7 @@
 #include <charconv>
 #include <stdexcept>
 #include <commctrl.h>
+#include <random>
 
 namespace tenhou {
     void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
@@ -28,6 +29,11 @@ namespace tenhou {
             InvalidateRect(window_, nullptr, FALSE);
         }
         if (change == PreferenceChange::Sound) {
+            // The original sound-volume control is the online mute switch. The
+            // retired NetworkSound flag had no UI and persisted a silent default.
+            sound_enabled_ = preferences.se_volume > 0;
+            settlement_view_->SetSoundEnabled(sound_enabled_);
+            StopAudio();
             audio_.SetVolumePercent(preferences.se_volume);
             const auto voice_mode = GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
                                                           GetPrivateProfileIntW(
@@ -37,6 +43,8 @@ namespace tenhou {
             individual_voices_ = voice_mode == 2;
             sound_loaded_ = false;
             audio_error_.clear();
+            log_("ONLINE AUDIO SETTINGS enabled=" + std::to_string(sound_enabled_) +
+                 " master=" + std::to_string(preferences.se_volume));
             StopLobbyMusic();
             UpdateLobbyMusic();
         }
@@ -134,7 +142,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         exit_vote_text_ = vote_control(L"STATIC", L"", 5162, 20, 18, 380, 105, SS_LEFT);
         exit_yes_ = vote_control(L"BUTTON", L"同意退出", 5163, 60, 135, 130, 30, WS_TABSTOP | BS_PUSHBUTTON);
         exit_no_ = vote_control(L"BUTTON", L"继续对局", 5164, 225, 135, 130, 30, WS_TABSTOP | BS_DEFPUSHBUTTON);
-        sound_enabled_ = GetPrivateProfileIntW(L"REBUILD", L"NetworkSound", 0, config_.c_str()) != 0;
         animation_enabled_ = GetPrivateProfileIntW(L"REBUILD", L"NetworkAnimation", 1, config_.c_str()) != 0;
         settlement_view_ = std::make_unique<SettlementView>(window_);
         settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
@@ -251,8 +258,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     void LobbyView::Disconnect() { if (client_->active() || Snapshot().reconnect_available) client_->Disconnect(); }
 
     void LobbyView::Save() {
-        if (!WritePrivateProfileStringW(L"REBUILD", L"NetworkSound", sound_enabled_ ? L"1" : L"0", config_.c_str()) ||
-            !WritePrivateProfileStringW(L"REBUILD", L"NetworkAnimation", animation_enabled_ ? L"1" : L"0",
+        if (!WritePrivateProfileStringW(L"REBUILD", L"NetworkAnimation", animation_enabled_ ? L"1" : L"0",
                                         config_.c_str()))
             throw std::runtime_error("Cannot save server preferences");
     }
@@ -944,7 +950,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         lobby_music_key_ = identity;
         if (_wcsicmp(source.c_str(), L"none") == 0) return;
         try {
-            const auto path = MusicPath(resource_directory_, config_, key);
+            // Choose only when starting playback, never on every snapshot/timer.
+            // Repeats are allowed, as with the original client's independent draw.
+            static std::mt19937 random(std::random_device{}());
+            const auto path = MusicPlaybackPath(resource_directory_, config_, key,
+                                                 std::uniform_int_distribution<unsigned>(0, 1)(random));
             if (path.empty()) return;
             const int master = std::clamp(
                 static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str())), 0, 200);

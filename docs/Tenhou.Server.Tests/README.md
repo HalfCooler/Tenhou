@@ -5,7 +5,7 @@
 | 文件 | 功能 |
 | --- | --- |
 | `src/Program.cs` | 立直规则/重放、TCP 目录和房间、幂等、恢复、多人同步动作、退出投票、真实进程启停 |
-| `src/VariantChecks.cs`、`McrFixtures.json` | 四川与国标完整对局、重放、规则边界和国标计分参考样例 |
+| `src/VariantChecks.cs`、`src/SichuanChecks.cs`、`McrFixtures.json` | 四川八局与国标完整对局、重放；血战退场、截和、翻种、杠税、流局与终局边界；国标计分参考样例 |
 | `src/native_rule_oracle.cpp`、`src/native-riichi-reference/` | 冻结旧 C++ 规则参考样本，可选逐事件差异检查 |
 
 在仓库根目录运行：

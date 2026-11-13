@@ -23,7 +23,7 @@ public sealed record ServerSettings
         new(102, "立直 四人 半庄", "riichi", new() { ["match_type"] = "standard4", ["length"] = "south" }),
         new(103, "立直 三人 东风", "riichi", new() { ["match_type"] = "standard3", ["length"] = "east" }),
         new(104, "立直 三人 半庄", "riichi", new() { ["match_type"] = "standard3", ["length"] = "south" }),
-        new(201, "四川 血流成河", "sichuan-bloodflow", new()),
+        new(201, "四川 血战到底", "sichuan-bloodbattle", new()),
         new(301, "国标麻将", "guobiao", new())
     ];
     public static JsonSerializerOptions Json { get; } = new()

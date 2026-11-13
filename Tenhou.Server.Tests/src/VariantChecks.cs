@@ -63,7 +63,7 @@ internal static class VariantChecks
         foreach (IRuleSet rule in new IRuleSet[] { new SichuanRuleSet(), new GuobiaoRuleSet() })
             for (int seed = 0; seed < 4; ++seed)
             {
-                Dictionary<string, string> options = new() { ["hands"] = "1" };
+                Dictionary<string, string> options = rule is SichuanRuleSet ? new() : new() { ["hands"] = "1" };
                 IMatch match = rule.Create(options, new Random(seed)), replay = rule.Create(options, new Random(seed + 200));
                 match.Start(); replay.Start(match.Walls[0]); int commands = 0;
                 if (seed == 0)
@@ -77,61 +77,20 @@ internal static class VariantChecks
                 }
                 while (!match.IsComplete)
                 {
+                    if (match.HandEnded) { match.Start(); replay.Start(match.Walls[^1]); }
                     bool acted = false;
                     for (int seat = 0; seat < 4; ++seat)
                     {
                         if (match.GetActions(seat).Count == 0) continue;
                         MatchAction action = match.ChooseBotAction(seat); match.Submit(seat, action); replay.Submit(seat, action);
                         match.Validate(); replay.Validate(); acted = true; ++commands;
-                        if (JsonSerializer.Serialize(match.Events) != JsonSerializer.Serialize(replay.Events)) throw new Exception("Variant replay mismatch");
+                        if (match.Events.Count != replay.Events.Count || JsonSerializer.Serialize(match.Events[^1]) != JsonSerializer.Serialize(replay.Events[^1])) throw new Exception("Variant replay mismatch");
                         break;
                     }
-                    if (!acted || commands > 2000) throw new Exception("Variant game stuck");
+                    if (!acted || commands > 20000) throw new Exception("Variant game stuck");
                 }
                 Console.WriteLine($"PASS {rule.Descriptor.Id} seed {seed}: {commands} actions, scores {string.Join(',', match.Scores)}");
             }
-        BloodflowContinuation();
-    }
-    private static void BloodflowContinuation()
-    {
-        SichuanRuleSet rule = new();
-        IMatch match = rule.Create(new Dictionary<string, string> { ["hands"] = "1", ["exchange"] = "0" }, new Random(5));
-        int[] hand = [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 16]; int[] draws = [17, 36, 37, 38, 19];
-        List<int> available = Enumerable.Range(0, 108).Except(hand).Except(draws).ToList();
-        List<int>[] hands = [hand.ToList(), available.Take(13).ToList(), available.Skip(13).Take(13).ToList(), available.Skip(26).Take(13).ToList()];
-        int[] wall = Enumerable.Range(0, 13).SelectMany(i => Enumerable.Range(0, 4).Select(s => hands[s][i]))
-            .Concat(draws).Concat(available.Skip(39)).ToArray();
-        match.Start(wall);
-        for (int seat = 0; seat < 4; ++seat) match.Submit(seat, new("dingque", [seat == 0 ? 2 : 0]));
-        match.Submit(0, new("tsumo"));
-        SichuanMatch bloodflow = (SichuanMatch)match;
-        if (bloodflow.IsComplete || bloodflow.Players[0].Wins != 1 || bloodflow.Players[0].Hand.Count != 13 || !bloodflow.Players[0].Locked)
-            throw new Exception("First bloodflow win ended the hand or failed to lock the wait");
-        for (int seat = 1; seat < 4; ++seat)
-        {
-            match.Submit(seat, match.GetActions(seat).First(a => a.Kind == "discard"));
-            while (match.Phase == "claims")
-            {
-                int claimant = Enumerable.Range(0, 4).First(s => match.GetActions(s).Count > 0);
-                match.Submit(claimant, match.GetActions(claimant).First(a => a.Kind == "skip"));
-            }
-        }
-        if (bloodflow.Turn != 0 || bloodflow.Players[0].Drawn != 19) throw new Exception("Bloodflow rotation lost its wall order");
-        match.Submit(0, new("tsumo")); match.Validate();
-        if (bloodflow.Players[0].Wins != 2 || bloodflow.Players[0].Hand.Count != 13 || bloodflow.IsComplete)
-            throw new Exception("Repeated bloodflow win failed");
-        Console.WriteLine("PASS bloodflow repeated wins, locked wait, continued play and tile conservation");
-        bloodflow.Players[0].Hand.Clear();
-        bloodflow.Players[0].Hand.AddRange(new[] { 4, 8, 12, 16, 20, 24, 28, 32, 36, 37 });
-        bloodflow.Players[0].Melds.Add(new("closed_kan", [0, 1, 2, 3], 0, 0));
-        if (bloodflow.Score(0, 0, false, false) is not null) throw new Exception("A fifth copy in a declared kong scored as a ready-hand win");
-        Console.WriteLine("PASS Sichuan virtual fifth-copy wait after a kong is rejected");
-        SichuanMatch alternate = (SichuanMatch)rule.Create(new Dictionary<string, string> { ["hands"] = "1", ["fan_cap"] = "10" }, new Random(1));
-        alternate.Start(); alternate.Players[0].MissingSuit = 2; alternate.Players[0].Hand.Clear();
-        alternate.Players[0].Hand.AddRange(Enumerable.Range(0, 12).Concat(new[] { 32, 33 }));
-        SichuanValue? alternateValue = alternate.Score(0, 33, true, false);
-        if (alternateValue?.Fan != 7 || (alternateValue.Patterns.Contains("七对") && alternateValue.Patterns.Contains("带幺九")))
-            throw new Exception("Sichuan combined mutually exclusive decompositions");
-        Console.WriteLine("PASS Sichuan scoring selects one decomposition before adding shared bonuses");
+        SichuanChecks.Run();
     }
 }

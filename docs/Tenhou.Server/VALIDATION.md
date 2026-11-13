@@ -23,7 +23,7 @@
 dotnet run --project Tenhou.Server.Tests -c Release
 ./Build-Tenhou.ps1 -Fresh -NativeReference
 dotnet ./build/Tenhou.Server.Tests/Tenhou.Server.Tests.dll --oracle ./build/Tenhou.Server.Tests/tenhou_rule_oracle.exe --native-client ./build/Tenhou.Client.Tests/tenhou_protocol_check.exe
-./build/Tenhou.Client.Tests/tenhou_variant_ui_check.exe build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodflow.txt build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodflow.bmp
+./build/Tenhou.Client.Tests/tenhou_variant_ui_check.exe build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodbattle.txt build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodbattle.bmp
 ./build/Tenhou.Client.Tests/tenhou_variant_ui_check.exe build/Tenhou.Server.Tests/ui-fixtures/guobiao.txt build/Tenhou.Server.Tests/ui-fixtures/guobiao.bmp
 ```
 
@@ -48,3 +48,11 @@ Debug 构建时，本机 MSVC / SDK 正在升级，曾临时使用工作区内�
 - PowerShell 语法、帮助、无效目标和原生参考目标约束检查；源码与部署文档的本地链接检查；`git diff --check`。
 
 此次结构整理未重新执行 Debug 全量构建、GUI 人工检查或跨平台运行验证。
+
+## 四川血战村规修订验证（2026-11-13）
+
+本节替代上文旧血流规则的验证口径。新增 `SichuanChecks.cs`，使用定制牌山验证和牌退场、跳过已和玩家、有效付款人数、三家和完、逆时针截和（反序提交）、首和坐庄、抢加杠不收税、杠上炮加翻且不转移杠收入。覆盖基本翻种、根与龙七对扣根、清幺九按清一色带幺九、天和/地和、杠上花、最大听牌赔付、花猪、无封顶按5翻赔付、退税与保留杠税、八局换牌顺序、固定八局终局、默认不击飞及可选击飞、末四张仍可不和。
+
+通过 .NET Release 测试：四川四组完整八局与逐事件重放、国标四组对局与130个计分样例、立直三/四人各六组、TCP房间和重启恢复、四人同步换牌/定缺与退出投票、独立进程启停。MSVC Release 客户端及客户端测试构建、CTest资源检查通过。真实 C++ 协议栈联机血战八局，含 NEXTREADY 与返回大厅。
+
+界面夹具新增 `sichuan-bloodbattle-retired.txt`，展示已和退场与等待提示；初始换牌夹具更新为 `sichuan-bloodbattle.txt`。

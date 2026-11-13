@@ -42,7 +42,7 @@ dotnet publish Tenhou.Server -c Release -r win-x64 --self-contained true -o buil
   "dataDirectory": "data",
   "queues": [
     { "id": 1, "name": "好友立直四人一局", "rule": "riichi", "options": { "length": "single" } },
-    { "id": 2, "name": "血流成河一盘", "rule": "sichuan-bloodflow", "options": { "hands": "1" } },
+    { "id": 2, "name": "血战到底半庄", "rule": "sichuan-bloodbattle", "options": {} },
     { "id": 3, "name": "国标练习", "rule": "guobiao", "options": { "hands": "1" } }
   ]
 }
