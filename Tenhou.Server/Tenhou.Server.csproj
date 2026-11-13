@@ -6,15 +6,20 @@
     <RootNamespace>Tenhou.Server</RootNamespace>
     <AssemblyName>Tenhou.Server</AssemblyName>
     <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="src/**/*.cs" />
     <None Update="server.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="licenses/**" CopyToOutputDirectory="PreserveNewest" />
-    <None Update="README.md;RULES.md;PROTOCOL.md;ARCHITECTURE.md;VALIDATION.md;THIRD-PARTY-NOTICES.md;manage-server.ps1;start-server.cmd;stop-server.cmd"
+    <None Update="manage-server.ps1;start-server.cmd;stop-server.cmd"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../docs/Tenhou.Server/*.md" Link="docs/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../docs/Tenhou.Server/licenses/**" Link="docs/licenses/%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

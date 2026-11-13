@@ -1,12 +1,12 @@
 # 好友麻将桌面客户端
 
-Windows / C++17 / GDI。CMake 工程及原生构建执行脚本位于本目录，配置和工具链探测由仓库根目录 `build.ps1` 管理。在仓库根目录执行：
+Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Client/src/`，CMake 工程和 `Build-Tenhou.Client.ps1` 位于项目根目录。本地工具路径由仓库根目录 `Build-Tenhou.ps1` 配置。在仓库根目录执行：
 
 ```powershell
-./build.ps1 --Target Tenhou.Client
+./Build-Tenhou.ps1 -Target Tenhou.Client
 ```
 
-默认构建 Release，产物复制到 `build/Tenhou.Client/tenhou_rebuild.exe`；使用 `--Configuration Debug` 切换配置。资源统一维护在 `assets/`，以 [资源清单](assets/catalog.cmake) 为唯一登记入口：
+默认构建 Release，产物复制到 `build/Tenhou.Client/tenhou_rebuild.exe`；使用 `-Configuration Debug` 切换配置。资源统一维护在 `Tenhou.Client/assets/`，以 [资源清单](../../Tenhou.Client/assets/catalog.cmake) 为唯一登记入口（下表路径相对项目根目录）：
 
 | 目录 | 内容 | 发布方式 |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Windows / C++17 / GDI。CMake 工程及原生构建执行脚本位于本目录�
 可单独检查实际资源解码、内嵌模板、旧目录兼容和资源字节一致性：
 
 ```powershell
-./build.ps1 --Target Tenhou.Client.Tests
+./Build-Tenhou.ps1 -Target Tenhou.Client.Tests
 ./build/Tenhou.Client.Tests/tenhou_resource_check.exe ./build/Tenhou.Client.Tests/resources ./Tenhou.Client/assets
 ```
 

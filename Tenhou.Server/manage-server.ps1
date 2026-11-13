@@ -13,7 +13,7 @@ $taskCandidates = @(
     (Join-Path $taskRoot '../build/Tenhou.Server/Tenhou.Server.dll')
 )
 $taskBinary = $taskCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-if (!$taskBinary) { throw 'Build the server first: ./build.ps1 --Target Tenhou.Server' }
+if (!$taskBinary) { throw 'Build the server first: ./Build-Tenhou.ps1 -Target Tenhou.Server' }
 if ($Action -eq 'stop') {
     & dotnet $taskBinary --config $ConfigurationFile --stop
     if ($LASTEXITCODE) { throw 'The server did not acknowledge the shutdown request.' }

@@ -1,5 +1,5 @@
 # Included by the single native CMake project in Tenhou.Client.
-set(client_checks_directory "${CMAKE_CURRENT_LIST_DIR}")
+set(client_checks_directory "${CMAKE_CURRENT_LIST_DIR}/src")
 add_executable(tenhou_protocol_check "${client_checks_directory}/client_protocol_check.cpp")
 target_link_libraries(tenhou_protocol_check PRIVATE tenhou_network)
 add_executable(tenhou_variant_ui_check "${client_checks_directory}/variant_ui_check.cpp" src/variant_table_view.cpp)

@@ -21,7 +21,7 @@
 
 ```powershell
 dotnet run --project Tenhou.Server.Tests -c Release
-./build.ps1 --Fresh --NativeReference
+./Build-Tenhou.ps1 -Fresh -NativeReference
 dotnet ./build/Tenhou.Server.Tests/Tenhou.Server.Tests.dll --oracle ./build/Tenhou.Server.Tests/tenhou_rule_oracle.exe --native-client ./build/Tenhou.Client.Tests/tenhou_protocol_check.exe
 ./build/Tenhou.Client.Tests/tenhou_variant_ui_check.exe build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodflow.txt build/Tenhou.Server.Tests/ui-fixtures/sichuan-bloodflow.bmp
 ./build/Tenhou.Client.Tests/tenhou_variant_ui_check.exe build/Tenhou.Server.Tests/ui-fixtures/guobiao.txt build/Tenhou.Server.Tests/ui-fixtures/guobiao.bmp
@@ -34,3 +34,17 @@ Debug 构建时，本机 MSVC / SDK 正在升级，曾临时使用工作区内�
 本次没有进行 Linux/macOS 运行验证、长时间压力测试或全部牌山穷举。参考样例覆盖全部番种，不能消除所有罕见组合及规则解释分歧。
 
 四川与国标目前使用可操作的通用文字牌桌，立直保留原有 GDI 牌桌；通用牌桌未接入立直动画、音效和牌谱浏览器。四川/国标的 JSON 牌谱保存在服务器，客户端自动下载 XML 仅用于立直。
+
+## 项目结构整理验证（2026-11-13）
+
+四个项目保持在解决方案根目录，项目代码统一位于各自的 `src/`，文档统一位于根目录 `docs/`。37 个迁移的代码文件与迁移前内容一致；两个 C# 工程显式只编译 `src/**/*.cs`。
+
+本次通过：
+
+- `./Build-Tenhou.ps1 -Clean` 后执行 `./Build-Tenhou.ps1 -NativeReference -Fresh`，四项目 Release 编译、部署及可选原生规则对照程序均通过。
+- `dotnet build Tenhou.slnx -c Release`，验证 `.proj` 经 Windows PowerShell 调用新入口，零警告、零错误。
+- 上文带 `--oracle`、`--native-client` 的完整服务端测试，包含规则差异、真实客户端联机、TCP 持久化与恢复、四客户端房间及真实进程启停。
+- `ctest --test-dir ./Tenhou.Client.Tests/obj/native/Release --output-on-failure` 及部署目录中的资源检查程序。
+- PowerShell 语法、帮助、无效目标和原生参考目标约束检查；源码与部署文档的本地链接检查；`git diff --check`。
+
+此次结构整理未重新执行 Debug 全量构建、GUI 人工检查或跨平台运行验证。

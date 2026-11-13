@@ -1,5 +1,5 @@
 # Optional frozen oracle for server migration comparisons; never linked into production.
-set(rule_reference_directory "${CMAKE_CURRENT_LIST_DIR}")
+set(rule_reference_directory "${CMAKE_CURRENT_LIST_DIR}/src")
 add_executable(tenhou_rule_oracle "${rule_reference_directory}/native_rule_oracle.cpp"
     "${rule_reference_directory}/native-riichi-reference/common.cpp"
     "${rule_reference_directory}/native-riichi-reference/scoring.cpp"

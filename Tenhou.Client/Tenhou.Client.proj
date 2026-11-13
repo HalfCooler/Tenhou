@@ -4,14 +4,15 @@
     <RestoreProjectStyle>Unknown</RestoreProjectStyle>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="CMakeLists.txt;build.ps1;cmake/**;src/**;assets/catalog.cmake;README.md" />
+    <None Include="CMakeLists.txt;Build-Tenhou.Client.ps1;../scripts/Build.Common.ps1;cmake/**;src/**;assets/catalog.cmake" />
+    <None Include="../docs/Tenhou.Client/**" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)/NuGet.targets" Condition="Exists('$(MSBuildToolsPath)/NuGet.targets')" />
   <Target Name="Build">
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../build.ps1&quot; -Target Tenhou.Client -Configuration $(Configuration)" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../Build-Tenhou.ps1&quot; -Target Tenhou.Client -Configuration $(Configuration)" />
   </Target>
   <Target Name="Clean">
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../build.ps1&quot; -Target Tenhou.Client -Clean" />
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)../Build-Tenhou.ps1&quot; -Target Tenhou.Client -Clean" />
   </Target>
   <Target Name="Rebuild" DependsOnTargets="Clean;Build" />
 </Project>

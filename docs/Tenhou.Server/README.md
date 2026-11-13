@@ -1,13 +1,13 @@
 # Tenhou.Server
 
-项目目录 `Tenhou.Server`，根命名空间与程序集名 `Tenhou.Server`。使用 .NET 11 / C# 15，显式 `using`、启用 nullable、禁止 unsafe，不加载 C++ DLL，不依赖 Windows 专用 API。
+项目目录 `Tenhou.Server/`，代码集中在 `Tenhou.Server/src/`，项目构建入口为 `Tenhou.Server/Build-Tenhou.Server.ps1`。根命名空间与程序集名 `Tenhou.Server`。使用 .NET 11 / C# 15，显式 `using`、启用 nullable、禁止 unsafe，不加载 C++ DLL，不依赖 Windows 专用 API。
 
 ## 构建和运行
 
 在仓库根目录执行：
 
 ```powershell
-.\build.ps1 --Target Tenhou.Server
+.\Build-Tenhou.ps1 -Target Tenhou.Server
 dotnet run --project Tenhou.Server -c Release -- --config Tenhou.Server/server.json
 ```
 
@@ -64,4 +64,4 @@ dotnet publish Tenhou.Server -c Release -r win-x64 --self-contained true -o buil
 
 真人断线会暂停整桌，登录恢复后继续。退出采用单真人直接退出、多真人30秒严格过半投票；立直排位桌禁止中途退出。全注册真人立直好友局计入现有段位，其余玩法不计立直段位。结算标记与账号场次在同一快照提交。
 
-详细设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，玩法约定见 [RULES.md](RULES.md)，消息见 [PROTOCOL.md](PROTOCOL.md)，验证记录见 [VALIDATION.md](VALIDATION.md)，参考实现许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+服务端部署目录中的 `docs/` 随附这些文档及参考实现许可。详细设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，玩法约定见 [RULES.md](RULES.md)，消息见 [PROTOCOL.md](PROTOCOL.md)，验证记录见 [VALIDATION.md](VALIDATION.md)，参考实现许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

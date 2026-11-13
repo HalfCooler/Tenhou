@@ -2,7 +2,7 @@
 
 服务端是一个进程。`TcpHost` 负责异步 `TcpListener` 接入、UTF-8 分帧、发送队列和生命周期；所有房间与牌桌状态由有界 `Channel<HostEvent>` 的单消费者修改。`HostEvent` 使用 C# 15 联合类型表达接入、收到帧、断开和时钟事件。
 
-`Rules/Contracts.cs` 定义两个主要接口：
+下列代码路径均相对 `Tenhou.Server/src/`。`Rules/Contracts.cs` 定义两个主要接口：
 
 - `IRuleSet`：稳定规则 ID、设置描述、参数校验及 `IMatch` 创建。规则目录通过注册表下发。
 - `IMatch`：一场对局的状态、合法动作、操作提交、人机选择、事件、牌山和不变量校验。和牌是否结束当前手牌由实现决定。
@@ -19,4 +19,4 @@
 
 扩展新规则时，实现并注册 `IRuleSet`、`IMatch`，提供设置与完整规则测试。能使用 `mahjong-v1` 的玩法可以复用通用牌桌；需要新牌具或新视觉语义时添加独立 presentation 与相应客户端 renderer。仅完成接口、未具备可玩实现的规则不应放入目录。
 
-`Tenhou.Server.Tests/native-riichi-reference` 是冻结的旧规则比较样本，仅构建为可选测试程序。生产构建不编译这些源文件。
+`Tenhou.Server.Tests/src/native-riichi-reference` 是冻结的旧规则比较样本，仅构建为可选测试程序。生产构建不编译这些源文件。

@@ -5,9 +5,13 @@
     <LangVersion>15.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../Tenhou.Server/Tenhou.Server.csproj" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+    <ProjectReference Include="../Tenhou.Server/Tenhou.Server.csproj" />
+  </ItemGroup>
   <ItemGroup><None Update="McrFixtures.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

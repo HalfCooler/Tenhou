@@ -1,6 +1,6 @@
 # Tenhou.Client.Tests
 
-客户端专项检查集中在本项目，复用 `Tenhou.Client/CMakeLists.txt` 定义的客户端库及工具链。`Tenhou.Client.Tests.proj` 将这些检查登记到 `Tenhou.slnx`；`Tests.cmake` 负责测试目标定义。
+客户端专项检查的代码集中在 `Tenhou.Client.Tests/src/`，复用 `Tenhou.Client/CMakeLists.txt` 定义的客户端库及工具链。项目根目录的 `Build-Tenhou.Client.Tests.ps1` 负责构建与部署，`Tenhou.Client.Tests.proj` 将这些检查登记到 `Tenhou.slnx`；`Tests.cmake` 负责测试目标定义。下表文件位于项目的 `src/` 中。
 
 | 文件 | 功能 |
 | --- | --- |
@@ -11,12 +11,12 @@
 在仓库根目录构建和运行：
 
 ```powershell
-.\build.ps1 --Target Tenhou.Client.Tests
+.\Build-Tenhou.ps1 -Target Tenhou.Client.Tests
 .\build\Tenhou.Client.Tests\tenhou_resource_check.exe .\build\Tenhou.Client.Tests\resources .\Tenhou.Client\assets
 # 同一资源检查也登记到 CTest
 ctest --test-dir .\Tenhou.Client.Tests\obj\native\Release --output-on-failure
 
-.\build.ps1 --Target Tenhou.Server.Tests
+.\Build-Tenhou.ps1 -Target Tenhou.Server.Tests
 dotnet .\build\Tenhou.Server.Tests\Tenhou.Server.Tests.dll --native-client .\build\Tenhou.Client.Tests\tenhou_protocol_check.exe
 
 .\build\Tenhou.Client.Tests\tenhou_variant_ui_check.exe .\build\Tenhou.Server.Tests\ui-fixtures\sichuan-bloodflow.txt .\build\Tenhou.Server.Tests\ui-fixtures\sichuan-bloodflow.bmp

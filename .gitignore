@@ -3,12 +3,6 @@
 .vs/
 
 build/
-build-Release/
-build-Debug/
-
-cmake-build-release/
-cmake-build-debug/
-
 **/bin/
 **/obj/
 Tenhou.Server/data/
