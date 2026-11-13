@@ -32,7 +32,7 @@ public static class Wire
         { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = MaximumFrameBytes });
         XElement element = XElement.Load(reader);
         if (element.Name.Namespace != XNamespace.None || element.HasElements || element.Value.Length != 0
-            || element.Attributes().Count() > 64 || element.Attributes().Any(a => a.IsNamespaceDeclaration || a.Name.Namespace != XNamespace.None))
+            || element.Attributes().Count() > 256 || element.Attributes().Any(a => a.IsNamespaceDeclaration || a.Name.Namespace != XNamespace.None))
             throw new ArgumentException("Expected a flat protocol message");
         return new(element.Name.LocalName, element.Attributes().ToDictionary(a => a.Name.LocalName, a => a.Value, StringComparer.Ordinal));
     }

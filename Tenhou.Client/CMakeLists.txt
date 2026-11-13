@@ -32,14 +32,15 @@ add_library(tenhou_table STATIC src/table_scene.cpp src/replay_effects.cpp src/r
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay winmm msacm32 gdiplus)
-add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp)
+add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp src/variant_state.cpp)
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32)
-add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/background.cpp src/table_view.cpp
-        src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
+set(tenhou_lobby_sources src/background.cpp src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
         src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/variant_table_view.cpp
+)
+add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/table_view.cpp ${tenhou_lobby_sources}
         "${asset_generated_directory}/client_assets.rc")
 target_compile_options(tenhou_rebuild PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus winmm comdlg32 shell32 comctl32 ole32)

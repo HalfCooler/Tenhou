@@ -1,5 +1,6 @@
 #pragma once
 #include "online_actions.hpp"
+#include "variant_state.hpp"
 #include "matchmaking.hpp"
 #include <cstdint>
 #include <map>
@@ -48,6 +49,7 @@ namespace tenhou {
     struct LobbySnapshot {
         bool variant_active = false;
         std::map<std::string, std::string> variant_state;
+        VariantState variant;
         bool catalog_ready = false;
         std::map<std::string, ServerRule> rules;
         std::vector<ServerQueue> queues;

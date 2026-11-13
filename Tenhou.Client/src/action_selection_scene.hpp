@@ -35,7 +35,9 @@ namespace tenhou {
 
         std::size_t UniqueCall(const ActionSnapshot &actions, bool red) const;
 
-        bool HandSelection() const { return group == "chi" || group == "pon"; }
+        bool HandSelection() const { return group == "chi" || group == "pon" || group == "exchange"; }
+
+        std::size_t Confirm(const ActionSnapshot &actions) const;
 
         std::vector<int> Selectable(const ActionSnapshot &actions) const;
 

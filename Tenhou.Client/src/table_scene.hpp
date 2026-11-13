@@ -14,6 +14,7 @@ namespace tenhou {
         unsigned meld_sideways = 0; // Native n slots that widen the following slots.
         int river_reach_slot = -1; // Declaration preceding this tile in the same row.
         bool river_waiting = false;
+        int wall_extra = 0; // Additional stacks translated from measured native resource anchors.
     };
 
     struct PositionedTile {

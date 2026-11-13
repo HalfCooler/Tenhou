@@ -543,6 +543,7 @@ namespace tenhou {
         r.initialized = s.initialized;
         r.ended = s.ended;
         r.furiten = s.furiten;
+        r.variant = s.variant;
         r.type = s.type;
         r.seat_mask = s.seat_mask;
         r.red_tiles = s.red_tiles;
@@ -567,6 +568,9 @@ namespace tenhou {
             q.score = p.score;
             q.reach = p.reach;
             q.drawn_tile = p.drawn_tile;
+            q.retired = p.retired;
+            q.missing_suit = p.missing_suit;
+            q.winning_tile = p.winning_tile;
             q.hand = p.known_hand;
             q.deal_hand = p.deal_hand;
             q.hand.insert(q.hand.end(), static_cast<std::size_t>(p.hidden_count), -1);

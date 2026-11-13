@@ -307,6 +307,7 @@ namespace tenhou {
     }
 
     std::string SettlementLabel(const SettlementReceipt &r) {
+        if (r.generic) return r.who < 0 ? "盘末结算" : std::string(r.who == r.from ? "自摸" : "荣和") + " | 座位 " + std::to_string(r.who);
         return r.tag == "AGARI"
                    ? (r.who == r.from ? "Tsumo" : "Ron") + std::string(" | Seat ") + std::to_string(r.who)
                    : "Draw" + (r.reason.empty() ? std::string() : " | " + r.reason);
@@ -324,6 +325,16 @@ namespace tenhou {
         }
         if (selection >= s.receipts.size()) return "No settlement received.";
         const auto &r = s.receipts[selection];
+        if (r.generic) {
+            out << SettlementLabel(r) << "\r\n";
+            if (r.who >= 0) {
+                out << Seat(r.who, names) << "  " << r.fan << " 翻\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
+                for (const auto &m: r.public_melds) out << m.kind << " [" << Tiles(m.tiles, false) << "]\r\n";
+                for (const auto &entry: r.entries) out << entry.name << "\r\n";
+            } else out << r.reason << "\r\n";
+            for (int i = 0; i < 4; ++i) out << Seat(i, names) << ": " << r.base[i] << "  " << std::showpos << r.delta[i] << std::noshowpos << " = " << r.base[i] + r.delta[i] << "\r\n";
+            return out.str();
+        }
         out << SettlementLabel(r) << "\r\n";
         if (r.who >= 0) {
             out << Seat(r.who, names) << (r.who == r.from ? " | Self draw" : " | From " + Seat(r.from, names)) <<
@@ -394,6 +405,19 @@ namespace tenhou {
             field("ba", r.ba);
             field("base", r.base);
             field("delta", r.delta);
+            out << ",\"generic\":" << r.generic << ",\"fan\":" << r.fan << ",\"entries\":[";
+            for (std::size_t j = 0; j < r.entries.size(); ++j) {
+                if (j) out << ',';
+                out << '[' << Quote(r.entries[j].name) << ',' << r.entries[j].value << ',' << r.entries[j].count << ']';
+            }
+            out << "],\"public_melds\":[";
+            for (std::size_t j = 0; j < r.public_melds.size(); ++j) {
+                if (j) out << ',';
+                const auto &m = r.public_melds[j];
+                out << '[' << Quote(m.kind) << ',' << m.source << ',' << m.called << ',' << m.added << ',';
+                Array(out, m.tiles); out << ']';
+            }
+            out << ']';
             out << ",\"has_revealed\":[";
             for (int j = 0; j < 4; ++j) {
                 if (j) out << ',';

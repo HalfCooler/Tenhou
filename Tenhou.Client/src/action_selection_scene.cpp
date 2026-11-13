@@ -64,7 +64,7 @@ namespace tenhou {
 
     std::size_t ActionSelection::UniqueCall(const ActionSnapshot &actions, bool red) const {
         const auto none = static_cast<std::size_t>(-1);
-        if (!HandSelection() || !actions.enabled || revision != actions.revision ||
+        if ((!HandSelection() && group != "kan") || group == "exchange" || !actions.enabled || revision != actions.revision ||
             !actions.pending.empty() || indices.empty())
             return none;
         const auto signature = [red](const OnlineAction &choice) {
@@ -78,13 +78,15 @@ namespace tenhou {
         if (indices.front() >= actions.choices.size()) return none;
         const auto first = signature(actions.choices[indices.front()]);
         for (auto index: indices)
-            if (index >= actions.choices.size() || signature(actions.choices[index]) != first) return none;
+            if (index >= actions.choices.size() || signature(actions.choices[index]) != first ||
+                (group == "kan" && (actions.choices[index].kind != actions.choices[indices.front()].kind ||
+                                   actions.choices[index].tiles != actions.choices[indices.front()].tiles))) return none;
         return indices.front();
     }
 
     std::vector<int> ActionSelection::Selectable(const ActionSnapshot &actions) const {
         std::vector<int> result;
-        if (!HandSelection() || revision != actions.revision || !actions.pending.empty()) return result;
+        if (!HandSelection() || !actions.enabled || revision != actions.revision || !actions.pending.empty()) return result;
         for (auto index: indices) {
             if (index >= actions.choices.size()) continue;
             const auto &tiles = actions.choices[index].tiles;
@@ -100,15 +102,20 @@ namespace tenhou {
 
     std::size_t ActionSelection::Pick(const ActionSnapshot &actions, int tile) {
         const auto none = static_cast<std::size_t>(-1);
+        if (!actions.enabled || revision != actions.revision || !actions.pending.empty()) return none;
+        const auto old = std::find(selected.begin(), selected.end(), tile);
+        if (old != selected.end()) { selected.erase(old); return none; }
         const auto allowed = Selectable(actions);
         if (std::find(allowed.begin(), allowed.end(), tile) == allowed.end()) return none;
-        const auto old = std::find(selected.begin(), selected.end(), tile);
-        if (old != selected.end()) {
-            selected.erase(old);
-            return none;
-        }
         selected.push_back(tile);
+        return group == "exchange" ? none : Confirm(actions);
+    }
+
+    std::size_t ActionSelection::Confirm(const ActionSnapshot &actions) const {
+        const auto none = static_cast<std::size_t>(-1);
+        if (!actions.enabled || revision != actions.revision || !actions.pending.empty()) return none;
         for (auto index: indices) {
+            if (index >= actions.choices.size()) continue;
             const auto &tiles = actions.choices[index].tiles;
             if (tiles.size() == selected.size() && std::all_of(selected.begin(), selected.end(), [&](int value) {
                 return std::find(tiles.begin(), tiles.end(), value) != tiles.end();

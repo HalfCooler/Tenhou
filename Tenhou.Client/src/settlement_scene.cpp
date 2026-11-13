@@ -53,7 +53,11 @@ namespace tenhou {
                 };
             };
             int ura_y = 322;
-            if (r.who < 0) {
+            if (r.generic) {
+                text("variant_name", r.who >= 0 ? names[r.who] : "四川血战到底", 24, 12, 580, 16);
+                if (r.who < 0) text("variant_reason", r.reason, 28, 150, 610, 14);
+            }
+            if (r.who < 0 && !r.generic) {
                 // FUN_004af580 chooses these exact reason image IDs from type.
                 unsigned title = 461;
                 if (r.reason == "yao9") title = 467;
@@ -102,6 +106,15 @@ namespace tenhou {
                         meld.called_tile = pon.at((static_cast<unsigned>(code) >> 9) % 3);
                     }
                     meld_tiles += meld.kind == MeldKind::ClosedKan || meld.kind == MeldKind::OpenKan ? 4 : 3;
+                    meld_state.players[0].melds.push_back(std::move(meld));
+                }
+                for (const auto &public_meld: r.public_melds) {
+                    ReplayMeld meld;
+                    const auto &kind = public_meld.kind;
+                    meld.kind = kind == "chi" ? MeldKind::Chi : kind == "pon" ? MeldKind::Pon : kind == "open_kan" ? MeldKind::OpenKan : kind == "closed_kan" ? MeldKind::ClosedKan : MeldKind::AddedKan;
+                    meld.tiles = public_meld.tiles; meld.called_tile = public_meld.called;
+                    meld.added_tile = public_meld.added; meld.from = (public_meld.source - r.who + 4) % 4;
+                    meld_tiles += kind == "closed_kan" || kind == "open_kan" ? 4 : 3;
                     meld_state.players[0].melds.push_back(std::move(meld));
                 }
                 // C82135 starts the tehai capture at slot 1 in sanma even when no
@@ -205,7 +218,7 @@ namespace tenhou {
                         scene.tiles.push_back(item);
                     }
                 };
-                indicators(r.dora, 110, "dora", true);
+                if (!r.generic) indicators(r.dora, 110, "dora", true);
                 if (!r.ura.empty()) indicators(r.ura, ura_y, "ura", ura);
                 for (std::size_t i = 0; i < std::min<std::size_t>({count, shown_yaku, 14}); ++i) {
                     const int column = static_cast<int>(i) / std::max(1, rows), row =
@@ -232,10 +245,16 @@ namespace tenhou {
                     }
                 }
                 if (count > 14) text("overflow", "More yaku: F2 / Text details", 210, 170, 350, 14);
-                if (!r.has_yaku && !r.has_yakuman) text("missing_yaku", "Yaku not supplied", 190, 194, 400, 18);
+                if (!r.generic && !r.has_yaku && !r.has_yakuman) text("missing_yaku", "Yaku not supplied", 190, 194, 400, 18);
+                if (r.generic) {
+                    text("variant_win", r.who == r.from ? "自摸" : "荣和", 260, 130, 140, 24, 0xffffffff, 1);
+                    for (std::size_t i = 0; i < r.entries.size(); ++i)
+                        text("variant_pattern", r.entries[i].name, 150, 194 + static_cast<int>(i) * 24, 420, 16);
+                    text("variant_fan", std::to_string(r.fan) + " 翻", 270, 360, 140, 22, 0xffffffff, 1);
+                }
             }
             if (totals) {
-                if (r.who >= 0) {
+                if (r.who >= 0 && !r.generic) {
                     int han = 0;
                     for (const auto &y: r.yaku) han += y.han;
                     const unsigned limit = r.has_ten && r.ten[2] >= 1 && r.ten[2] <= 5 ? 434 + r.ten[2] : 0;
@@ -296,7 +315,7 @@ namespace tenhou {
                 }
                 const int honba = r.ba.empty() ? layout.honba : r.ba[0], sticks =
                         r.ba.empty() ? layout.sticks : r.ba[1];
-                if (honba >= 0 && sticks >= 0) {
+                if (!r.generic && honba >= 0 && sticks >= 0) {
                     image(401, left + px(311), top + px(496));
                     text("honba", std::to_string(honba), 317, 493, 15, 12);
                     image(402, left + px(334), top + px(496));

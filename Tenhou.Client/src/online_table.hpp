@@ -16,6 +16,7 @@ namespace tenhou {
         std::vector<int> selected;
         bool selecting = false;
         std::wstring countdown;
+        std::wstring hint;
         std::array<bool, 4> automatic{true, false, false, false};
         int hovered_button = -1;
     };
@@ -81,6 +82,7 @@ namespace tenhou {
         ReplayState Project(const OnlineState &state);
 
         std::vector<int> hand_order_;
+        std::vector<int> raised_;
         std::uint64_t hand_events_ = 0;
         int reordered_draw_ = -1;
         std::filesystem::path directory_;

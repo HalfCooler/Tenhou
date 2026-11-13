@@ -36,10 +36,17 @@ public sealed class VariantPresentation : IMatchPresentation
     public string Project(MatchEvent e, int viewer, int window)
     {
         Dictionary<string, string> data = new(e.Data);
+        data["events"] = string.Join(';', data["events"].Split(';', StringSplitOptions.RemoveEmptyEntries).Select(item =>
+        {
+            string[] fields = item.Split(':');
+            if (fields[1] == "draw" && fields[2] != viewer.ToString(CultureInfo.InvariantCulture)) fields[3] = "-1";
+            return string.Join(':', fields);
+        }));
         for (int s = 0; s < 4; ++s)
         {
             data["hidden" + s] = data["hand" + s].Split(',', StringSplitOptions.RemoveEmptyEntries).Length.ToString(CultureInfo.InvariantCulture);
             if (s != viewer && options.GetValueOrDefault("open_hands") != "1") data.Remove("hand" + s);
+            if (s != viewer) data.Remove("drawn" + s);
             if (s != viewer)
                 data["melds" + s] = string.Join(';', data["melds" + s].Split(';').Select(m => m.StartsWith("closed_kan:", StringComparison.Ordinal) ? "closed_kan:?" : m));
             data.Remove("actions" + s);

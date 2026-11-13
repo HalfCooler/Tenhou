@@ -60,7 +60,7 @@ namespace tenhou {
                                                 event.kind != ReplayEventKind::Draw && event.kind !=
                                                 ReplayEventKind::Discard &&
                                                 event.kind != ReplayEventKind::Meld && event.tag != "SORT" && event.tag
-                                                != "MANUAL"))
+                                                != "MANUAL" && event.tag != "VARIANT"))
             return result;
         result.duration = duration;
         if (event.kind == ReplayEventKind::Meld && DecodeReplayMeld(

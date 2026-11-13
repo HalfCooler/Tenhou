@@ -1,6 +1,6 @@
 # 好友平台协议 v1
 
-传输为 `TcpListener` / TCP、严格 UTF-8、NUL 结尾的扁平 XML 消息。单帧最多 64 KiB；客户端必须处理拆包和粘包。DTD、嵌套节点、重复属性、无效 UTF-8 和超限帧均拒绝。连接有握手、半帧、空闲及发送超时；发送队列与接收事件队列都有边界。
+传输为 `TcpListener` / TCP、严格 UTF-8、NUL 结尾的扁平 XML 消息。单帧最多 64 KiB、256 个属性；客户端必须处理拆包和粘包。DTD、嵌套节点、重复属性、无效 UTF-8 和超限帧均拒绝。连接有握手、半帧、空闲及发送超时；发送队列与接收事件队列都有边界。
 
 保留 XML 与立直事件编码是为了复用现有客户端牌桌。平台版本与官方服务无关：`HELO uname="TENHOU-PLATFORM" version="1"`；不仿造官方认证。
 
@@ -37,6 +37,14 @@
 - `VSTATE`：当前视角的手牌、公开区域、分数、阶段、结果历史和 `actions`。
 - `actions="kind:tile,tile;kind:tile;..."`：仅包含该玩家可提交的操作。`dingque` 参数是花色0万/1筒/2索，其余参数是实体牌 ID。
 - `VACT table/window/kind/tiles`：选择服务器授予的操作。
+
+`VSTATE` 是完整快照，缺失的 handN 不得沿用旧快照。`handN` 仅向本人或明牌视角提供；`hiddenN` 表示当前暗手张数，`drawnN` 仅提供给本人。`meldsN="kind:tiles;..."` 配套 `meld_infoN="source,called;..."` 与 `meld_addedN="added,..."`，顺序一致，非补杠的 added 为 -1。来源座位为绝对座位；对手暗杠实体继续隐藏为 `closed_kan:?`。
+
+`wall_total/wall_front/wall_tail/wall_offset` 表示总牌数、前取数量、尾取数量和开口，满足 total = front + tail + wall；不传未来牌实体。108 张使用两边 14 墩、两边 13 墩，136/144 张每边分别为 17/18 墩；均由公开游标消费。客户端根据实际资源锚点绘制，第 18 墩不使用下层槽位充当上层。
+
+`seq` 是本场 MATCHVIEW 快照序号；`event_seq` 是公共呈现事件边界。`events="seq:kind:actor:tile:source;..."` 携带最近最多 32 条连续事件，序号在本场内递增，快照包含截至 event_seq 的全部规则变更。kind 包括 start、exchange、dingque、draw、discard、chi、pon、open_kan、closed_kan、added_kan、ron、tsumo、flower；无实体/来源为 -1。draw 的 tile 只对 actor 本人可见，其他视角为 -1。首次连接或恢复只对齐边界；事件重复不重播，缺口直接用本帧完整快照重同步。
+
+四川结算用 `receipt_count` 和 `receiptI_*`（I 从 0 开始）发送本盘不可变收据，顺序为实际和牌顺序，盘末可追加流局收据。字段为 who、from、tile、fan、patterns（分号分隔名称）、reason、base/delta（四家完整分数单位）、hand 和 melds。melds 为 `kind:tiles:source:called:added`，分号分隔；公开手牌仅用于结算，不改变活动牌桌的暗手可见性。who=-1 表示盘末查花猪、查大叫和退税的合并收据，逐家 delta 给出最终支付变化；杠税已实时包含在牌桌分数中。客户端不从名称推导计分。
 
 基础牌 ID 与现有资源一致：`0..35`万、`36..71`筒、`72..107`索、`108..123`东南西北、`124..127`白、`128..131`发、`132..135`中；国标花牌 `136..143` 为梅兰竹菊春夏秋冬。
 

@@ -10,9 +10,22 @@ namespace tenhou {
     struct SettlementYaku {
         int id = 0, han = 0;
     };
+    struct SettlementEntry {
+        std::string name;
+        int value = 0, count = 1;
+    };
+    struct SettlementMeld {
+        std::string kind;
+        std::vector<int> tiles;
+        int source = -1, called = -1, added = -1;
+    };
 
     // Immutable display receipts. These never change live hand visibility or pay scores.
     struct SettlementReceipt {
+        bool generic = false;
+        int fan = 0;
+        std::vector<SettlementEntry> entries;
+        std::vector<SettlementMeld> public_melds;
         unsigned seat_mask = 15;
         std::string tag, reason;
         int who = -1, from = -1, winning_tile = -1;

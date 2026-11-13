@@ -84,7 +84,7 @@ namespace tenhou {
         void PaintHud(Gdiplus::Graphics &graphics, const ReplayState &state);
 
         void PaintChrome(Gdiplus::Graphics &graphics, unsigned type,
-                         const std::array<bool, 4> &automatic = {true, false, false, false}, int hovered = -1);
+                         const std::array<bool, 4> &automatic = {true, false, false, false}, int hovered = -1, bool variant = false);
 
         void PaintStatus(Gdiplus::Graphics &graphics, const ReplayState &state);
 

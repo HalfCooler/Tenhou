@@ -158,13 +158,10 @@ namespace tenhou {
                     graphics.DrawRectangle(&gold, 8 + static_cast<int>(i) * w, 3, w, h);
                 }
             }
-            std::wstring ids;
-            for (int tile: a.tiles) {
-                if (!ids.empty()) ids += L",";
-                ids += std::to_wstring(tile);
-            }
+            const auto caption = a.kind == "closed_kan" ? L"暗杠" : a.kind == "added_kan" ? L"补杠" :
+                a.kind == "open_kan" ? L"明杠" : a.kind == "chi" ? L"吃" : L"碰";
             RECT label{6, r.bottom - 24, r.right - 4, r.bottom};
-            DrawTextW(item.hDC, ids.c_str(), -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            DrawTextW(item.hDC, caption, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
         } catch (const std::exception &) {
             const auto text = NetworkWide(a.label);
             DrawTextW(item.hDC, text.c_str(), -1, &r, DT_WORDBREAK);

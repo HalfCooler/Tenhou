@@ -66,6 +66,19 @@ internal static class VariantChecks
                 Dictionary<string, string> options = rule is SichuanRuleSet ? new() : new() { ["hands"] = "1" };
                 IMatch match = rule.Create(options, new Random(seed)), replay = rule.Create(options, new Random(seed + 200));
                 match.Start(); replay.Start(match.Walls[0]); int commands = 0;
+                HashSet<string> fixturePhases = [];
+                void SaveFixture()
+                {
+                    if (seed != 0) return;
+                    string phase = match.Phase;
+                    if (match is SichuanMatch sc && sc.Players.Any(p => p.Wins > 0) && phase is not ("ended" or "complete")) phase = "retired";
+                    if (!fixturePhases.Add(phase)) return;
+                    string directory = Path.Combine(AppContext.BaseDirectory, "ui-fixtures"); Directory.CreateDirectory(directory);
+                    Dictionary<string, string> identity = new() { ["rule"] = rule.Descriptor.Id, ["title"] = rule.Descriptor.Name,
+                        ["table"] = "fixture", ["n0"] = "测试玩家", ["n1"] = "好友甲", ["n2"] = "好友乙", ["n3"] = "好友丙" };
+                    Protocol.VariantPresentation presentation = new(rule.Normalize(options));
+                    File.WriteAllLines(Path.Combine(directory, rule.Descriptor.Id + "-" + phase + ".txt"), [Protocol.Wire.Encode("VGO", identity), presentation.Project(match.Events[^1], 0, commands + 1)]);
+                }
                 if (seed == 0)
                 {
                     string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "ui-fixtures");
@@ -77,6 +90,7 @@ internal static class VariantChecks
                 }
                 while (!match.IsComplete)
                 {
+                    SaveFixture();
                     if (match.HandEnded) { match.Start(); replay.Start(match.Walls[^1]); }
                     bool acted = false;
                     for (int seat = 0; seat < 4; ++seat)
@@ -89,6 +103,7 @@ internal static class VariantChecks
                     }
                     if (!acted || commands > 20000) throw new Exception("Variant game stuck");
                 }
+                SaveFixture();
                 Console.WriteLine($"PASS {rule.Descriptor.Id} seed {seed}: {commands} actions, scores {string.Join(',', match.Scores)}");
             }
         SichuanChecks.Run();

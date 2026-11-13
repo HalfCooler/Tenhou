@@ -5,9 +5,18 @@ namespace tenhou {
     // Presentation metadata only. No wall tile identities or future draws are stored.
     struct WallState {
         bool known = false, pending_kan = false;
+        bool dead_wall = true;
+        int total = 136, tail = 0;
         int offset = 0, front = 52, replacements = 0;
         int initial_removed = 0, replacement_limit = 4, indicator_index = 130;
         const char *unavailable = "snapshot lacks draw history";
+
+        void InitVariant(int tiles, int head, int end, int opening) {
+            *this = {};
+            total = tiles; front = head; tail = end; offset = opening;
+            dead_wall = false; known = true; unavailable = "";
+            replacement_limit = 0;
+        }
 
         void Init(int dealer, int die0, int die1, unsigned type = 0) {
             *this = {};
@@ -46,9 +55,20 @@ namespace tenhou {
 
         // Original FUN_0048f140: return direction and individual (top/bottom) slot.
         std::pair<int, int> Position(int index) const {
+            if (!dead_wall) {
+                int p = (offset + index) % total;
+                for (int side = 0; side < 4; ++side) {
+                    const int count = SideTiles(side);
+                    if (p < count) return {(4 - side) % 4, (count - 1 - p) ^ 1};
+                    p -= count;
+                }
+                return {0, 0};
+            }
             const int p = offset + index;
             // ASM signed reciprocal division returns -trunc(p/34), then masks 3.
             return {(4 - (p / 34) % 4) % 4, (33 - p % 34) ^ 1};
         }
+
+        int SideTiles(int side) const { return total == 108 ? (side % 2 ? 26 : 28) : total / 4; }
     };
 } // namespace tenhou

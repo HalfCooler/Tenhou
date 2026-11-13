@@ -4,7 +4,7 @@ using System.Linq;
 
 namespace Tenhou.Server.Rules.Common;
 
-public sealed record TileSet(string Kind, int[] Tiles, int Who, int Source, int Called = -1)
+public sealed record TileSet(string Kind, int[] Tiles, int Who, int Source, int Called = -1, int Added = -1)
 {
     public bool Open => Kind != "closed_kan";
 }

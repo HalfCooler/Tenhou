@@ -14,6 +14,8 @@ namespace tenhou {
         std::vector<int> deal_hand;
         int hidden_count = 0, score = 25000, reach = 0, drawn_tile = -1;
         bool draw_pending = false;
+        bool retired = false;
+        int missing_suit = -1, winning_tile = -1;
         std::vector<ReplayDiscard> discards;
         std::vector<ReplayMeld> melds;
         std::vector<int> nuki;
@@ -24,6 +26,7 @@ namespace tenhou {
         bool started = false, initialized = false, ended = false, complete = false;
         bool awaiting_context = false; // REINIT does not identify the next actor/draw.
         bool furiten = false;
+        bool variant = false;
         unsigned type = 0;
         unsigned seat_mask = 15;
         bool open_hands = false;

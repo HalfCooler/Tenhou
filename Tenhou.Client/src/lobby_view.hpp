@@ -74,6 +74,10 @@ namespace tenhou {
         void PaintExit(const DRAWITEMSTRUCT &item);
 
         void Command(int id);
+        std::uint64_t button_revision_ = 0;
+        int pressed_action_ = -1;
+        int variant_hand_ = 0;
+        VariantEventCursor variant_events_;
 
         void UpdateActions();
 

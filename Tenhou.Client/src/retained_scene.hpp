@@ -68,6 +68,7 @@ namespace tenhou {
                 << state.sticks << ':' << state.dealer << ':' << state.turn << ':' << state.result.size() << ':' <<
                 state.result;
         out << ":seats=" << state.seat_mask;
+        if (state.variant) out << ":variant:" << state.wall.total << ':' << state.wall.front << ':' << state.wall.tail;
         for (const auto &p: state.players) out << ':' << p.connected << ':' << p.score << ':' << p.reach << ':' << p.
                                            name.size() << ':' << p.name << ':' << p.nuki.size();
         out << ":winners=" << state.winners.size();
@@ -81,7 +82,7 @@ namespace tenhou {
         const auto &w = state.wall;
         std::ostringstream out;
         out << original << ':' << red << ':' << state.initialized << ':' << placed << ':' << w.known << ':' << w.offset
-                << ':' << w.front << ':' << w.replacements << ':' << w.unavailable;
+                << ':' << w.front << ':' << w.replacements << ':' << w.unavailable << ':' << w.total << ':' << w.tail << ':' << w.dead_wall;
         out << ":indicators=" << state.dora_indicators.size();
         for (auto indicator: state.dora_indicators) out << ':' << indicator;
         return out.str();

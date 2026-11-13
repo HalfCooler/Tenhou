@@ -164,7 +164,7 @@ namespace tenhou {
                 ++p;
             }
             if (p == xml.size()) Fail("Truncated protocol attribute");
-            if (message.attributes.size() >= 64 || !message.attributes.emplace(
+            if (message.attributes.size() >= 256 || !message.attributes.emplace(
                     key, Entities(xml.substr(start, p - start))).second)
                 Fail("Duplicate or excessive protocol attributes");
             ++p;
@@ -342,6 +342,7 @@ namespace tenhou {
             if (tag == "VGO") {
                 snapshot.variant_active = true;
                 snapshot.variant_state = message.attributes;
+                snapshot.variant = {};
                 snapshot.exit_table = Attribute(message, "table");
                 snapshot.exit_allowed = Attribute(message, "exit") == "1";
                 snapshot.ranked = false;
@@ -353,33 +354,32 @@ namespace tenhou {
             }
             if (tag == "VSTATE") {
                 if (!snapshot.variant_active) Fail("Variant state before VGO");
-                for (const auto &entry: message.attributes) snapshot.variant_state[entry.first] = entry.second;
+                // VSTATE is a full snapshot. Retaining absent handN fields would retain
+                // entities from an older open-hand view across recovery.
+                auto fields = message.attributes;
+                for (const auto &entry: snapshot.variant_state)
+                    if (entry.first == "rule" || entry.first == "title" || entry.first == "table" ||
+                        entry.first == "n0" || entry.first == "n1" || entry.first == "n2" || entry.first == "n3")
+                        fields.emplace(entry);
+                snapshot.variant = ParseVariantState(fields);
+                snapshot.variant_state = std::move(fields);
                 const auto window = Integer(Attribute(message, "window"));
                 if (window != snapshot.native_window || Attribute(message, "actions").empty() || snapshot.recovering)
                     snapshot.actions.pending.clear();
                 snapshot.native_window = window;
                 snapshot.actions.choices.clear();
                 ++snapshot.actions.revision;
-                const std::map<std::string, std::string> labels{
-                    {"discard", "打出"}, {"ron", "和牌"}, {"tsumo", "自摸"}, {"pon", "碰"}, {"chi", "吃"},
-                    {"open_kan", "明杠"}, {"closed_kan", "暗杠"}, {"added_kan", "补杠"}, {"skip", "跳过"},
-                    {"exchange", "换三张"}, {"dingque", "定缺"}
-                };
-                const auto encoded = Attribute(message, "actions");
-                std::size_t start = 0;
-                while (start < encoded.size()) {
-                    const auto end = encoded.find(';', start);
-                    const auto action = encoded.substr(start, end == std::string::npos ? end : end - start);
-                    const auto colon = action.find(':');
-                    if (colon == std::string::npos || snapshot.actions.choices.size() >= 512) Fail("Invalid action offer");
-                    const auto kind = action.substr(0, colon), tiles = action.substr(colon + 1);
-                    const auto label = labels.find(kind);
-                    snapshot.actions.choices.push_back({kind, (label == labels.end() ? kind : label->second) + " " + tiles, {},
-                        {"<VACT table=\"" + Escape(snapshot.exit_table) + "\" window=\"" + std::to_string(snapshot.native_window) +
-                         "\" kind=\"" + Escape(kind) + "\" tiles=\"" + Escape(tiles) + "\"/>"}});
-                    if (end == std::string::npos) break;
-                    start = end + 1;
+                snapshot.actions.choices = ParseVariantActions(Attribute(message, "actions"), snapshot.exit_table,
+                                                                snapshot.native_window, snapshot.variant.wall_total);
+                if (snapshot.game.variant && snapshot.game.round != snapshot.variant.hand_number - 1 &&
+                    !snapshot.game.settlement.receipts.empty()) {
+                    snapshot.last_settlement = snapshot.game.settlement;
+                    for (int i = 0; i < 4; ++i) snapshot.last_result_names[i] = snapshot.game.players[i].name;
+                    snapshot.last_result_dealer = snapshot.game.dealer;
+                    snapshot.last_result_honba = snapshot.last_result_sticks = -1;
+                    snapshot.last_result_red = false;
                 }
+                snapshot.game = VariantTableState(snapshot.variant, snapshot.variant_state);
                 const auto stage = Attribute(message, "phase");
                 snapshot.game.complete = stage == "complete";
                 snapshot.phase = snapshot.game.complete ? LobbyPhase::MatchComplete : LobbyPhase::Game;
@@ -868,7 +868,8 @@ namespace tenhou {
         if (snapshot.table_paused || snapshot.exit_pending) return {};
         if (snapshot.phase != LobbyPhase::Game) Fail("Action outside game session");
         if (snapshot.variant_active) {
-            if (revision != snapshot.actions.revision || index >= snapshot.actions.choices.size() || !snapshot.actions.pending.empty())
+            if (!snapshot.actions.enabled || snapshot.recovering || revision != snapshot.actions.revision ||
+                index >= snapshot.actions.choices.size() || !snapshot.actions.pending.empty())
                 Fail("Stale or pending platform action");
             const auto choice = snapshot.actions.choices[index];
             snapshot.actions.pending = choice.kind;

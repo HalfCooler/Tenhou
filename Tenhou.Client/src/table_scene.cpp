@@ -84,9 +84,14 @@ namespace tenhou {
                     erase(std::remove(hand.begin(), hand.end(), player.drawn_tile), hand.end());
             if (seat ? sort_opponents : sort_self) std::sort(hand.begin(), hand.end());
             if (player.drawn_tile >= 0) hand.push_back(player.drawn_tile);
+            if (player.retired) {
+                std::fill(hand.begin(), hand.end(), -1);
+                if (player.winning_tile >= 0) hand.push_back(player.winning_tile);
+            }
             if (hand.size() > 14) throw std::runtime_error("Table hand exceeds fourteen tiles");
             for (std::size_t i = 0; i < hand.size(); ++i) {
-                const bool drawn = hand[i] >= 0 && hand[i] == player.drawn_tile;
+                const bool winning = player.retired && i + 1 == hand.size() && player.winning_tile >= 0;
+                const bool drawn = winning || (hand[i] >= 0 && hand[i] == player.drawn_tile);
                 // FUN_00486e80: revealed opponent t/i/d becomes n/(17-i)/d.
                 TableTile command{
                     seat ? 'n' : 't', seat ? 17 - static_cast<int>(i) : static_cast<int>(i), hand[i], seat
@@ -95,6 +100,10 @@ namespace tenhou {
                 if (hand[i] < 0) {
                     command.family = 't';
                     command.slot = static_cast<int>(i);
+                }
+                if (player.retired) {
+                    command.family = 'n'; command.slot = 17 - static_cast<int>(i);
+                    command.role = winning ? "winning" : "retired";
                 }
                 if (state.ended && state.result.rfind("RYUUKYOKU", 0) == 0 && i < state.draw_end_slots && !state.
                     settlement.receipts.empty()) {
@@ -119,6 +128,11 @@ namespace tenhou {
                 result.push_back(command);
             }
             int index = 0, row = -1, reach_slot = -1;
+            if (state.variant && player.missing_suit >= 0) {
+                TableTile marker{'k', 0, 16 + player.missing_suit * 36, seat};
+                marker.role = "missing_suit";
+                result.push_back(marker); ++index;
+            }
             for (const auto &discard: player.discards) {
                 if (discard.claimed) continue; // Claimed tiles live in the meld only.
                 // k slots 0..24, sideways k+40. Extend the final row explicitly
@@ -162,11 +176,10 @@ namespace tenhou {
                 if (sideways >= 0) meld_sideways |= 1u << (slot + sideways);
                 int added_tile = -1;
                 if (added) {
-                    const auto decoded = DecodeReplayMeld(meld.encoded, seat);
-                    added_tile = decoded.called_tile;
+                    added_tile = meld.added_tile >= 0 ? meld.added_tile : DecodeReplayMeld(meld.encoded, seat).called_tile;
                     tiles.erase(std::remove(tiles.begin(), tiles.end(), added_tile), tiles.end());
                 }
-                tiles.erase(std::remove(tiles.begin(), tiles.end(), meld.called_tile), tiles.end());
+                if (!closed) tiles.erase(std::remove(tiles.begin(), tiles.end(), meld.called_tile), tiles.end());
                 std::sort(tiles.rbegin(), tiles.rend());
                 if (closed) {
                     const auto red = std::find_if(tiles.begin(), tiles.end(), [](int tile) {
@@ -234,7 +247,7 @@ namespace tenhou {
         if (!width_) throw std::runtime_error("Table artwork is not loaded");
         if (tile.slot < 0 || tile.slot > 255 || tile.direction < 0 || tile.direction > 3)
             throw std::runtime_error("Invalid table resource command");
-        const bool aka = red && std::find(red_tiles_.begin(), red_tiles_.end(), tile.tile) != red_tiles_.end();
+        const bool aka = std::string(tile.role) == "missing_suit" || (red && std::find(red_tiles_.begin(), red_tiles_.end(), tile.tile) != red_tiles_.end());
         const unsigned variant = static_cast<unsigned>(aka ? tile.tile / 36 * 10 : TileVariant(tile.tile, false));
         const std::uint32_t key = static_cast<unsigned char>(tile.family) | (unsigned(tile.slot) << 8) |
                                   (variant << 16) | (unsigned(tile.direction) << 24);
@@ -257,6 +270,12 @@ namespace tenhou {
 
     TileOffset TableArtwork::Offset(const TableTile &tile) {
         auto offset = TableTileOffset(tile, width_);
+        if (tile.family == 'y' && tile.wall_extra) {
+            auto neighbour = tile; --neighbour.slot;
+            const auto &face = Get(tile, false), &previous = Get(neighbour, false);
+            offset.x += (face.x - previous.x) * tile.wall_extra;
+            offset.y += (face.y - previous.y) * tile.wall_extra;
+        }
         if (tile.drawn && tile.family == 'n' && (tile.direction & 1) && std::string(tile.role) == "hand") {
             // Face-up n rows run opposite to the standing t row. A standing-row
             // draw shift moves these faces into their neighbour. Keep the original

@@ -6,6 +6,8 @@ Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Cli
 ./Build-Tenhou.ps1 -Target Tenhou.Client
 ```
 
+四川血战到底已接入共用四面图形牌桌：换三张单击选牌并确认、点击万筒索定缺、单击出牌、拖动理牌、手选多个杠、和牌退场后扣牌显示和牌张，结算按和牌顺序浏览。规则和合法动作由服务端提供。当前已完成控制器、协议及离屏验证；实际窗口点击验收待桌面解锁。国标仍使用文字操作牌桌。详细状态见 [变体交互设计](VARIANT-INTERACTION.md)。
+
 默认构建 Release，产物复制到 `build/Tenhou.Client/tenhou_rebuild.exe`；使用 `-Configuration Debug` 切换配置。资源统一维护在 `Tenhou.Client/assets/`，以 [资源清单](../../Tenhou.Client/assets/catalog.cmake) 为唯一登记入口（下表路径相对项目根目录）：
 
 | 目录 | 内容 | 发布方式 |

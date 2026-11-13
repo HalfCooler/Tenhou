@@ -125,8 +125,11 @@ public sealed class SichuanMatch : VariantMatch
         int seat = winners[0], tile = selfDrawn ? Players[source].Drawn : LastTile;
         SichuanValue value = Score(seat, tile, selfDrawn) ?? throw new InvalidOperationException("Invalid Sichuan win");
         int amount = Payment(value.Fan);
+        int[] before = (int[])Points.Clone();
         if (selfDrawn) { for (int payer = 0; payer < 4; ++payer) if (payer != seat && Participating(payer)) Transfer(payer, seat, amount); }
         else Transfer(source, seat, amount);
+        AddReceipt(seat, source, tile, value.Fan, value.Patterns, before, "");
+        Cue(selfDrawn ? "tsumo" : "ron", seat, tile, source);
         if (firstWinner < 0) firstWinner = nextDealer = seat;
         ++Players[seat].Wins;
         if (selfDrawn) Players[seat].Hand.Remove(tile);
@@ -156,6 +159,7 @@ public sealed class SichuanMatch : VariantMatch
     protected override void AfterDiscardClaims() => lastKongSeat = -1;
     protected override void Exhausted()
     {
+        int[] before = (int[])Points.Clone();
         int[] active = Enumerable.Range(0, 4).Where(Participating).ToArray();
         bool[] pigs = Players.Select(p => p.Hand.Concat(p.Melds.SelectMany(m => m.Tiles)).Any(t => t / 36 == p.MissingSuit)).ToArray();
         int[] maximum = new int[4];
@@ -183,7 +187,25 @@ public sealed class SichuanMatch : VariantMatch
         foreach ((int payer, int recipient, int amount) in kongLedger)
             if (Participating(recipient) && maximum[recipient] == 0) Transfer(recipient, payer, amount);
         Result = "牌墙摸完，未和玩家已查花猪、查大叫；未听及花猪退税。";
+        AddReceipt(-1, -1, -1, 0, [], before, Result);
         History.Add(Result); FinishHand();
+    }
+    private void AddReceipt(int seat, int source, int tile, int fan, string[] patterns, int[] before, string reason)
+    {
+        Dictionary<string, string> receipt = new()
+        {
+            ["who"] = seat.ToString(CultureInfo.InvariantCulture), ["from"] = source.ToString(CultureInfo.InvariantCulture),
+            ["tile"] = tile.ToString(CultureInfo.InvariantCulture), ["fan"] = fan.ToString(CultureInfo.InvariantCulture),
+            ["patterns"] = string.Join(';', patterns), ["reason"] = reason, ["base"] = string.Join(',', before),
+            ["delta"] = string.Join(',', Points.Select((p, i) => p - before[i]))
+        };
+        if (seat >= 0)
+        {
+            VariantPlayer p = Players[seat];
+            receipt["hand"] = string.Join(',', (seat == source ? p.Hand : p.Hand.Append(tile)).Order());
+            receipt["melds"] = string.Join(';', p.Melds.Select(m => $"{m.Kind}:{string.Join(',', m.Tiles)}:{m.Source}:{m.Called}:{m.Added}"));
+        }
+        Receipts.Add(receipt);
     }
     public override MatchAction ChooseBotAction(int seat)
     {

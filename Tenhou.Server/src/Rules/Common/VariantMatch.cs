@@ -37,6 +37,15 @@ public abstract class VariantMatch : IMatch
     protected bool Replacement, Interrupted;
     protected string Result = "";
     protected readonly List<string> History = [];
+    protected int WallFront, WallTail;
+    protected readonly List<Dictionary<string, string>> Receipts = [];
+    private readonly List<(long Seq, string Kind, int Actor, int Tile, int Source)> cues = [];
+    private long cueSeq;
+    protected void Cue(string kind, int actor, int tile = -1, int source = -1)
+    {
+        cues.Add((++cueSeq, kind, actor, tile, source));
+        if (cues.Count > 32) cues.RemoveAt(0);
+    }
     public VariantPlayer[] Players { get; protected set; } = [];
     public int Turn { get; protected set; }
     public int Dealer { get; protected set; }
@@ -67,16 +76,17 @@ public abstract class VariantMatch : IMatch
             if (!wall.Order().SequenceEqual(tiles)) throw new ArgumentException("Invalid wall"); tiles = (int[])wall.Clone();
         }
         else Random.Shuffle(tiles);
-        WallLog.Add((int[])tiles.Clone()); Wall.Clear(); Wall.AddRange(tiles); ++HandNumber; Dealer = SelectDealer(); Turn = Dealer;
+        WallLog.Add((int[])tiles.Clone()); Wall.Clear(); Wall.AddRange(tiles); WallFront = WallTail = 0; ++HandNumber; Dealer = SelectDealer(); Turn = Dealer;
         Players = Enumerable.Range(0, 4).Select(_ => new VariantPlayer()).ToArray();
-        Claims.Clear(); Responses.Clear(); PendingKong = null; Replacement = Interrupted = false; Result = ""; History.Clear();
+        Claims.Clear(); Responses.Clear(); PendingKong = null; Replacement = Interrupted = false; Result = ""; History.Clear(); Receipts.Clear();
+        LastActor = LastTile = -1;
         for (int i = 0; i < 52; ++i)
         {
             int seat = (Dealer + i % 4) % 4; int tile = TakeTile(seat, false);
             if (tile < 0) throw new InvalidOperationException("Wall exhausted while dealing"); Players[seat].Hand.Add(tile);
         }
         foreach (VariantPlayer player in Players) player.Hand.Sort();
-        Begin(); Publish(); Validate();
+        Begin(); Cue("start", Dealer); Publish(); Validate();
     }
     protected virtual void Begin() => Draw(Dealer);
     protected int TakeTile(int seat, bool replacement)
@@ -84,8 +94,10 @@ public abstract class VariantMatch : IMatch
         while (Wall.Count > 0)
         {
             int index = replacement ? Wall.Count - 1 : 0; int tile = Wall[index]; Wall.RemoveAt(index);
+            if (replacement) ++WallTail; else ++WallFront;
             if (tile < 136) return tile;
             Players[seat].Flowers.Add(tile); replacement = true;
+            Cue("flower", seat, tile);
         }
         return -1;
     }
@@ -97,6 +109,7 @@ public abstract class VariantMatch : IMatch
         if (tile < 0) { Exhausted(); return; }
         VariantPlayer p = Players[seat]; p.Hand.Add(tile); p.Hand.Sort(); p.Drawn = tile; ++p.Draws;
         Turn = seat; Phase = "turn"; Replacement = replacement;
+        Cue("draw", seat, tile);
     }
     protected abstract bool CanWin(int seat, int tile, bool selfDrawn, bool aboutKong);
     protected abstract void Win(int[] winners, int source, bool selfDrawn);
@@ -155,11 +168,11 @@ public abstract class VariantMatch : IMatch
         return Unique(actions);
     }
     private static IReadOnlyList<MatchAction> Unique(IEnumerable<MatchAction> actions) => actions
-        .DistinctBy(a => (a.Kind, string.Join(',', a.Tiles.Select(t => a.Kind == "dingque" ? t : t / 4)))).ToArray();
+        .DistinctBy(a => (a.Kind, string.Join(',', a.Tiles.Select(t => a.Kind is "dingque" or "discard" or "exchange" ? t : t / 4)))).ToArray();
     public void Submit(int seat, MatchAction action)
     {
         if (!GetActions(seat).Any(a => a.Equivalent(action))) throw new ArgumentException("Illegal or stale action");
-        if (Phase is not ("turn" or "claims")) SpecialSubmit(seat, action);
+        if (Phase is not ("turn" or "claims")) { SpecialSubmit(seat, action); Cue(action.Kind, seat); }
         else if (Phase == "claims")
         {
             Responses[seat] = action;
@@ -168,7 +181,7 @@ public abstract class VariantMatch : IMatch
         else if (action.Kind == "discard")
         {
             VariantPlayer p = Players[seat]; p.Hand.Remove(action.Tiles[0]); p.River.Add(action.Tiles[0]); p.Drawn = -1;
-            LastActor = seat; LastTile = action.Tiles[0]; ClaimKind = "discard"; PrepareClaims(); if (Claims.Count == 0) Resolve();
+            LastActor = seat; LastTile = action.Tiles[0]; Cue("discard", seat, LastTile); ClaimKind = "discard"; PrepareClaims(); if (Claims.Count == 0) Resolve();
         }
         else if (action.Kind == "tsumo") Win([seat], seat, true);
         else if (action.Kind == "added_kan")
@@ -226,6 +239,7 @@ public abstract class VariantMatch : IMatch
         foreach (int t in action.Tiles) p.Hand.Remove(t);
         Players[LastActor].Called.Add(LastTile); p.Melds.Add(new(action.Kind, action.Tiles.Append(LastTile).Order().ToArray(), seat, LastActor, LastTile));
         Interrupted = true; Turn = seat; Phase = "turn"; Replacement = false; p.Drawn = -1;
+        Cue(action.Kind, seat, LastTile, LastActor);
         if (action.Kind == "open_kan") { KongPayment(seat, LastActor, "open_kan"); Draw(seat, true); }
     }
     private void CompleteKong(int seat, MatchAction action)
@@ -235,9 +249,10 @@ public abstract class VariantMatch : IMatch
         else
         {
             int index = p.Melds.FindIndex(m => m.Kind == "pon" && m.Tiles[0] / 4 == action.Tiles[0] / 4);
-            TileSet old = p.Melds[index]; p.Melds[index] = old with { Kind = "added_kan", Tiles = old.Tiles.Concat(action.Tiles).Order().ToArray() };
+            TileSet old = p.Melds[index]; p.Melds[index] = old with { Kind = "added_kan", Tiles = old.Tiles.Concat(action.Tiles).Order().ToArray(), Added = action.Tiles[0] };
         }
-        p.Drawn = -1; Interrupted = true; KongPayment(seat, seat, action.Kind); Draw(seat, true);
+        p.Drawn = -1; Interrupted = true; KongPayment(seat, seat, action.Kind);
+        Cue(action.Kind, seat, action.Kind == "closed_kan" ? -1 : action.Tiles[0]); Draw(seat, true);
     }
     protected virtual void KongPayment(int seat, int source, string kind) { }
     protected virtual void Exhausted() { Result = "荒牌流局"; FinishHand(); }
@@ -259,10 +274,25 @@ public abstract class VariantMatch : IMatch
             ["scores"] = string.Join(',', Points), ["wall"] = Wall.Count.ToString(CultureInfo.InvariantCulture), ["result"] = Result,
             ["history"] = string.Join("\n", History.TakeLast(12))
         };
+        state["seq"] = (EventLog.Count + 1).ToString(CultureInfo.InvariantCulture);
+        state["event_seq"] = cueSeq.ToString(CultureInfo.InvariantCulture);
+        state["events"] = string.Join(';', cues.Select(e => $"{e.Seq}:{e.Kind}:{e.Actor}:{e.Tile}:{e.Source}"));
+        state["receipt_count"] = Receipts.Count.ToString(CultureInfo.InvariantCulture);
+        for (int i = 0; i < Receipts.Count; ++i)
+            foreach (var field in Receipts[i]) state[$"receipt{i}_{field.Key}"] = field.Value;
+        state["wall_total"] = TileSet.Length.ToString(CultureInfo.InvariantCulture);
+        state["wall_front"] = WallFront.ToString(CultureInfo.InvariantCulture);
+        state["wall_tail"] = WallTail.ToString(CultureInfo.InvariantCulture);
+        state["wall_offset"] = "0";
+        state["last_actor"] = LastActor.ToString(CultureInfo.InvariantCulture);
+        state["last_tile"] = LastTile.ToString(CultureInfo.InvariantCulture);
         for (int s = 0; s < 4; ++s)
         {
             VariantPlayer p = Players[s]; state["hand" + s] = string.Join(',', p.Hand); state["river" + s] = string.Join(',', p.River.Where(t => !p.Called.Contains(t)));
             state["melds" + s] = string.Join(';', p.Melds.Select(m => m.Kind + ":" + string.Join(',', m.Tiles)));
+            state["meld_info" + s] = string.Join(';', p.Melds.Select(m => $"{m.Source},{m.Called}"));
+            state["meld_added" + s] = string.Join(',', p.Melds.Select(m => m.Added));
+            state["drawn" + s] = p.Drawn.ToString(CultureInfo.InvariantCulture);
             state["flowers" + s] = string.Join(',', p.Flowers); state["winning" + s] = string.Join(',', p.WinningTiles);
             state["missing" + s] = p.MissingSuit.ToString(CultureInfo.InvariantCulture); state["wins" + s] = p.Wins.ToString(CultureInfo.InvariantCulture);
             state["retired" + s] = Participating(s) ? "0" : "1";

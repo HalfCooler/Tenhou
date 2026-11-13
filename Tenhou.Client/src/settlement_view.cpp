@@ -226,6 +226,7 @@ namespace tenhou {
             return;
         }
         const auto &r = state_.receipts[selected_];
+        if (r.generic) { Arrange(); return; }
         if (r.who < 0) {
             Arrange();
             return;
@@ -504,7 +505,7 @@ namespace tenhou {
             }
             for (const auto &item: scene.text) {
                 if (!item.visible) continue;
-                Gdiplus::FontFamily family(item.role == "unknown_yaku"
+                Gdiplus::FontFamily family(item.role == "unknown_yaku" || item.role.rfind("variant_", 0) == 0
                                                ? L"KaiTi"
                                                : item.original_font
                                                      ? L"System"

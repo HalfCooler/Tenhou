@@ -40,6 +40,7 @@ namespace tenhou {
         directory_ = directory;
         width_ = width;
         artwork_ = {};
+        raised_.clear();
         background_ = {};
         native_buffer_.Invalidate();
         hud_cache_.Invalidate();
@@ -63,7 +64,7 @@ namespace tenhou {
         auto after = Project(online);
         auto before = previous_;
         previous_ = after; // Retain only the public projection, even if artwork fails.
-        if (event.kind == ReplayEventKind::Metadata) return; // Identity/BYE refresh must not replace a running move.
+        if (event.kind == ReplayEventKind::Metadata && event.tag != "VARIANT") return; // Identity refresh keeps a running move.
         CancelAnimation();
         if (!animate || !before.initialized || event.kind == ReplayEventKind::Init) return;
         if (!artwork_.width()) artwork_.Load(directory_, width_);
@@ -101,7 +102,7 @@ namespace tenhou {
             hand_order_.push_back(drawn);
         }
         hand_events_ = online.events;
-        state.players[0].hand = hand_order_;
+        if (!online.players[0].retired) state.players[0].hand = hand_order_;
         // FUN_00488650 reassigns the gap to the final slot after manual insertion.
         // This is a display projection; the authoritative drawn entity is unchanged.
         if (drawn >= 0 && reordered_draw_ == drawn && !hand_order_.empty())
@@ -164,6 +165,7 @@ namespace tenhou {
         const bool red = (online.type & 2) == 0;
         const int w = width_, h = w * 3 / 4;
         const double unit = double(w) / 1024;
+        raised_ = interaction ? interaction->selected : std::vector<int>{};
         const auto destination = FitNativeCanvas(bounds, w);
         // Native window chrome is an overlay, not a tile damage layer. Publishing
         // the retained table can otherwise erase its alpha glyphs after a silent
@@ -172,7 +174,7 @@ namespace tenhou {
         const bool native_chrome = original_display_ && destination.right - destination.left == w && destination.bottom
                                    - destination.top == h;
         artwork_.BeginFrame();
-        const unsigned placed = opening && opening->Active() ? opening->placed() : 136;
+        const unsigned placed = opening && opening->Active() ? opening->placed() : static_cast<unsigned>(state.wall.total);
         std::vector<PositionedTile> tiles;
         if (opening && opening->Active()) tiles = opening->Scene(artwork_, red);
         else if (presentation_.Active()) tiles = presentation_.Frame(now);
@@ -182,6 +184,9 @@ namespace tenhou {
                 const auto offset = artwork_.Offset(tile);
                 tiles.push_back({tile, item.x + offset.x, item.y + offset.y});
             }
+        for (auto &tile: tiles)
+            if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand" &&
+                std::find(raised_.begin(), raised_.end(), tile.tile.tile) != raised_.end()) tile.y -= static_cast<int>(8 * unit);
         SortTableScene(tiles, artwork_, red);
         if (original_display_) InsertNearWall(tiles, artwork_, state, red, placed, true);
         const auto shadows = BuildTileShadows(tiles, artwork_, ShadowPack::Embedded());
@@ -191,6 +196,7 @@ namespace tenhou {
                 complete << ':' << interactive << ':' << native_chrome;
         if (interaction) {
             stamp << ':' << interaction->hovered_button;
+            for (auto c: interaction->hint) stamp << ':' << int(c);
             for (auto c: interaction->countdown) stamp << ':' << int(c);
             for (auto value: interaction->automatic) stamp << ':' << value;
         }
@@ -249,7 +255,8 @@ namespace tenhou {
                                       ClipGraphics(graphics, region);
                                       shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow);
                                       for (const auto &tile: tiles) {
-                                          const auto &item = artwork_.Get(tile.tile, red);
+                                          const bool missing = std::string(tile.tile.role) == "missing_suit";
+                                          const auto &item = artwork_.Get(tile.tile, missing || red);
                                           if (!Overlaps(region, TileBounds(tile, item.image.width, item.image.height)))
                                               continue;
                                           Image shaded;
@@ -310,6 +317,10 @@ namespace tenhou {
                                                   0, 0, item.image.width, item.image.height, Gdiplus::UnitPixel,
                                                   hover ? &attributes : nullptr) != Gdiplus::Ok)
                                               throw std::runtime_error("Cannot draw online tile");
+                                          if (missing) {
+                                              Gdiplus::SolidBrush overlay(Gdiplus::Color(145, 90, 90, 90));
+                                              graphics.FillRectangle(&overlay, tile.x, tile.y, item.image.width, item.image.height);
+                                          }
                                       }
                                       for (std::size_t i = 0; i < state.dora_indicators.size(); ++i) {
                                           if (original_display_ &&state.wall.known) break;
@@ -335,6 +346,16 @@ namespace tenhou {
                                           FrameRect(memory, &r, gold);
                                       }
                                   DeleteObject(gold);
+                                  if (interaction && !interaction->hint.empty()) {
+                                      const auto font = CreateFontW(-static_cast<int>(14 * unit), 0, 0, 0, FW_NORMAL,
+                                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                          CLEARTYPE_QUALITY, DEFAULT_PITCH, L"KaiTi");
+                                      const auto old = SelectObject(memory, font);
+                                      SetBkMode(memory, TRANSPARENT); SetTextColor(memory, RGB(255, 242, 190));
+                                      RECT hint{w / 8, h - static_cast<int>(52 * unit), w * 7 / 8, h - static_cast<int>(28 * unit)};
+                                      DrawTextW(memory, interaction->hint.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+                                      SelectObject(memory, old); DeleteObject(font);
+                                  }
                                   if (interaction && !interaction->countdown.empty()) {
                                       int right = 0, top = 0;
                                       for (const auto &tile: tiles)
@@ -387,7 +408,7 @@ namespace tenhou {
                                       {
                                           true, false, false, false
                                       },
-                                      interaction ? interaction->hovered_button : -1);
+                                      interaction ? interaction->hovered_button : -1, state.variant);
                                       display_artwork_.PaintStatus(graphics, state);
                                       display_artwork_.PaintNukiCounts(graphics, state, artwork_);
                                   } else {
@@ -452,7 +473,7 @@ namespace tenhou {
                 {
                     true, false, false, false
                 },
-                interaction ? interaction->hovered_button : -1);
+                interaction ? interaction->hovered_button : -1, state.variant);
             }
             RestoreDC(dc, saved);
         }
@@ -474,7 +495,8 @@ namespace tenhou {
                 if (t.direction == 0 && std::string(t.role) == "hand") {
                     const auto &item = artwork_.Get(t, red);
                     const auto offset = artwork_.Offset(t);
-                    const int tx = item.x + offset.x, ty = item.y + offset.y;
+                    const int tx = item.x + offset.x, ty = item.y + offset.y -
+                        (std::find(raised_.begin(), raised_.end(), t.tile) != raised_.end() ? 8 * w / 1024 : 0);
                     scene.push_back({t, tx, ty});
                 }
         SortTableScene(scene, artwork_, red);

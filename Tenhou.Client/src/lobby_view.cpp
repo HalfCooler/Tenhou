@@ -62,6 +62,8 @@ namespace tenhou {
         }
 
 LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) {
+            if (m == WM_LBUTTONDOWN || (m == WM_KEYDOWN && (wp == VK_SPACE || wp == VK_RETURN)))
+                SendMessageW(GetParent(w), WM_APP + 26, static_cast<WPARAM>(GetDlgCtrlID(w)), 0);
             if (m == WM_ERASEBKGND) return 1; // WM_DRAWITEM supplies every pixel.
             if (data && (m == WM_LBUTTONDOWN || m == WM_LBUTTONUP)) {
                 const auto *log = reinterpret_cast<const std::function<void(const std::string &)> *>(data);
@@ -105,6 +107,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         for (int i = 1; i <= 8; ++i) add(5120 + i, L"BUTTON", buttons[i],
                                          WS_TABSTOP | (i >= 1 && i <= 8 ? BS_OWNERDRAW : BS_PUSHBUTTON));
         add(5151, L"BUTTON", L"北", WS_TABSTOP | BS_OWNERDRAW);
+        for (int i = 0; i < 3; ++i) add(5170 + i, L"BUTTON", i == 0 ? L"万" : i == 1 ? L"筒" : L"索", WS_TABSTOP | BS_OWNERDRAW);
+        add(5173, L"BUTTON", L"确认换牌", WS_TABSTOP | BS_OWNERDRAW);
+        add(5174, L"BUTTON", L"结算", WS_TABSTOP | BS_PUSHBUTTON);
+        add(5129, L"BUTTON", L"下一盘", WS_TABSTOP | BS_PUSHBUTTON);
+        for (int id: {5170, 5171, 5172, 5173, 5129}) SetWindowSubclass(controls_[id], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
         SetWindowSubclass(controls_[5151], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
         for (int i = 1; i <= 8; ++i) SetWindowSubclass(controls_[5120 + i], ActionButtonProcedure, 1,
                                                        reinterpret_cast<DWORD_PTR>(&log_));
@@ -297,7 +304,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         RECT r{};
         GetClientRect(window_, &r);
         if (variant_) {
-            const bool active = client_->snapshot().variant_active;
+            const bool active = client_->snapshot().variant_active && !client_->snapshot().variant.Sichuan();
             variant_->Move(r);
             variant_->Show(active);
             if (active) {
@@ -315,6 +322,38 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->Move(board);
         action_view_->Move(board);
         if (game && !show_results_) {
+            if (Snapshot().variant_active && Snapshot().variant.Sichuan()) {
+                const auto &s = Snapshot();
+                const auto target = FitNativeCanvas(board, canvas_width_);
+                const auto anchor = table_.ActionAnchor(s.game);
+                const int stride = canvas_width_ == 1440 ? 154 : 110;
+                const int bw = canvas_width_ == 1440 ? 140 : 100, bh = canvas_width_ == 1440 ? 50 : 36;
+                const int y = anchor.y - (canvas_width_ == 1440 ? 63 : 45);
+                const auto place = [&](int id, int x) {
+                    MoveWindow(controls_.at(id), target.left + x * (target.right - target.left) / canvas_width_,
+                               target.top + y * (target.bottom - target.top) / (canvas_width_ * 3 / 4),
+                               bw * (target.right - target.left) / canvas_width_, bh * (target.bottom - target.top) / (canvas_width_ * 3 / 4), TRUE);
+                    ShowWindow(controls_.at(id), SW_SHOW);
+                };
+                if (s.variant.phase == VariantPhase::Missing)
+                    for (int suit = 0; suit < 3; ++suit) {
+                        const auto found = std::find_if(s.actions.choices.begin(), s.actions.choices.end(), [suit](const OnlineAction &a) { return a.kind == "dingque" && a.suit == suit; });
+                        if (found != s.actions.choices.end()) {
+                            place(5170 + suit, anchor.x + 65 - (2 - suit) * stride);
+                            EnableWindow(controls_.at(5170 + suit), LocalTableInput() && s.actions.pending.empty());
+                        }
+                    }
+                if (s.variant.phase == VariantPhase::Exchange && selection_.Active()) {
+                    place(5173, anchor.x + 65);
+                    EnableWindow(controls_.at(5173), LocalTableInput() && selection_.Confirm(s.actions) != static_cast<std::size_t>(-1));
+                }
+                if (!s.game.settlement.receipts.empty() || !s.last_settlement.receipts.empty()) {
+                    MoveWindow(controls_.at(5174), 12, 50, 80, 26, TRUE); ShowWindow(controls_.at(5174), SW_SHOW);
+                }
+                if (s.variant.phase == VariantPhase::Ended) {
+                    place(5129, anchor.x + 65); EnableWindow(controls_.at(5129), s.actions.pending.empty() && !s.recovering && !s.table_paused);
+                }
+            }
             if (Snapshot().phase == LobbyPhase::MatchComplete) {
                 MoveWindow(controls_.at(5137), r.right - 180, r.bottom - 42, 160, 28, TRUE);
                 ShowWindow(controls_.at(5137), SW_SHOW);
@@ -384,6 +423,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             snapshot().actions.revision) return;
         const auto &a = Snapshot().actions;
         if (!a.enabled || !a.pending.empty() || index >= a.choices.size()) return;
+        if (Snapshot().recovering) return;
         if (show_results_ && (a.choices[index].kind != "next" || settlement_view_->Animating())) return;
         if (a.choices[index].kind == "riichi") {
             AnnounceRiichi();
@@ -440,7 +480,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!client_ || text_details_ || show_results_ || match_intro_->Active() || opening_.Active() || start_barrier_)
             return false;
         const auto &s = Snapshot();
-        return s.phase == LobbyPhase::Game && s.game.initialized && s.actions.enabled && !s.game.ended && !s.recovering
+        return s.phase == LobbyPhase::Game && s.game.initialized && s.actions.enabled && s.actions.pending.empty() && !s.game.ended && !s.game.players[0].retired && !s.recovering
                && !client_->snapshot().table_paused && !client_->snapshot().exit_pending;
     }
 
@@ -529,6 +569,15 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     TableInteraction LobbyView::Interaction(const LobbySnapshot &snapshot) {
         TableInteraction result;
         result.automatic = automatic_;
+        if (snapshot.variant_active && snapshot.variant.Preparing()) {
+            if (snapshot.variant.phase == VariantPhase::Exchange) {
+                const auto &direction = snapshot.variant.direction;
+                result.hint = (direction == "clockwise" ? L"顺时针" : direction == "counterclockwise" ? L"逆时针" : L"对家") +
+                    std::wstring(L"换三张  ") + std::to_wstring(selection_.selected.size()) + L" / 3";
+            } else result.hint = L"请选择定缺花色";
+            if ((!snapshot.actions.pending.empty() || snapshot.actions.choices.empty()) && !snapshot.recovering)
+                result.hint = L"选择完毕，等待其他玩家";
+        }
         result.hovered_button = HitAutomaticButton(hover_point_.x, hover_point_.y);
         if (!LocalTableInput()) return result;
         result.hovered = table_.HitTile(BoardBounds(), snapshot.game, hover_point_.x, hover_point_.y);
@@ -585,6 +634,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::AutomaticAction() {
         const auto &s = Snapshot();
+        if (s.variant_active && s.variant.Preparing()) return;
         if (!IsWindowVisible(window_) || match_intro_->Active() || opening_.Active() || Moving() || s.phase !=
             LobbyPhase::Game ||
             !s.actions.enabled || !s.actions.pending.empty() || s.game.ended || s.recovering || client_->snapshot().
@@ -610,7 +660,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 } &&
                 std::all_of(choices.begin(), choices.end(),
                             [](const OnlineAction &a) { return a.kind == "discard"; })) {
-                if (!automatic_discard_at_ || GetTickCount64() < automatic_discard_at_) return;
+                if ((!s.variant_active && !automatic_discard_at_) || GetTickCount64() < automatic_discard_at_) return;
                 log_("ONLINE AUTO DISCARD tile=" + std::to_string(s.game.players[0].drawn_tile) + " tick=" +
                      std::to_string(GetTickCount64()));
                 Submit(i);
@@ -649,7 +699,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         };
         const char *kinds[]{"discard", "chi", "pon", "kan", "riichi", "ron", "tsumo", "draw", "skip", "next"};
         const bool ready = !SuppressCallPrompt() && !match_intro_->Active() && !opening_.Active() && !Moving() && !
-                           show_results_ && !Snapshot().table_paused;
+                           show_results_ && !Snapshot().table_paused && !Snapshot().recovering && a.enabled && a.pending.empty();
         for (int i = 1; i <= 8; ++i)
             EnableWindow(controls_[5120 + i], ready &&
                                               std::any_of(a.choices.begin(), a.choices.end(),
@@ -665,12 +715,31 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         const auto &actions = Snapshot().actions;
         const bool selecting = selection_.Active();
         selection_.Sync(actions);
+        if (Snapshot().variant_active && Snapshot().variant.phase == VariantPhase::Exchange && !selection_.Active())
+            selection_.Open(actions, "exchange");
         action_revision_ = actions.revision;
         if (selecting && !selection_.Active()) action_filter_ = "discard";
         UpdateActionAvailability();
     }
 
     void LobbyView::Command(int id) {
+        if (pressed_action_ == id) {
+            pressed_action_ = -1;
+            if (button_revision_ != Snapshot().actions.revision) return;
+        }
+        if (id == 5174) { show_results_ = true; Update(Snapshot()); return; }
+        if (id >= 5170 && id <= 5173) {
+            if (!LocalTableInput()) return;
+            if (id == 5173) {
+                const auto index = selection_.Confirm(Snapshot().actions);
+                if (index != static_cast<std::size_t>(-1)) Submit(index);
+            } else {
+                const auto &choices = Snapshot().actions.choices;
+                for (std::size_t i = 0; i < choices.size(); ++i)
+                    if (choices[i].kind == "dingque" && choices[i].suit == id - 5170) { Submit(i); break; }
+            }
+            return;
+        }
         if (id == 0xbc6) {
             client_->ExitGame();
             return;
@@ -706,18 +775,10 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             action_filter_ = wanted;
             UpdateActions();
             if (Compact() && id == 5123) {
-                // Kan has no hand-pair selection: prefer the drawn tile's kan.
-                const int drawn = Snapshot().game.players[0].drawn_tile;
-                auto chosen = choices.end();
-                for (auto it = choices.begin(); it != choices.end(); ++it)
-                    if (ActionGroup(it->kind) == "kan") {
-                        if (chosen == choices.end()) chosen = it;
-                        if (std::find(it->tiles.begin(), it->tiles.end(), drawn) != it->tiles.end()) {
-                            chosen = it;
-                            break;
-                        }
-                    }
-                if (chosen != choices.end()) Submit(static_cast<std::size_t>(chosen - choices.begin()));
+                selection_.Open(Snapshot().actions, "kan");
+                const auto unique = selection_.UniqueCall(Snapshot().actions, (Snapshot().game.type & 2) == 0);
+                if (unique != static_cast<std::size_t>(-1)) Submit(unique);
+                else { Arrange(); action_view_->Focus(); InvalidateRect(window_, nullptr, FALSE); }
                 return;
             }
             if (id == 5121 || id == 5122) {
@@ -767,7 +828,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::Update(const LobbySnapshot &incoming) {
-        if (incoming.variant_active) {
+        if (incoming.actions.revision != action_revision_) hover_point_ = {-1, -1};
+        if (incoming.variant_active && !incoming.variant.Sichuan()) {
             ClearPresentationQueue(); CancelSelection(); CancelResultTimer(); ResetActionClock();
             matching_->SetSnapshot(incoming); variant_->Set(incoming); UpdateExitVote(); Arrange();
             if (connection_changed_) connection_changed_(incoming);
@@ -800,6 +862,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             show_results_ = false;
         }
         if (displaying_) displayed_.table_paused = client_->snapshot().table_paused;
+        if (incoming.variant_active && (incoming.table_paused || incoming.recovering)) {
+            hover_point_ = {-1, -1}; CancelHandDrag(); CancelSelection();
+        }
         if (matching_) matching_->SetSnapshot(incoming);
         if (incoming.phase == LobbyPhase::Disconnected || incoming.phase == LobbyPhase::Error || incoming.recovering)
             ClearPresentationQueue();
@@ -865,7 +930,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                                   ? snapshot.last_result_red
                                   : (snapshot.game.type & 2) == 0);
         settlement_view_->SetConfirmEnabled(
-            !paused && !client_->snapshot().exit_pending && snapshot.actions.pending.empty() &&
+            !paused && !snapshot.recovering && !client_->snapshot().exit_pending && snapshot.actions.pending.empty() &&
             (!snapshot.game.complete || snapshot.phase == LobbyPhase::MatchComplete));
         settlement_view_->Show(show_results_ && result_available);
         if (result_pending_ && show_results_ &&result_available) settlement_view_->Present();
@@ -995,6 +1060,55 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
+        if (snapshot.variant_active) {
+            if (message.tag == "VGO") { ClearPresentationQueue(); StopSound(); start_barrier_ = false; variant_events_ = {}; variant_hand_ = 0; }
+            if (message.tag == "VSTATE") {
+                CancelHandDrag();
+                if (snapshot.variant.hand_number != variant_hand_) {
+                    variant_hand_ = snapshot.variant.hand_number;
+                    automatic_ = {true, false, false, false};
+                    table_.SetAutoSort(true, snapshot.game);
+                    show_results_ = false;
+                }
+                if (snapshot.game.ended && !snapshot.game.settlement.receipts.empty()) show_results_ = true;
+                const auto &state = snapshot.variant;
+                const auto cues = variant_events_.Consume(state, snapshot.recovering || snapshot.table_paused);
+                if (!variant_events_.resynchronized) {
+                    for (const auto &cue: cues) {
+                        const int actor = state.Relative(cue.actor);
+                        unsigned caption = 0;
+                        ReplayEvent event; event.who = actor;
+                        if (cue.kind == "draw") event.kind = ReplayEventKind::Draw;
+                        else if (cue.kind == "discard") event.kind = ReplayEventKind::Discard;
+                        else if (cue.kind == "pon" || cue.kind == "chi" || cue.kind.find("kan") != std::string::npos) {
+                            caption = cue.kind == "pon" ? 473 : cue.kind == "chi" ? 475 : 474;
+                            PlaySoundId(113); PlaySoundId(cue.kind == "pon" ? 136 : cue.kind == "chi" ? 118 : 127);
+                        } else if (cue.kind == "ron" || cue.kind == "tsumo") {
+                            caption = cue.kind == "ron" ? 476 : 477;
+                            event.kind = ReplayEventKind::Win;
+                            event.attributes["who"] = std::to_string(actor);
+                            event.attributes["fromWho"] = std::to_string(state.Relative(cue.source));
+                        } else if (cue.kind == "exchange" || cue.kind == "dingque") {
+                            captions_.AcceptResource(0, actor, L"选择完毕"); PlaySoundId(106);
+                        }
+                        if (caption) captions_.AcceptResource(caption, actor);
+                        for (auto sound: ReplaySounds(event, snapshot.game.players[actor].gender, effects_only_, individual_voices_)) PlaySoundId(sound);
+                    }
+                    if (captions_.Active()) SetTimer(window_, 8, 15, nullptr);
+                } else captions_.Clear();
+                // Full snapshots are authoritative; batching never fabricates intermediate wire states.
+                ReplayEvent presentation; presentation.tag = "VARIANT";
+                try {
+                    table_.Accept(snapshot.game, presentation, animation_enabled_ && !variant_events_.resynchronized);
+                    if (table_.Animating()) motion_timer_.Start(window_, 6);
+                } catch (const std::exception &error) {
+                    table_.CancelAnimation(); motion_timer_.Stop();
+                    log_(std::string("VARIANT ANIMATION FALLBACK ") + error.what());
+                }
+            }
+            if (message.tag == "CLOCK") ReceiveActionClock(message, snapshot);
+            if (message.tag != "TABLEEND" && message.tag != "EXITVOTE") return;
+        }
         // Native RESTORE also repairs a stale action within a running connection.
         // Only a login/reconnect opens the original recovery preparation window.
         if (message.tag == "RESTORE") resume_preparation_pending_ = match_intro_pending_;
@@ -1323,7 +1437,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 GetCursorPos(&point);
                 ScreenToClient(item.hwndItem, &point);
                 const bool hot = IsWindowEnabled(item.hwndItem) && PtInRect(&item.rcItem, point);
-                const unsigned id = (item.CtlID == 5151 ? 448 : ids[item.CtlID - 5121]) + (hot ? 9 : 0);
+                const bool variant_choice = item.CtlID >= 5170 && item.CtlID <= 5173;
+                const unsigned id = variant_choice ? 0 : (item.CtlID == 5151 ? 448 : ids[item.CtlID - 5121]) + (hot ? 9 : 0);
                 Gdiplus::Graphics graphics(item.hDC);
                 const auto paint = [&](unsigned resource) {
                     const auto &im = action_artwork_.Get(resource);
@@ -1337,7 +1452,14 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 };
                 FillRect(item.hDC, &item.rcItem, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 paint(440);
-                paint(id);
+                if (id) paint(id);
+                else {
+                    Gdiplus::Font font(L"KaiTi", static_cast<float>(item.rcItem.bottom * .55), Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+                    Gdiplus::SolidBrush ink(Gdiplus::Color(hot ? 0xffffff99 : 0xffffffff));
+                    Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+                    const auto text = Text(item.hwndItem);
+                    graphics.DrawString(text.c_str(), -1, &font, Gdiplus::RectF(0, 0, static_cast<float>(item.rcItem.right), static_cast<float>(item.rcItem.bottom)), &format, &ink);
+                }
                 if (item.itemState & ODS_DISABLED) {
                     Gdiplus::SolidBrush dim(Gdiplus::Color(150, 0, 0, 0));
                     graphics.FillRectangle(&dim, 0, 0, item.rcItem.right, item.rcItem.bottom);
@@ -1501,7 +1623,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                         return TRUE;
                     }
                     if (item.CtlType == ODT_BUTTON && (
-                            (item.CtlID >= 5121 && item.CtlID <= 5128) || item.CtlID == 5151)) {
+                            (item.CtlID >= 5121 && item.CtlID <= 5128) || item.CtlID == 5151 || (item.CtlID >= 5170 && item.CtlID <= 5173))) {
                         self->PaintAction(item);
                         return TRUE;
                     }
@@ -1524,6 +1646,11 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                 }
                 if (message == WM_APP + 17) {
                     self->ApplyAutomaticSort();
+                    return 0;
+                }
+                if (message == WM_APP + 26) {
+                    self->pressed_action_ = static_cast<int>(wparam);
+                    self->button_revision_ = self->Snapshot().actions.revision;
                     return 0;
                 }
                 if (message == WM_APP + 18) {
@@ -1725,7 +1852,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                         self->log_("ACTION HAND PICK tile=" + std::to_string(tile) + " count=" + std::to_string(
                                        self->selection_.selected.size()));
                         if (index != static_cast<std::size_t>(-1)) self->Submit(index);
-                        else InvalidateRect(window, nullptr, FALSE);
+                        else { self->Arrange(); InvalidateRect(window, nullptr, FALSE); }
                         return 0;
                     }
                     const std::string kind = self->action_filter_ == "riichi" ? "riichi" : "discard";

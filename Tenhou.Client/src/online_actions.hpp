@@ -9,6 +9,7 @@ namespace tenhou {
         std::string kind, label;
         std::vector<int> tiles;
         std::vector<std::string> messages;
+        int suit = -1; // dingque parameter; never a physical tile ID.
     };
 
     struct ActionSnapshot {

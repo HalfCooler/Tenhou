@@ -21,6 +21,7 @@ namespace tenhou {
         int called_tile = -1;
         int from = -1; // Absolute source seat; same seat for a closed kan.
         std::uint32_t encoded = 0;
+        int added_tile = -1; // Explicit variant entity; riichi keeps its encoded representation.
     };
 
     struct ReplayDiscard {
@@ -42,6 +43,8 @@ namespace tenhou {
         int score = 25000;
         int reach = 0; // 0 none, 1 declared, 2 accepted.
         int drawn_tile = -1;
+        bool retired = false;
+        int missing_suit = -1, winning_tile = -1;
     };
 
     struct ReplayState {
@@ -49,6 +52,7 @@ namespace tenhou {
         std::array<ReplayPlayer, 4> players;
         bool initialized = false, ended = false;
         bool furiten = false;
+        bool variant = false;
         unsigned type = 0;
         unsigned seat_mask = 15;
         std::vector<int> red_tiles{16, 52, 88};

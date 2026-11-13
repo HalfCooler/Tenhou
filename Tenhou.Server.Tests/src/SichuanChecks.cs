@@ -89,7 +89,34 @@ internal static class SichuanChecks
     }
     public static void Run()
     {
-        Scoring(); Continuation(); Claims(); TaxesAndDraw(); ScheduleAndEnd();
+        PhysicalActions(); Scoring(); Continuation(); Claims(); TaxesAndDraw(); ScheduleAndEnd();
+    }
+    private static void PhysicalActions()
+    {
+        SichuanMatch exchange = (SichuanMatch)new SichuanRuleSet().Create(new Dictionary<string, string>(), new Random(6));
+        exchange.Start();
+        for (int seat = 0; seat < 4; ++seat)
+        {
+            int expected = exchange.Players[seat].Hand.GroupBy(t => t / 36).Sum(g => g.Count() * (g.Count() - 1) * (g.Count() - 2) / 6);
+            Check(exchange.GetActions(seat).Count == expected, "Physical exchange combinations were merged");
+        }
+        SichuanMatch match = Rig(["1123456789m123p", "", "", ""], "4p");
+        int[] copies = match.Players[0].Hand.Where(t => t / 4 == 0).ToArray();
+        int unowned = Enumerable.Range(0, 108).First(t => !match.Players[0].Hand.Contains(t));
+        bool rejected = false;
+        try { match.Submit(0, new("discard", [unowned])); } catch (ArgumentException) { rejected = true; }
+        Check(rejected, "Unowned physical discard was accepted");
+        Check(copies.Length == 2 && copies.All(t => match.GetActions(0).Any(a => a.Kind == "discard" && a.Tiles.SequenceEqual([t]))), "Physical discard copies were merged");
+        int chosen = copies[1]; match.Submit(0, new("discard", [chosen]));
+        Check(!match.Players[0].Hand.Contains(chosen) && match.Players[0].Hand.Contains(copies[0]), "Wrong physical copy consumed");
+        string projected = new Tenhou.Server.Protocol.VariantPresentation(new SichuanRuleSet().Normalize(new Dictionary<string, string>())).Project(match.Events[^1], 1, 2);
+        var state = Tenhou.Server.Protocol.Wire.Parse(projected);
+        Check(!state.Attributes.ContainsKey("drawn0") && !state.Attributes.ContainsKey("hand0"), "Private hand/draw leaked");
+        foreach (string cue in state.Get("events").Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] f = cue.Split(':'); Check(f[1] != "draw" || f[2] == "1" || f[3] == "-1", "Private draw cue leaked");
+        }
+        Console.WriteLine("PASS physical discard/exchange offers, exact entity consumption and private draw projection");
     }
     private static void Scoring()
     {
