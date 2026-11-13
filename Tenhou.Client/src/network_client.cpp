@@ -1,5 +1,4 @@
-// Match the original message-driven IPv4 API, including cancellable DNS.
-// These legacy APIs remain an intentional, scoped stage-6 compatibility choice.
+// Message-driven IPv4 transport with cancellable DNS for the desktop client.
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
 // Winsock must precede windows.h. All callbacks run on the owning UI thread.
 #include <winsock2.h>
@@ -10,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
-#include <wincrypt.h>
 #include <stdexcept>
 
 namespace tenhou {
@@ -111,7 +109,7 @@ namespace tenhou {
 
         void Error(const std::string &error, bool transport = false) {
             const bool available = transport && options.recover_games &&
-                                   ((session.snapshot.game.initialized && !session.snapshot.game.complete) || resuming);
+                                   (((session.snapshot.game.initialized || session.snapshot.variant_active) && !session.snapshot.game.complete) || resuming);
             revision_floor = std::max({
                                  revision_floor, session.snapshot.actions.revision, session.snapshot.lobby_revision
                              }) + 1;
@@ -161,19 +159,13 @@ namespace tenhou {
                 if (options.native_service && native_token.empty() && !options.session_file.empty() &&
                     std::filesystem::exists(options.session_file)) {
                     std::ifstream file(options.session_file, std::ios::binary);
-                    std::vector<BYTE> bytes((std::istreambuf_iterator<char>(file)), {});
-                    if (bytes.size() > 4096) throw std::runtime_error("Invalid native session file");
-                    DATA_BLOB in{static_cast<DWORD>(bytes.size()), bytes.data()}, out{};
-                    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out))
-                        throw std::runtime_error("Cannot decrypt native session file");
-                    native_token.assign(reinterpret_cast<char *>(out.pbData), out.cbData);
-                    LocalFree(out.pbData);
+                    native_token.assign(std::istreambuf_iterator<char>(file), {});
+                    if (native_token.size() != 64 || !std::all_of(native_token.begin(), native_token.end(),
+                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+                        throw std::runtime_error("Invalid platform session file");
                 }
                 session.native_token = native_token;
                 session.snapshot.recovering = resume;
-                if ((options.interactive_games || options.recover_games) && options.host != "localhost" && options.host
-                    != "127.0.0.1")
-                    throw std::runtime_error("Game actions are limited to localhost or 127.0.0.1 in this stage");
                 if (options.recover_games && !options.observe_games && !options.interactive_games)
                     throw std::runtime_error("Local recovery requires a game mode");
                 if (options.match_games && (!options.interactive_games || options.observe_games))
@@ -322,25 +314,15 @@ namespace tenhou {
                     if (message.tag == "SESSION" && session.snapshot.native_service) {
                         native_token = session.snapshot.native_token;
                         if (!options.session_file.empty()) {
-                            DATA_BLOB in{
-                                static_cast<DWORD>(native_token.size()), reinterpret_cast<BYTE *>(native_token.data())
-                            }, out{};
-                            if (!CryptProtectData(&in, L"Tenhou native guest session", nullptr, nullptr, nullptr,
-                                                  CRYPTPROTECT_UI_FORBIDDEN, &out)) throw std::runtime_error(
-                                "Cannot protect native guest session");
                             std::filesystem::create_directories(options.session_file.parent_path());
                             const auto temporary = options.session_file.wstring() + L".tmp";
                             HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                                       FILE_ATTRIBUTE_NORMAL, nullptr);
-                            if (file == INVALID_HANDLE_VALUE) {
-                                LocalFree(out.pbData);
-                                throw std::runtime_error("Cannot open native guest session temporary file");
-                            }
+                            if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot open platform session temporary file");
                             DWORD written = 0;
-                            const bool saved = WriteFile(file, out.pbData, out.cbData, &written, nullptr) && written ==
-                                               out.cbData && FlushFileBuffers(file);
+                            const bool saved = WriteFile(file, native_token.data(), static_cast<DWORD>(native_token.size()), &written, nullptr)
+                                               && written == native_token.size() && FlushFileBuffers(file);
                             CloseHandle(file);
-                            LocalFree(out.pbData);
                             if (!saved || !MoveFileExW(temporary.c_str(), options.session_file.c_str(),
                                                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) throw
                                     std::runtime_error("Cannot atomically save native guest session");

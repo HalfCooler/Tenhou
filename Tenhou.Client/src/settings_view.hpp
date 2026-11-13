@@ -1,5 +1,6 @@
 #pragma once
 #include "client_preferences.hpp"
+#include "resource_manager.hpp"
 #include "replay_audio.hpp"
 #include <commctrl.h>
 #include <functional>
@@ -24,6 +25,7 @@ namespace tenhou {
         struct Page {
             SettingsView *owner = nullptr;
             int id = 0;
+            AssetId asset = AssetId::Dialog104;
         };
 
         static INT_PTR CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);

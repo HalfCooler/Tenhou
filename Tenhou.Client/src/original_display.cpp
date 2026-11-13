@@ -1,4 +1,5 @@
 #include "original_display.hpp"
+#include "resource_manager.hpp"
 #include "table_scene.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -162,7 +163,7 @@ namespace tenhou {
         auto cached = images_.find(id);
         if (cached != images_.end()) return cached->second;
         if (pack_.entries.empty()) {
-            pack_ = LoadResourcePack(directory_ / "_res2.dat");
+            pack_ = LoadResourcePack(ResourceManager(directory_).Path(AssetId::DisplayPack));
             if (pack_.signature != (width_ == 1440 ? "res2" : "res0")) {
                 pack_ = {};
                 throw std::runtime_error("Original display pack has the wrong canvas signature");

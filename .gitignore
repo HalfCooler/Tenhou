@@ -1,4 +1,6 @@
 .idea/
+.vscode/
+.vs/
 
 build/
 build-Release/
@@ -6,3 +8,9 @@ build-Debug/
 
 cmake-build-release/
 cmake-build-debug/
+
+**/bin/
+**/obj/
+Tenhou.Server/data/
+Tenhou.Server/server.local.json
+**/platform-session-*.txt

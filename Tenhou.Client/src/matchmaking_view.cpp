@@ -50,12 +50,12 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
             if (!edit) SetWindowSubclass(control, Hover, 1, 0);
         };
-        add(5200, L"人机场", 30, 95, 145, 25);
-        add(5201, L"大厅战", 175, 95, 145, 25);
-        // Original 00428a20: rule button x=100/190 and y=52+27*n inside (30,120).
-        // Rows reduced to the user's supported subset. Labels and no-kuitan sanma are authorized adaptations.
-        for (int i = 0; i < 12; ++i) add(5210 + i, (i % 2) ? L"南" : L"东", 130 + (i % 2) * 90,
-                                         172 + (i / 2) * 27 + (i >= 8 ? 27 : 0), 40, 22);
+        add(5200, L"快捷练习", 30, 95, 145, 25);
+        add(5201, L"好友房间", 175, 95, 145, 25);
+        controls_[5250] = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+            50, 175, 240, 220, window_, reinterpret_cast<HMENU>(5250), instance, nullptr);
+        SendMessageW(controls_[5250], WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
+        add(5251, L"开始练习", 98, 235, 144, 25);
         add(5230, L"创建房间", 50, 150, 112, 25);
         add(5231, L"加入房间", 178, 150, 112, 25);
         add(5232, L"", 50, 196, 112, 23, L"EDIT");
@@ -92,7 +92,19 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
     }
 
     void MatchmakingView::SetSnapshot(const LobbySnapshot &s) {
+        bool queues_changed = snapshot_.queues.size() != s.queues.size();
+        for (std::size_t i = 0; !queues_changed && i < s.queues.size(); ++i)
+            queues_changed = snapshot_.queues[i].id != s.queues[i].id || snapshot_.queues[i].name != s.queues[i].name;
         snapshot_ = s;
+        if (queues_changed) {
+            auto control = controls_.at(5250);
+            SendMessageW(control, CB_RESETCONTENT, 0, 0);
+            for (const auto &queue: s.queues) {
+                const auto name = NetworkWide(queue.name);
+                SendMessageW(control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
+            }
+            SendMessageW(control, CB_SETCURSEL, 0, 0);
+        }
         unsigned room = 0;
         if (s.lobby.size() == 5 && s.lobby[0] == 'L' && std::all_of(s.lobby.begin() + 1, s.lobby.end(),
                                                                     [](char c) {
@@ -120,11 +132,11 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
     void MatchmakingView::Update() {
         const bool pending = snapshot_.phase == LobbyPhase::Matching || snapshot_.phase == LobbyPhase::Cancelling || !
                              snapshot_.native_pending.empty(), room = draft_.room() != 0;
-        const bool ready = snapshot_.native_service && snapshot_.phase == LobbyPhase::Lobby;
+        const bool ready = snapshot_.native_service && snapshot_.catalog_ready && snapshot_.phase == LobbyPhase::Lobby;
         for (const auto &item: controls_) {
             const int id = item.first;
             bool visible = true, enabled = !pending && ready;
-            if (id >= 5210 && id < 5222) visible = !custom_;
+            if (id == 5250 || id == 5251) { visible = !custom_; enabled = enabled && !snapshot_.queues.empty(); }
             if (id >= 5230 && id <= 5235) visible = custom_;
             if (id == 5230 || id == 5231 || id == 5232) enabled = enabled && !room;
             if (id == 5233) enabled = enabled && draft_.intent() == RoomIntent::Create;
@@ -162,19 +174,24 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             custom_ = id == 5201;
             SetWindowTextW(controls_.at(5232), L"");
         }
-        if (id >= 5210 && id < 5222) {
-            // Display order is row pairs: normal4, fast4, normal3, fast3, no-kuitan4/3.
+        if (id == 5251) {
             if (draft_.room()) {
                 status_ = L"请先离开大厅战房间";
                 Update();
                 return;
             }
-            request_("match", GeneralMatchRules()[id - 5210].type, {});
+            const auto selected = SendMessageW(controls_.at(5250), CB_GETCURSEL, 0, 0);
+            if (selected >= 0 && static_cast<std::size_t>(selected) < snapshot_.queues.size())
+                request_("match", snapshot_.queues[static_cast<std::size_t>(selected)].id, {});
         }
         if (id == 5230) {
+            if (snapshot_.rules.empty()) return;
             draft_.Reset();
-            draft_.CreateRoom();
-            request_("create", 0, draft_.settings());
+            draft_.CreateRoom(snapshot_.rules.begin()->second);
+            editing_ = true;
+            auto settings = EditRoomSettings(window_, draft_.settings(), snapshot_.rules);
+            editing_ = false;
+            if (settings) request_("create", 0, *settings);
         }
         if (id == 5231) {
             wchar_t number[64]{};
@@ -186,7 +203,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         if (id == 5233) {
             editing_ = true;
             EnableWindow(controls_.at(5235), FALSE);
-            auto settings = EditRoomSettings(window_, draft_.settings());
+            auto settings = EditRoomSettings(window_, draft_.settings(), snapshot_.rules);
             editing_ = false;
             if (settings) {
                 request_("settings", 0, *settings);
@@ -195,11 +212,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         if (id == 5234) request_("leave", 0, {});
         if (id == 5242) request_("close", 0, {});
         if (id == 5235 && !snapshot_.room_settings.empty()) {
-            const auto &s = snapshot_.room_settings;
-            unsigned type = 1u | (s.at("match_type") == "standard3" ? 16u : 0u) | (s.at("length") == "south" ? 8u : 0u)
-                            | (s.at("fast") == "1" ? 64u : 0u) | (s.at("red_count") == "0" ? 2u : 0u) | (
-                                s.at("open_tanyao") == "0" ? 4u : 0u);
-            request_("match", type, {});
+            request_("match", 0, {});
         }
         Update();
     }
@@ -211,17 +224,10 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         const auto old = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(0, 0, 0));
-        Label(dc, L"天鳳 / 对局大厅", {30, 24, 320, 44});
+        Label(dc, L"好友麻将 / 对局大厅", {30, 24, 320, 44});
         Label(dc, L"请选择对局", {30, 55, 320, 75});
         if (!custom_) {
-            Label(dc, L"东风          东南", {133, 145, 310, 165});
-            const wchar_t *labels[]{L"四人", L"速 四人", L"三人", L"速 三人", L"无食断 四人", L"无食断 三人"};
-            for (int i = 0; i < 6; ++i) Label(dc, labels[i], {
-                                                  50, 176 + i * 27 + (i >= 4 ? 27 : 0), 130,
-                                                  196 + i * 27 + (i >= 4 ? 27 : 0)
-                                              });
-            // Last two rows are East normal / East fast, not East / South.
-            Label(dc, L"常规          速", {133, 286, 310, 304});
+            Label(dc, L"选择服务器提供的玩法", {50, 145, 310, 165});
         } else {
             Label(dc, L"房间号", {50, 179, 200, 194});
             if (draft_.room()) {
@@ -239,8 +245,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         Label(dc, L"对局规则", {340, 32, 560, 52});
         if (snapshot_.phase == LobbyPhase::Matching || snapshot_.phase == LobbyPhase::Cancelling) {
             std::wstring name = L"大厅战";
-            if (!draft_.room()) for (const auto &rule: GeneralMatchRules()) if (rule.type == snapshot_.match_type)
-                name = rule.name;
+            if (!draft_.room()) for (const auto &queue: snapshot_.queues) if (queue.type == snapshot_.match_type)
+                name = NetworkWide(queue.name);
             Label(dc, name.c_str(), {340, 65, 560, 125}, DT_LEFT | DT_WORDBREAK);
             Label(dc, snapshot_.phase == LobbyPhase::Cancelling
                           ? L"等待取消确认"
@@ -248,23 +254,17 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
                                 ? (draft_.room() ? L"已排队，等待真人\n10 秒后人机补席" : L"正在准备人机对局")
                                 : L"等待排队确认", {340, 137, 560, 194}, DT_LEFT | DT_WORDBREAK);
         } else {
-            Label(dc, custom_ ? L"创建或加入房间后\n选择匹配。" : L"常规 / 速\n四人 / 三人\n东风 / 东南\n\n无食断对局仅东风", {340, 65, 560, 214},
+            Label(dc, custom_ ? L"创建或加入好友房间，\n由房主选择玩法和规则。" : L"玩法列表来自服务器。\n选择后与人机练习。", {340, 65, 560, 154},
                   DT_LEFT | DT_WORDBREAK);
             if (custom_ &&draft_.intent() == RoomIntent::Create)
             {
-                const auto &settings = draft_.settings();
-                const std::wstring summary = (settings.at("match_type") == "standard3" ? L"三人 / " : L"四人 / ") +
-                                             std::wstring(settings.at("length") == "south"
-                                                              ? L"南"
-                                                              : settings.at("length") == "single"
-                                                                    ? L"一局"
-                                                                    : L"东") +
-                                             (settings.at("fast") == "1" ? L" / 速" : L" / 常规");
+                const auto rule = snapshot_.rules.find(draft_.settings().at("rule"));
+                const std::wstring summary = rule == snapshot_.rules.end() ? L"未知规则" : NetworkWide(rule->second.name);
                 Label(dc, summary.c_str(), {340, 166, 560, 210}, DT_LEFT | DT_WORDBREAK);
             }
         }
         SetTextColor(dc, RGB(102, 102, 102));
-        Label(dc, !snapshot_.native_pending.empty() ? L"等待服务确认" : snapshot_.native_service ? L"本机服务 · 已连接" : L"匹配服务未连接",
+        Label(dc, !snapshot_.native_pending.empty() ? L"等待服务确认" : snapshot_.native_service ? L"麻将平台 · 已连接" : L"匹配服务未连接",
               {340, 330, 560, 350});
         if (!snapshot_.profile.empty()) {
             auto value = [&](const std::string &key) {
@@ -272,7 +272,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
                 return i == snapshot_.profile.end() ? std::wstring() : NetworkWide(i->second);
             };
             auto text = value("nickname");
-            if (value("account").empty()) text += L"\n访客，不保存战绩和牌谱";
+            if (value("account").empty()) text += L"\n访客，会话文件用于断线恢复";
             else {
                 for (const auto &n: {"4", "3"}) {
                     auto rating = value(std::string("rating") + n);
@@ -322,7 +322,6 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         SetTextColor(item.hDC, enabled ? RGB(34, 34, 34) : RGB(153, 153, 153));
         wchar_t text[80]{};
         GetWindowTextW(item.hwndItem, text, 80);
-        if (item.CtlID >= 5218 && item.CtlID <= 5221) wcscpy_s(text, item.CtlID % 2 ? L"速 东" : L"东");
         if (item.itemState & ODS_SELECTED) OffsetRect(&r, 1, 1);
         Label(item.hDC, text, r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         if (item.itemState & ODS_FOCUS) {

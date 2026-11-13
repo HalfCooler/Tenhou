@@ -332,6 +332,105 @@ namespace tenhou {
         if (tag == "BYE" && !message.attributes.count("who")) Fail("Server ended session (BYE)");
         const auto phase = snapshot.phase;
         if (snapshot.native_service) {
+            if (tag == "READYACK") {
+                if (snapshot.variant_active && Attribute(message, "table") == snapshot.exit_table) {
+                    snapshot.actions.pending.clear();
+                    snapshot.actions.choices.clear();
+                }
+                return {};
+            }
+            if (tag == "VGO") {
+                snapshot.variant_active = true;
+                snapshot.variant_state = message.attributes;
+                snapshot.exit_table = Attribute(message, "table");
+                snapshot.exit_allowed = Attribute(message, "exit") == "1";
+                snapshot.ranked = false;
+                snapshot.game = {};
+                snapshot.actions = {};
+                snapshot.actions.enabled = interactive_games;
+                snapshot.phase = LobbyPhase::Game;
+                return snapshot.recovering ? std::vector<std::string>{} : std::vector<std::string>{"<GOK/>"};
+            }
+            if (tag == "VSTATE") {
+                if (!snapshot.variant_active) Fail("Variant state before VGO");
+                for (const auto &entry: message.attributes) snapshot.variant_state[entry.first] = entry.second;
+                const auto window = Integer(Attribute(message, "window"));
+                if (window != snapshot.native_window || Attribute(message, "actions").empty() || snapshot.recovering)
+                    snapshot.actions.pending.clear();
+                snapshot.native_window = window;
+                snapshot.actions.choices.clear();
+                ++snapshot.actions.revision;
+                const std::map<std::string, std::string> labels{
+                    {"discard", "打出"}, {"ron", "和牌"}, {"tsumo", "自摸"}, {"pon", "碰"}, {"chi", "吃"},
+                    {"open_kan", "明杠"}, {"closed_kan", "暗杠"}, {"added_kan", "补杠"}, {"skip", "跳过"},
+                    {"exchange", "换三张"}, {"dingque", "定缺"}
+                };
+                const auto encoded = Attribute(message, "actions");
+                std::size_t start = 0;
+                while (start < encoded.size()) {
+                    const auto end = encoded.find(';', start);
+                    const auto action = encoded.substr(start, end == std::string::npos ? end : end - start);
+                    const auto colon = action.find(':');
+                    if (colon == std::string::npos || snapshot.actions.choices.size() >= 512) Fail("Invalid action offer");
+                    const auto kind = action.substr(0, colon), tiles = action.substr(colon + 1);
+                    const auto label = labels.find(kind);
+                    snapshot.actions.choices.push_back({kind, (label == labels.end() ? kind : label->second) + " " + tiles, {},
+                        {"<VACT table=\"" + Escape(snapshot.exit_table) + "\" window=\"" + std::to_string(snapshot.native_window) +
+                         "\" kind=\"" + Escape(kind) + "\" tiles=\"" + Escape(tiles) + "\"/>"}});
+                    if (end == std::string::npos) break;
+                    start = end + 1;
+                }
+                const auto stage = Attribute(message, "phase");
+                snapshot.game.complete = stage == "complete";
+                snapshot.phase = snapshot.game.complete ? LobbyPhase::MatchComplete : LobbyPhase::Game;
+                if (stage == "ended") snapshot.actions.choices.push_back({"next", "下一盘", {}, {"<NEXTREADY/>"}});
+                return {};
+            }
+            if (tag == "CATALOGBEGIN") {
+                snapshot.catalog_ready = false;
+                snapshot.rules.clear();
+                snapshot.queues.clear();
+                return {};
+            }
+            if (tag == "RULE") {
+                const auto id = Attribute(message, "id");
+                if (id.empty() || id.size() > 48 || snapshot.rules.size() >= 64 || snapshot.rules.count(id))
+                    Fail("Invalid rule catalog");
+                snapshot.rules[id] = {id, Attribute(message, "name"), Attribute(message, "presentation"), {}};
+                return {};
+            }
+            if (tag == "RULEFIELD") {
+                auto rule = snapshot.rules.find(Attribute(message, "rule"));
+                const auto key = Attribute(message, "key");
+                if (rule == snapshot.rules.end() || rule->second.fields.size() >= 32 || key.empty() ||
+                    std::any_of(rule->second.fields.begin(), rule->second.fields.end(), [&](const RuleField &f) { return f.key == key; }))
+                    Fail("Invalid rule field");
+                rule->second.fields.push_back({key, Attribute(message, "label"), Attribute(message, "default"),
+                    Attribute(message, "min"), Attribute(message, "max"), Integer(Attribute(message, "step")), {}});
+                return {};
+            }
+            if (tag == "RULECHOICE") {
+                auto rule = snapshot.rules.find(Attribute(message, "rule"));
+                if (rule == snapshot.rules.end()) Fail("Choice without a rule");
+                auto &fields = rule->second.fields;
+                auto field = std::find_if(fields.begin(), fields.end(), [&](const RuleField &f) { return f.key == Attribute(message, "key"); });
+                if (field == fields.end() || field->choices.size() >= 64) Fail("Invalid rule choice");
+                field->choices.push_back({Attribute(message, "value"), Attribute(message, "label")});
+                return {};
+            }
+            if (tag == "QUEUEDEF") {
+                if (snapshot.queues.size() >= 64) Fail("Too many server queues");
+                snapshot.queues.push_back({Integer(Attribute(message, "id")), Integer(Attribute(message, "type")),
+                    Attribute(message, "name"), Attribute(message, "rule")});
+                return {};
+            }
+            if (tag == "CATALOGEND") {
+                for (const auto &queue: snapshot.queues)
+                    if (!snapshot.rules.count(queue.rule)) Fail("Queue without a rule");
+                snapshot.catalog_ready = true;
+                ++snapshot.lobby_revision;
+                return {};
+            }
             if (tag == "PROFILE") {
                 snapshot.profile = message.attributes;
                 return {};
@@ -392,7 +491,7 @@ namespace tenhou {
             if (tag == "RESTORED") {
                 snapshot.recovering = false;
                 resume_connection = false;
-                snapshot.phase = snapshot.game.complete
+                snapshot.phase = snapshot.variant_active ? (snapshot.game.complete ? LobbyPhase::MatchComplete : LobbyPhase::Game) : snapshot.game.complete
                                      ? LobbyPhase::MatchComplete
                                      : snapshot.game.started
                                            ? LobbyPhase::Game
@@ -430,6 +529,8 @@ namespace tenhou {
                 snapshot.game = {};
                 snapshot.actions = actions_.snapshot;
                 snapshot.last_settlement = {};
+                snapshot.variant_active = false;
+                snapshot.variant_state.clear();
                 snapshot.last_result_names = {};
                 snapshot.exit_table.clear();
                 snapshot.exit_allowed = snapshot.exit_pending =
@@ -454,16 +555,8 @@ namespace tenhou {
         }
         if (tag == "ROOM" && match_games && phase == LobbyPhase::Lobby) {
             if (Attribute(message, "room") != std::to_string(room_)) Fail("Room settings do not match current lobby");
-            for (const char *key: {
-                     "revision", "match_type", "length", "time", "fast", "advanced", "starting_points", "target_points",
-                     "bankruptcy", "ancient", "red_count", "open_tanyao", "minimum", "open_hands"
-                 })
-                if (!message.attributes.count(key) || message.attributes.at(key).size() > 32) Fail(
-                    "Incomplete room settings");
-            const auto &kind = message.attributes.at("match_type");
-            const auto &length = message.attributes.at("length");
-            if ((kind != "standard3" && kind != "standard4") || (
-                    length != "single" && length != "east" && length != "south")) Fail("Unsupported room settings");
+            if (!message.attributes.count("revision") || !message.attributes.count("type") ||
+                !snapshot.rules.count(Attribute(message, "rule"))) Fail("Incomplete room settings");
             snapshot.room_settings = message.attributes;
             if (snapshot.native_service && Attribute(message, "rid") == std::to_string(snapshot.native_request))
                 snapshot.native_pending.clear();
@@ -517,6 +610,7 @@ namespace tenhou {
         }
         if (tag == "REINIT" && !recover_games) Fail("Online rejoin is not supported in this stage");
         if ((observe_games || interactive_games) && OnlineGame::Handles(tag)) {
+            if (tag == "GO") { snapshot.variant_active = false; snapshot.variant_state.clear(); }
             if (match_games && !snapshot.recovering) {
                 if (tag == "GO") {
                     if (phase != LobbyPhase::Matching && phase != LobbyPhase::Cancelling) Fail(
@@ -605,7 +699,7 @@ namespace tenhou {
             snapshot.identity = DecodeNetworkText(Attribute(message, "uname"));
             if (snapshot.identity.size() > 1024) Fail("Server identity exceeds limit");
             snapshot.phase = LobbyPhase::AwaitLobby;
-            if (Attribute(message, "uname") == "LOCAL-NATIVE" && Attribute(message, "version") == "26") {
+            if (Attribute(message, "uname") == "TENHOU-PLATFORM" && Attribute(message, "version") == "1") {
                 snapshot.native_service = true;
                 std::string credentials;
                 if (!native_password.empty() || native_register)
@@ -615,11 +709,11 @@ namespace tenhou {
                 native_nickname.clear();
                 native_register = false;
                 return {
-                    "<CAPS version=\"26\" token=\"" + Escape(native_token) + "\" sx=\"" + native_gender +
+                    "<CAPS version=\"1\" token=\"" + Escape(native_token) + "\" sx=\"" + native_gender +
                     "\" presentation=\"" + (presentation ? "1" : "0") + "\"" + credentials + " />"
                 };
             }
-            if (require_native) Fail("The configured endpoint is not a Stage 26 native service");
+            if (require_native) Fail("The configured endpoint is not a Tenhou platform service");
             if (message.attributes.count("auth")) return {
                 "<AUTH val=\"" + AuthenticationResponse(Attribute(message, "auth")) + "\"/>"
             };
@@ -686,10 +780,15 @@ namespace tenhou {
         } else if (command == "match") {
             if (snapshot.phase != LobbyPhase::Lobby || snapshot.lobby != roomName(room_)) Fail(
                 "Confirm a supported room before matching");
-            const std::set<unsigned> native_rules{1, 9, 65, 73, 17, 25, 81, 89, 7, 71, 23, 87};
-            if (snapshot.native_service
-                    ? (!room_ && !native_rules.count(value))
-                    : (value != 1 && value != 9 && value != 17 && value != 25)) Fail("Unsupported game rule preset");
+            auto queue = std::find_if(snapshot.queues.begin(), snapshot.queues.end(), [&](const ServerQueue &q) { return q.id == value; });
+            if (!snapshot.catalog_ready || (!room_ && queue == snapshot.queues.end())) Fail("Select a server queue");
+            if (!room_) {
+                const auto rule = snapshot.rules.find(queue->rule);
+                if (rule == snapshot.rules.end() || (rule->second.presentation != "riichi-v1" && rule->second.presentation != "mahjong-v1")) Fail("This rule needs a newer table renderer");
+            } else {
+                const auto rule = snapshot.rules.find(snapshot.room_settings.at("rule"));
+                if (rule == snapshot.rules.end() || (rule->second.presentation != "riichi-v1" && rule->second.presentation != "mahjong-v1")) Fail("This rule needs a newer table renderer");
+            }
             replies = {"<JOIN t=\"" + std::to_string(room_) + "," + std::to_string(value) + "\" />"};
             if (snapshot.native_service && room_) {
                 if (!snapshot.room_settings.count("revision")) Fail("Confirm room settings before joining queue");
@@ -698,7 +797,7 @@ namespace tenhou {
                         snapshot.room_settings.at("revision")) + "\" />"
                 };
             }
-            snapshot.match_type = value;
+            snapshot.match_type = room_ ? Integer(snapshot.room_settings.at("type")) : queue->type;
             snapshot.match_result.clear();
             snapshot.phase = LobbyPhase::Matching;
             // JOIN selects family/length; local ROOM supplies the complete GO flags.
@@ -723,6 +822,8 @@ namespace tenhou {
             replies = {"<BYE />", change(room_)};
             snapshot.target_lobby = roomName(room_);
             snapshot.phase = LobbyPhase::AwaitReturn;
+            snapshot.variant_active = false;
+            snapshot.variant_state.clear();
         } else Fail("Unknown lobby command");
         ++snapshot.lobby_revision;
         snapshot.native_error.clear();
@@ -751,10 +852,10 @@ namespace tenhou {
         }
         if (command == "create" || command == "settings")
             for (const auto &item: settings) {
-                if (item.first == "room" || item.first == "revision" || item.first == "owner" || item.first == "rid")
+                if (item.first == "room" || item.first == "revision" || item.first == "owner" || item.first == "rid" || item.first == "type")
                     continue;
                 if (item.first.empty() || !std::all_of(item.first.begin(), item.first.end(),
-                                                       [](char c) { return (c >= 'a' && c <= 'z') || c == '_'; })) Fail(
+                                                       [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; })) Fail(
                     "Invalid setting key");
                 wire += " " + item.first + "=\"" + Escape(item.second) + "\"";
             }
@@ -766,6 +867,14 @@ namespace tenhou {
     std::vector<std::string> LobbySession::SubmitAction(std::uint64_t revision, std::size_t index) {
         if (snapshot.table_paused || snapshot.exit_pending) return {};
         if (snapshot.phase != LobbyPhase::Game) Fail("Action outside game session");
+        if (snapshot.variant_active) {
+            if (revision != snapshot.actions.revision || index >= snapshot.actions.choices.size() || !snapshot.actions.pending.empty())
+                Fail("Stale or pending platform action");
+            const auto choice = snapshot.actions.choices[index];
+            snapshot.actions.pending = choice.kind;
+            snapshot.actions.choices.clear();
+            return choice.messages;
+        }
         auto next = actions_;
         const auto replies = next.Submit(revision, index);
         actions_ = std::move(next);

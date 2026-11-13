@@ -1,5 +1,6 @@
 #pragma once
 #include "replay_audio.hpp"
+#include "resource_manager.hpp"
 #include "client_preferences.hpp"
 
 namespace tenhou {
@@ -17,13 +18,23 @@ namespace tenhou {
                                            const std::wstring &key) {
         auto source = PreferenceString(config, L"RESOURCE", key.c_str(), L"default");
         if (source.empty() || _wcsicmp(source.c_str(), L"default") == 0) {
-            if (key == L"BGM_LOBBY0") return resources / L"_bgm0.wav";
-            if (key == L"BGM_LOBBY1") return resources / L"_bgm1.wav";
+            if (key == L"BGM_LOBBY0") return ResourceManager(resources).Path(AssetId::LobbyMusic);
+            if (key == L"BGM_LOBBY1") return ResourceManager(resources).Path(AssetId::LobbyMusicAlternate);
             if (key != L"BGM_GAME0") return MusicPath(resources, config, L"BGM_GAME0");
             return {};
         }
         if (_wcsicmp(source.c_str(), L"none") == 0) return {};
         std::filesystem::path path(source);
-        return path.is_absolute() ? path : config.parent_path() / path;
+        if (path.is_relative()) path = config.parent_path() / path;
+        // Older settings saved the absolute flat path when selecting a built-in BGM.
+        // Redirect only missing built-in paths within this resource root.
+        if (!std::filesystem::exists(path)) {
+            for (const auto id: {AssetId::LobbyMusic, AssetId::LobbyMusicAlternate}) {
+                const auto legacy = std::filesystem::absolute(resources / ResourceManager::Info(id).legacy_filename).lexically_normal();
+                if (_wcsicmp(std::filesystem::absolute(path).lexically_normal().c_str(), legacy.c_str()) == 0)
+                    return ResourceManager(resources).Path(id);
+            }
+        }
+        return path;
     }
 }

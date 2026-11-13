@@ -1,4 +1,5 @@
 #include "background.hpp"
+#include "resource_manager.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -122,9 +123,9 @@ namespace tenhou {
                 float(std::clamp(number(3 + band * 3, 255), 0, 256) * double(1.0f / 255.0f))
             };
         auto source = preferences.background_source == L"./BG1"
-                          ? directory / L"_bg1.bmp"
+                          ? ResourceManager(directory).Path(AssetId::BackgroundAlternate)
                           : std::filesystem::path(preferences.background_source);
-        if (source.empty()) source = directory / L"_bg.bmp";
+        if (source.empty()) source = ResourceManager(directory).Path(AssetId::Background);
         else if (source.is_relative() && preferences.background_source != L"./BG1")
             source = config.parent_path() / source;
         // The original #FF0000 preset uses a red solid source, then adjusts HSV.

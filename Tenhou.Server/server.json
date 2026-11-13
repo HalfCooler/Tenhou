@@ -1,0 +1,9 @@
+{
+  "listen": "127.0.0.1",
+  "port": 10080,
+  "dataDirectory": "data",
+  "maxConnections": 64,
+  "maxTables": 64,
+  "botDelayMs": 350,
+  "matchWaitMs": 10000
+}

@@ -1,4 +1,5 @@
 #include "welcome_view.hpp"
+#include "resource_manager.hpp"
 #include "background.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -125,14 +126,14 @@ namespace tenhou {
         banner_ = {};
         background_ = {};
         try {
-            const auto pack = LoadResourcePack(resources / "_res2.dat");
+            const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack));
             const auto found = std::find_if(pack.entries.begin(), pack.entries.end(),
                                             [](const Resource &entry) { return entry.id == 591; });
             if (found == pack.entries.end()) throw std::runtime_error("Original welcome frame resource 591 is missing");
             banner_ = DecodeImage(*found);
             if (banner_.width != 728 || banner_.height != 330) throw std::runtime_error(
                 "Original welcome frame dimensions changed");
-            background_ = BuildBackground(resources / "_bg.bmp", screen_width, screen_height);
+            background_ = BuildBackground(ResourceManager(resources).Path(AssetId::Background), screen_width, screen_height);
             log_("WELCOME frame=591 size=728x330 canvas=" + std::to_string(screen_width) + "x" + std::to_string(
                      screen_height));
         } catch (const std::exception &error) {

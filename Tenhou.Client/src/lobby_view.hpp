@@ -9,6 +9,7 @@
 #include "action_selection_view.hpp"
 #include "action_captions.hpp"
 #include "client_preferences.hpp"
+#include "variant_table_view.hpp"
 #include <windows.h>
 #include <filesystem>
 #include <functional>
@@ -136,6 +137,7 @@ namespace tenhou {
         };
 
         std::deque<QueuedEvent> presentation_queue_;
+        std::unique_ptr<VariantTableView> variant_;
         LobbySnapshot displayed_;
         bool displaying_ = false;
         unsigned pause_ticks_ = 0, draw_end_ticks_ = 0;

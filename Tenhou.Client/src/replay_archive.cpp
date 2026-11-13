@@ -14,6 +14,7 @@ namespace tenhou {
     }
 
     bool ReplayArchive::Request(const LobbySnapshot &s, const std::filesystem::path &config) {
+        if (s.variant_active) return false;
         if (config.empty() || !s.game.complete || s.exit_table.empty() || requested_ == s.exit_table || !s.profile.
             count("account") || s.profile.at("account").empty()) return false;
         wchar_t path[32768]{};
@@ -56,7 +57,7 @@ namespace tenhou {
             return;
         }
         if (m.tag != "REPLAYEND") return;
-        if (id_.empty() || field("table") != id_ || data_.size() != expected_ || id_.size() != 24 || !std::all_of(
+        if (id_.empty() || field("table") != id_ || data_.size() != expected_ || id_.size() != 32 || !std::all_of(
                 id_.begin(), id_.end(),
                 [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) throw std::runtime_error(
             "牌谱不完整");

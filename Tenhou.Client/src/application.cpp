@@ -202,18 +202,14 @@ namespace tenhou {
                                                                  L"127.0.0.1"));
                                                          connection.port = GetPrivateProfileIntW(
                                                              L"REBUILD", L"NativePort", 10080, config_path_.c_str());
-                                                         const auto account_key = Sha256(
-                                                             Bytes(connection.identity.begin(),
-                                                                   connection.identity.end())).substr(0, 16);
+                                                         const auto session_key = connection.host + ":" + connection.identity;
+                                                         const auto account_key = Sha256(Bytes(session_key.begin(), session_key.end())).substr(0, 16);
                                                          connection.session_file =
                                                                  config_path_.parent_path() / (
-                                                                     L"native-session-" +
-                                                                     std::to_wstring(connection.port) + (
-                                                                         connection.identity == "NoName"
-                                                                             ? L""
-                                                                             : L"-" + NetworkWide(account_key)) +
-                                                                     L".dat");
-                                                         welcome_->SetLoginState(true, L"正在连接本机服务...");
+                                                                     L"platform-session-" +
+                                                                     std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) +
+                                                                     L".txt");
+                                                         welcome_->SetLoginState(true, L"正在连接麻将平台...");
                                                          lobby_->Login(connection);
                                                      } else settings_->Open();
                                                  }, [this](const std::string &message) { Log(message); });

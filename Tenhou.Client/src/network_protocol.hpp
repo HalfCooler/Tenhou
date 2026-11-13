@@ -1,5 +1,6 @@
 #pragma once
 #include "online_actions.hpp"
+#include "matchmaking.hpp"
 #include <cstdint>
 #include <map>
 #include <string>
@@ -45,6 +46,11 @@ namespace tenhou {
     const char *LobbyPhaseName(LobbyPhase phase);
 
     struct LobbySnapshot {
+        bool variant_active = false;
+        std::map<std::string, std::string> variant_state;
+        bool catalog_ready = false;
+        std::map<std::string, ServerRule> rules;
+        std::vector<ServerQueue> queues;
         bool native_service = false, queue_confirmed = false, table_paused = false;
         std::string native_token, native_pending, native_error;
         std::map<std::string, std::string> profile;

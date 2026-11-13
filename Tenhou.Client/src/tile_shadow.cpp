@@ -1,4 +1,5 @@
 #include "tile_shadow.hpp"
+#include "resource_manager.hpp"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -90,11 +91,8 @@ namespace tenhou {
 
     const ShadowPack &ShadowPack::Embedded() {
         static const ShadowPack pack([] {
-            const auto module = GetModuleHandleW(nullptr);
-            const auto resource = FindResourceW(module, MAKEINTRESOURCEW(2000), MAKEINTRESOURCEW(10));
-            if (!resource) throw std::runtime_error("Missing fixed HD shadow data");
-            const auto *data = static_cast<const std::uint8_t *>(LockResource(LoadResource(module, resource)));
-            return InflateZlib(Bytes(data, data + SizeofResource(module, resource)), 16 * 1024 * 1024);
+            const auto view = ResourceManager::Embedded(AssetId::TileShadows);
+            return InflateZlib(Bytes(view.data, view.data + view.size), 16 * 1024 * 1024);
         }());
         return pack;
     }

@@ -1,4 +1,5 @@
 #include "table_scene.hpp"
+#include "resource_manager.hpp"
 #include "animation_clock.hpp"
 #include <algorithm>
 #include <stdexcept>
@@ -202,8 +203,8 @@ namespace tenhou {
     void TableArtwork::Load(const std::filesystem::path &directory, int width) {
         if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported table canvas");
         const int number = width == 1024 ? 0 : 2;
-        auto even = LoadObjectPack(directory / ("_obj" + std::to_string(number) + ".dat"));
-        auto odd = LoadObjectPack(directory / ("_obj" + std::to_string(number + 1) + ".dat"));
+        auto even = LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TablePackSd : AssetId::TablePack));
+        auto odd = LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TableCompanionPackSd : AssetId::TableCompanionPack));
         if (even.signature != "obj" + std::to_string(number) || odd.signature != "obj" + std::to_string(number + 1))
             throw std::runtime_error("Wrong table object pack resolution");
         even_ = std::move(even);

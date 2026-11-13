@@ -1,39 +1,78 @@
-# Tenhou
+# Tenhou · 好友麻将平台
 
-客户端与本机服务共用根目录的构建脚本和工具链配置。要求 Windows、MSVC x86 和 CMake 3.24 或更高版本，工程及构建目录使用纯英文路径。
+服务端管理玩法目录、房间、合法动作、计分和恢复；客户端根据服务器提供的规则和设置创建房间。当前提供立直麻将、四川血流成河和国标麻将。
 
-修改根目录 `toolchain.local.json` 中的 `vsdevcmd`、`cmake`，使其指向本机的 `VsDevCmd.bat` 和 `cmake.exe`，然后在根目录执行：
+`Tenhou.slnx` 统一登记四个项目：
 
-```bat
-build.cmd Release
-build.cmd Debug
+| 项目 | 内容 | 构建产物 |
+| --- | --- | --- |
+| [Tenhou.Client](Tenhou.Client/README.md) | Windows C++17 / GDI 客户端，拥有唯一的 CMake 工程 | `build/Tenhou.Client/` |
+| [Tenhou.Client.Tests](Tenhou.Client.Tests/README.md) | 客户端资源、协议栈和通用牌桌检查 | `build/Tenhou.Client.Tests/` |
+| [Tenhou.Server](Tenhou.Server/README.md) | .NET 11 / C# 15 服务端 | `build/Tenhou.Server/` |
+| [Tenhou.Server.Tests](Tenhou.Server.Tests/README.md) | 规则、计分、TCP 集成、存储恢复和进程启停测试 | `build/Tenhou.Server.Tests/` |
+
+规则、协议和运行时设计见 [规则约定](Tenhou.Server/RULES.md)、[协议](Tenhou.Server/PROTOCOL.md)、[架构](Tenhou.Server/ARCHITECTURE.md)。
+
+## 统一构建
+
+在仓库根目录执行：
+
+```powershell
+.\build.ps1                                      # 默认 Release，构建全部四个项目
+.\build.ps1 --Configuration Debug                 # 构建全部 Debug
+.\build.ps1 --Target Tenhou.Server                # 单独构建服务端
+.\build.ps1 --Target Tenhou.Client.Tests          # 单独构建客户端测试
+.\build.ps1 --Clean                               # 清理 bin、obj、分发产物及旧构建目录
+.\build.ps1 --Target Tenhou.Server.Tests --Clean   # 只清理指定项目
 ```
 
-清理构建产物：
+同时支持 PowerShell 单横线参数，例如 `-Target Tenhou.Server -Configuration Debug`。`build.cmd` 透传相同参数。
 
-```bat
-build.cmd Release -Target clean
-build.cmd Debug -Target clean
+构建配置、工具链探测、目标选择和产物复制均由根目录 `build.ps1` 管理。每个项目的编译结果保留在自己的 `bin/`，中间文件保留在自己的 `obj/`；成功后将运行所需文件复制到 `build/<项目名>/`。此分发目录对应最近一次构建的配置，Release 与 Debug 不分目录。
+
+完整构建需要 .NET 11 SDK、MSVC x86、Windows SDK 和 CMake 3.24+。脚本从 PATH 查找 CMake，通过 `vswhere` 探测 Visual Studio / Build Tools；也可以显式覆盖：
+
+```powershell
+.\build.ps1 --Target Tenhou.Client --VsDevCmd C:/BuildTools/Common7/Tools/VsDevCmd.bat --CMake 'C:/Program Files/CMake/bin/cmake.exe'
 ```
 
-不传参数时默认构建 Release，统一配置并编译所有子项目。也可以指定 CMake target 或构建目录：
+无需维护 `toolchain.local.json`。原生构建脚本和 `CMakeLists.txt` 均在 `Tenhou.Client/` 内；NMake 源码及构建路径需要使用 ASCII 字符。更新工具链后可传 `--Fresh` 重新探测。
 
-```bat
-build.cmd Release -Target tenhou_rebuild
-build.cmd Release -Target tenhou_server
-build.cmd Debug -BuildDirectory "out/debug"
+两个 `.proj` 文件将客户端和客户端测试接入 MSBuild 解决方案，调用根脚本和客户端 CMake 工程。Windows 上也可以执行 `dotnet build Tenhou.slnx -c Release`。单独构建两个 C# 项目只需要 .NET SDK：
+
+```powershell
+.\build.ps1 --Target Tenhou.Server
+.\build.ps1 --Target Tenhou.Server.Tests
 ```
 
-PowerShell 中使用 `./build.ps1 -Configuration Release -Target tenhou_server`。相对构建目录按仓库根目录解析，从其他工作目录调用脚本也可使用。
+构建只编译测试程序，测试运行命令见下文。
 
-默认产物：
+## 启停与联机
 
-- 客户端：`build-Release/Tenhou.Client/tenhou_rebuild.exe`
-- 客户端资源：`build-Release/Tenhou.Client/resources/`（从 `Tenhou.Client/assets/` 自动复制）
-- 服务端：`build-Release/Tenhou.Server/tenhou_server.exe`
-- 服务端配置：`build-Release/Tenhou.Server/server.ini`
+```powershell
+.\Tenhou.Server\start-server.cmd
+.\Tenhou.Server\stop-server.cmd
+# 或前台运行分发目录中的服务
+dotnet .\build\Tenhou.Server\Tenhou.Server.dll --config .\Tenhou.Server\server.json
+```
 
-Debug 产物位于对应的 `build-Debug/` 目录。子项目只需在 CMake 中声明自己的目标，并由根目录 `CMakeLists.txt` 引入，无需另写编译脚本。
+默认监听 `127.0.0.1:10080`。启停脚本默认使用源码项目中的 `server.json`，数据目录相对配置文件解析。分发目录也包含服务配置和启停脚本，可部署整个 `build/Tenhou.Server/`。清理分发目录会同时删除其中的运行数据，需保留的数据应通过配置放在构建目录之外。
 
-构建 Release 后，可用 `Tenhou.Server/start-server.cmd` 后台启动服务，使用 `Tenhou.Server/server.ini`；
-`Tenhou.Server/stop-server.cmd` 优雅停止。客户端和服务运行说明见各子项目 README。
+好友联机可将服务端配置 `listen` 改为适当的 IPv4 地址，客户端配置中 `[REBUILD] NativeHost` / `NativePort` 指向好友服务器。不同客户端窗口使用不同的 `--config-dir`。
+
+## 验证
+
+```powershell
+dotnet .\build\Tenhou.Server.Tests\Tenhou.Server.Tests.dll
+.\build\Tenhou.Client.Tests\tenhou_resource_check.exe .\build\Tenhou.Client.Tests\resources .\Tenhou.Client\assets
+dotnet .\build\Tenhou.Server.Tests\Tenhou.Server.Tests.dll --native-client .\build\Tenhou.Client.Tests\tenhou_protocol_check.exe
+```
+
+可选构建冻结的旧规则对照程序：
+
+```powershell
+.\build.ps1 --Target Tenhou.Server.Tests --NativeReference
+dotnet .\build\Tenhou.Server.Tests\Tenhou.Server.Tests.dll --oracle .\build\Tenhou.Server.Tests\tenhou_rule_oracle.exe --native-client .\build\Tenhou.Client.Tests\tenhou_protocol_check.exe
+```
+
+`Tenhou.Server.Tests/native-riichi-reference/` 只用于迁移差异检查，不参与生产服务。详细范围见各测试项目 README 和 [验证记录](Tenhou.Server/VALIDATION.md)。

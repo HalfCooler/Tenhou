@@ -1,4 +1,5 @@
 #include "match_intro_view.hpp"
+#include "resource_manager.hpp"
 #include "background.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -196,7 +197,7 @@ namespace tenhou {
         FillRect(dc, &r, reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
         try {
             const int h = width_ * 3 / 4;
-            if (background_.bgra.empty()) background_ = BuildBackground(directory_ / "_bg.bmp", width_, h);
+            if (background_.bgra.empty()) background_ = BuildBackground(ResourceManager(directory_).Path(AssetId::Background), width_, h);
             Gdiplus::Graphics g(dc);
             const float s = r.right / static_cast<float>(width_);
             g.ScaleTransform(s, s);

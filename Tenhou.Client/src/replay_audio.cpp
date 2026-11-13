@@ -1,4 +1,5 @@
 #include "replay_audio.hpp"
+#include "resource_manager.hpp"
 #include "replay_effects.hpp"
 #include <algorithm>
 #include <cstring>
@@ -118,7 +119,7 @@ namespace tenhou {
     void ReplaySoundBank::Load(const std::filesystem::path &resources, int canvas_width,
                                const std::filesystem::path &config) {
         (void) canvas_width; // Audio shares the sole HD resource pack.
-        const auto pack = LoadResourcePack(resources / "_res2.dat");
+        const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack));
         std::map<unsigned, std::shared_ptr<const SoundClip> > original, candidate;
         for (const auto &entry: pack.entries)
             if (entry.id > 100 && entry.id < 172 && !entry.metadata)

@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(Tenhou.Client VERSION 0.27.0 LANGUAGES C CXX RC)
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build configuration" FORCE)
+endif ()
+set(TENHOU_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin" CACHE PATH "Native runtime output directory")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${TENHOU_OUTPUT_DIRECTORY}")
 if (NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Windows and MSVC are required.")
 endif ()
@@ -7,25 +12,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(TENHOU_TEST_STATIC_OBJECT_IMAGES OFF CACHE BOOL "Static Object image traversal is disabled" FORCE)
-set(server_default OFF)
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native_server/CMakeLists.txt")
-    set(server_default ON)
-endif ()
-option(TENHOU_BUILD_SERVER "Build the native local service" ${server_default})
-if (TENHOU_BUILD_SERVER)
-    add_subdirectory(native_server)
-endif ()
-set(asset_default "${CMAKE_CURRENT_SOURCE_DIR}/../src/tenhou")
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/_res2.dat")
-    set(asset_default "${CMAKE_CURRENT_SOURCE_DIR}/assets")
-endif ()
-set(TENHOU_ASSET_DIRECTORY "${asset_default}" CACHE PATH "Original client resources")
+include(cmake/ClientAssets.cmake)
 add_library(zlib_inflate STATIC vendor/zlib/adler32.c vendor/zlib/crc32.c vendor/zlib/inffast.c
         vendor/zlib/inflate.c vendor/zlib/inftrees.c vendor/zlib/zutil.c vendor/zlib/uncompr.c)
 target_include_directories(zlib_inflate PUBLIC vendor/zlib)
 target_compile_definitions(zlib_inflate PRIVATE _CRT_SECURE_NO_WARNINGS)
-add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp)
-target_include_directories(tenhou_resources PUBLIC src)
+add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp src/resource_manager.cpp)
+target_include_directories(tenhou_resources PUBLIC src "${asset_generated_directory}")
 target_compile_definitions(tenhou_resources PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_resources PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_resources PUBLIC zlib_inflate bcrypt)
@@ -43,21 +36,29 @@ add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cp
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32 crypt32)
+target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32)
 add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/background.cpp src/table_view.cpp
         src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
-        src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp
-        resources/settings.rc resources/shadow.rc)
-target_include_directories(tenhou_rebuild PRIVATE resources)
+        src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/variant_table_view.cpp
+        "${asset_generated_directory}/client_assets.rc")
 target_compile_options(tenhou_rebuild PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus winmm comdlg32 shell32 comctl32 ole32)
-set(resource_files)
-foreach (name _bg.bmp _bg1.bmp _res2.dat _bgm0.wav _bgm1.wav _obj2.dat _obj3.dat)
-    list(APPEND resource_files "${TENHOU_ASSET_DIRECTORY}/${name}")
-endforeach ()
-add_custom_command(TARGET tenhou_rebuild POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:tenhou_rebuild>/resources"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${resource_files} "$<TARGET_FILE_DIR:tenhou_rebuild>/resources")
+# Runs even when only an asset changed, without relinking the executable.
+add_custom_target(tenhou_assets ${asset_copy_commands}
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${TENHOU_OUTPUT_DIRECTORY}/licenses"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/vendor/zlib/LICENSE"
+            "${TENHOU_OUTPUT_DIRECTORY}/licenses/zlib-LICENSE.txt"
+        DEPENDS ${asset_runtime_files} VERBATIM)
+add_dependencies(tenhou_rebuild tenhou_assets)
 install(TARGETS tenhou_rebuild RUNTIME DESTINATION client)
-install(FILES ${resource_files} DESTINATION client/resources)
 install(FILES vendor/zlib/LICENSE DESTINATION client/licenses RENAME zlib-LICENSE.txt)
+
+# Test source ownership stays with the corresponding test project.
+option(TENHOU_BUILD_CLIENT_TESTS "Build the client-specific checks" OFF)
+option(TENHOU_BUILD_RULE_ORACLE "Build the frozen server rule comparison helper" OFF)
+if (TENHOU_BUILD_CLIENT_TESTS)
+    include(../Tenhou.Client.Tests/Tests.cmake)
+endif ()
+if (TENHOU_BUILD_RULE_ORACLE)
+    include(../Tenhou.Server.Tests/NativeReference.cmake)
+endif ()

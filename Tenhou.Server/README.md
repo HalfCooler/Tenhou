@@ -1,32 +1,67 @@
-# 原生本机麻将服务 0.27.0
+# Tenhou.Server
 
-Windows x86 / C++17。只监听显式 IPv4 回环地址；默认 `127.0.0.1:10080`。不连接官方服务。
+项目目录 `Tenhou.Server`，根命名空间与程序集名 `Tenhou.Server`。使用 .NET 11 / C# 15，显式 `using`、启用 nullable、禁止 unsafe，不加载 C++ DLL，不依赖 Windows 专用 API。
 
-本目录 `start-server.cmd` 后台启动，`stop-server.cmd` 优雅停止。安装目录中同样使用 `start-server.cmd` /
-`stop-server.cmd`。`server.ini` 的路径相对该文件；修改端口时客户端 `[REBUILD] NativePort` 应同步。
+## 构建和运行
 
-服务权威维护房间、匹配、规则、动作合法性、思考时间、账号、战绩、段位与 R。大厅战少人从最早队列意图起等 10
-秒补人机，满员立即开桌；只给全注册真人大厅战结算排位。人机场固定单玩家加人机。旧 humans 配置不再决定开桌人数。
+在仓库根目录执行：
 
-任一真人断线会暂停牌桌。注册账号再次输入密码即可恢复；NoName 必须保留对应配置目录的加密会话文件。排队意图不会在服务重启后自动重放。排位桌禁止
-EXIT，非排位保留单真人直接退出和多真人 30 秒严格过半投票。
+```powershell
+.\build.ps1 --Target Tenhou.Server
+dotnet run --project Tenhou.Server -c Release -- --config Tenhou.Server/server.json
+```
 
-状态文件使用当前 Windows 用户的 DPAPI 加密，以刷新到磁盘和原子替换提交。支持读取旧 version26 状态，写入
-version27。升级前优雅停止并备份 state、games 和客户端会话。`.bak` 是上一提交版本，不能静默当成最新状态；回滚必须同时恢复配套程序及状态。跨机器／Windows
-账户的数据迁移未实现。
+配置文件路径及数据目录支持中文；数据目录相对配置文件所在目录解析。省略 `--config` 时读取程序目录中的 `server.json`。监听地址为显式 IPv4，默认 `127.0.0.1:10080`。
 
-注册玩家完成对局后可以取得本人权威 XML；NoName 不保存战绩和牌谱档案。服务日志只保留运行事件类别和数量；密码采用随机盐
-PBKDF2-HMAC-SHA256 210000 轮，不保存明文。密钥和数据容量保持本机范围，不提供公网、TLS、聊天、观战或自动断线托管。
+前台 Ctrl+C、Unix SIGTERM 或下面的命令会停止接收并保存状态：
 
-前台运行 `tenhou_server.exe --config 绝对路径/server.ini`；优雅停止追加 `--stop`。`--verify-record 加密记录路径`
-用于运营诊断重验，不是客户端入口。TCP NUL 结尾 `<HEALTH/>` 查询当前服务是否就绪及连接／房间／牌桌数量；协议握手仍使用
-version26，持久化版本为27。
+```powershell
+dotnet run --project Tenhou.Server -c Release -- --config Tenhou.Server/server.json --stop
+```
 
-磁盘、加密或存档损坏时拒绝启动／停止处理，不能删掉状态冒充恢复成功。默认 60 连接、4096 会话、64 牌桌、10000
-注册账号；达到上限会明确拒绝请求。房间和会话保留用于房主权限及恢复，容量满时需运维归档实例。
+`--stop` 通过当前操作系统用户的本机命名管道请求停止，管道按数据目录区分实例。Windows 还提供 `start-server.cmd`、`stop-server.cmd`，可传 `-ConfigurationFile <绝对路径>`、`-Configuration Debug`。
 
-统一使用仓库根目录的工具链配置及 `build.cmd Release`；只构建服务端可在根目录执行
-`build.cmd Release -Target tenhou_server`，生成 `build-Release/Tenhou.Server/tenhou_server.exe`。
-完整构建参数见[根目录说明](../readme.md)。计分参考许可在 `licenses/`。
+独立发布示例：
 
-更多原版证据、用户授权适配和最终验收记录见交付的《收尾文档》。
+```powershell
+dotnet publish Tenhou.Server -c Release -r win-x64 --self-contained true -o build/server-win-x64
+```
+
+纯服务端源码不依赖 Windows，但本次验证环境为 Windows；其他操作系统需要在目标环境运行测试。
+
+## 配置
+
+`server.json` 支持 `listen`、`port`、`dataDirectory`、`maxConnections`、`maxTables`、`botDelayMs`、`matchWaitMs`。
+
+可通过 `queues` 数组替换快捷练习目录，每项包含 `id`、`name`、`rule`、`options`。ID 是服务器自己的队列 ID，与客户端呈现用的立直位标志分离。例如：
+
+```json
+{
+  "listen": "127.0.0.1",
+  "port": 10080,
+  "dataDirectory": "data",
+  "queues": [
+    { "id": 1, "name": "好友立直四人一局", "rule": "riichi", "options": { "length": "single" } },
+    { "id": 2, "name": "血流成河一盘", "rule": "sichuan-bloodflow", "options": { "hands": "1" } },
+    { "id": 3, "name": "国标练习", "rule": "guobiao", "options": { "hands": "1" } }
+  ]
+}
+```
+
+快捷练习为单真人加人机。好友房满员立即开桌；未满员则从最早排队者开始等待 `matchWaitMs` 后补人机。队列不跨服务重启恢复。
+
+## 数据
+
+- `state.json`：账号、房间、恢复会话、进行中的对局和结算标记。
+- `games/<桌号>.xml`：完成的立直牌谱；`games/<桌号>.json`：完成的四川/国标牌谱。
+- `game-<桌号>.json`：包含牌山和动作的可重放记录。
+- `events.jsonl`：启动、连接和牌桌生命周期事件。
+- `server.lock`：实例对数据目录的独占锁。
+
+所有存档都是明文。密码保留 PBKDF2-HMAC-SHA256 哈希，凭据盐由标准密码学 API 产生；游戏洗牌、房间分配使用 `System.Random`。保存实际牌山，恢复不依赖运行时随机数序列。
+
+状态写入临时文件，刷盘后替换主文件。损坏的 JSON、未知版本或无法重放的记录会令启动失败；不会自动清空。旧 version26/27 加密测试状态与旧客户端会话不迁移。
+
+真人断线会暂停整桌，登录恢复后继续。退出采用单真人直接退出、多真人30秒严格过半投票；立直排位桌禁止中途退出。全注册真人立直好友局计入现有段位，其余玩法不计立直段位。结算标记与账号场次在同一快照提交。
+
+详细设计见 [ARCHITECTURE.md](ARCHITECTURE.md)，玩法约定见 [RULES.md](RULES.md)，消息见 [PROTOCOL.md](PROTOCOL.md)，验证记录见 [VALIDATION.md](VALIDATION.md)，参考实现许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

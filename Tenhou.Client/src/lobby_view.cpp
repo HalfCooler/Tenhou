@@ -191,12 +191,21 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 client_->snapshot().lobby_revision, command, value);
             else client_->NativeRequest(command, value, settings);
         });
+        variant_ = std::make_unique<VariantTableView>(window_,
+            [this](std::uint64_t revision, std::size_t index) { client_->SubmitAction(revision, index); },
+            [this]() {
+                if (client_->snapshot().phase == LobbyPhase::Error || client_->snapshot().phase == LobbyPhase::Disconnected) {
+                    client_->Disconnect(); PostMessageW(window_, WM_APP + 25, 0, 0);
+                } else client_->SubmitLobby(client_->snapshot().lobby_revision, "return");
+            },
+            [this]() { client_->ExitGame(); });
         Update(Snapshot());
         Arrange();
     }
 
     LobbyView::~LobbyView() {
         StopSound();
+        variant_.reset();
         matching_.reset();
         client_.reset();
         match_intro_.reset();
@@ -281,6 +290,17 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!matching_ || !client_) return;
         RECT r{};
         GetClientRect(window_, &r);
+        if (variant_) {
+            const bool active = client_->snapshot().variant_active;
+            variant_->Move(r);
+            variant_->Show(active);
+            if (active) {
+                matching_->Show(false);
+                for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
+                settlement_view_->Show(false);
+                return;
+            }
+        }
         const bool game = Snapshot().game.initialized;
         matching_->Move(r);
         matching_->Show(!game);
@@ -741,6 +761,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::Update(const LobbySnapshot &incoming) {
+        if (incoming.variant_active) {
+            ClearPresentationQueue(); CancelSelection(); CancelResultTimer(); ResetActionClock();
+            matching_->SetSnapshot(incoming); variant_->Set(incoming); UpdateExitVote(); Arrange();
+            if (connection_changed_) connection_changed_(incoming);
+            return;
+        }
         const bool paused = client_->snapshot().table_paused;
         if (paused && !paused_at_) {
             paused_at_ = GetTickCount64();

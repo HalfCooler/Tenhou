@@ -4,15 +4,25 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tenhou {
-    // FUN_0043f590 / 0043ae93: general-room rule IDs, without rank bits.
-    struct MatchRule {
-        unsigned type;
-        const wchar_t *name;
+    struct RuleChoice {
+        std::string value, label;
     };
-
-    const std::array<MatchRule, 12> &GeneralMatchRules();
+    struct RuleField {
+        std::string key, label, initial, minimum, maximum;
+        unsigned step = 1;
+        std::vector<RuleChoice> choices;
+    };
+    struct ServerRule {
+        std::string id, name, presentation;
+        std::vector<RuleField> fields;
+    };
+    struct ServerQueue {
+        unsigned id = 0, type = 0;
+        std::string name, rule;
+    };
 
     enum class RoomIntent { None, Create, Join };
 
@@ -25,7 +35,7 @@ namespace tenhou {
     // Form state only. Membership and queue confirmation belong to LobbySession.
     class MatchmakingDraft {
     public:
-        bool CreateRoom();
+        bool CreateRoom(const ServerRule &rule);
 
         bool JoinRoom(std::string_view number);
 

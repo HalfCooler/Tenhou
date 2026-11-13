@@ -33,8 +33,10 @@ namespace tenhou {
                                std::function<void(const std::string &)> log)
         : parent_(parent), config_(std::move(config)), resources_(std::move(resources)),
           changed_(std::move(changed)), log_(std::move(log)), audio_(log_) {
-        const int ids[]{104, 105, 106, 109, 110, 107};
-        for (unsigned i = 0; i < pages_.size(); ++i) pages_[i] = {this, ids[i]};
+        const AssetId assets[]{AssetId::Dialog104, AssetId::Dialog105, AssetId::Dialog106,
+                               AssetId::Dialog109, AssetId::Dialog110, AssetId::Dialog107};
+        for (unsigned i = 0; i < pages_.size(); ++i)
+            pages_[i] = {this, static_cast<int>(ResourceManager::Info(assets[i]).embedded_id), assets[i]};
     }
 
     SettingsView::~SettingsView() { if (IsWindow(window_)) DestroyWindow(window_); }
@@ -90,10 +92,9 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             auto &p = pages[i];
             p.dwSize = sizeof(p);
             p.hInstance = GetModuleHandleW(nullptr);
-            const auto resource = FindResourceW(p.hInstance, MAKEINTRESOURCEW(pages_[i].id), RT_RCDATA);
-            if (!resource) throw std::runtime_error("Missing original settings template");
+            const auto resource = ResourceManager::Embedded(pages_[i].asset);
             p.dwFlags = PSP_DLGINDIRECT;
-            p.pResource = static_cast<const DLGTEMPLATE *>(LockResource(LoadResource(p.hInstance, resource)));
+            p.pResource = reinterpret_cast<const DLGTEMPLATE *>(resource.data);
             p.pfnDlgProc = Procedure;
             p.lParam = reinterpret_cast<LPARAM>(&pages_[i]);
         }
@@ -224,7 +225,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             if (!chosen) return;
             if (chosen == 200) value = L"none";
             else if (chosen == 300 || chosen == 400)
-                value = (resources_ / (chosen == 300 ? L"_bgm0.wav" : L"_bgm1.wav")).wstring();
+                value = ResourceManager(resources_).Path(chosen == 300 ? AssetId::LobbyMusic : AssetId::LobbyMusicAlternate).wstring();
         }
         WritePreference(config_, L"RESOURCE", key, value.empty() ? nullptr : value.c_str());
         initializing_ = true;
