@@ -148,6 +148,7 @@ namespace tenhou {
         if (animate && selected_ < displayed.receipts.size()) {
             auto &receipt = displayed.receipts[selected_];
             if (shown_yaku_ < receipt.yaku.size()) receipt.yaku.resize(shown_yaku_);
+            if (receipt.generic && shown_yaku_ < receipt.entries.size()) receipt.entries.resize(shown_yaku_);
             if (shown_yaku_ < receipt.yakuman.size()) receipt.yakuman.resize(shown_yaku_);
             if (UraPending()) receipt.ura.clear();
             if (receipt.who < 0 && shown_tiles_ != static_cast<std::size_t>(-1)) {
@@ -177,6 +178,7 @@ namespace tenhou {
     std::size_t SettlementView::YakuCount() const {
         if (selected_ >= state_.receipts.size()) return 0;
         const auto &r = state_.receipts[selected_];
+        if (r.generic) return r.entries.size();
         return r.yakuman.empty() ? SettlementDisplayYaku(r).size() : r.yakuman.size();
     }
 
@@ -226,7 +228,6 @@ namespace tenhou {
             return;
         }
         const auto &r = state_.receipts[selected_];
-        if (r.generic) { Arrange(); return; }
         if (r.who < 0) {
             Arrange();
             return;
@@ -262,7 +263,10 @@ namespace tenhou {
             return;
         }
         if (shown_yaku_ < YakuCount()) {
-            if (!r.yakuman.empty()) {
+            if (r.generic) {
+                ++shown_yaku_;
+                if (sound_enabled_ && play_sound_) play_sound_(109);
+            } else if (!r.yakuman.empty()) {
                 shown_yaku_ = r.yakuman.size();
                 if (sound_enabled_ && play_sound_) play_sound_(111);
             } else {
@@ -272,7 +276,7 @@ namespace tenhou {
             }
             ura_pause_done_ = false;
             if (shown_yaku_ >= YakuCount()) presentation_frames_ = 12;
-            else presentation_frames_ = r.yakuman.empty() && yaku[shown_yaku_].id == 53 ? 54 : 55;
+            else presentation_frames_ = !r.generic && r.yakuman.empty() && yaku[shown_yaku_].id == 53 ? 54 : 55;
         } else if (UraPending()) {
             // Even zero-hit ura indicators must turn face up after a riichi win.
             ura_revealed_ = true;

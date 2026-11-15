@@ -45,4 +45,5 @@ namespace tenhou {
     std::vector<OnlineAction> ParseVariantActions(const std::string &encoded, const std::string &table,
                                                  std::uint64_t window, int tile_limit);
     OnlineState VariantTableState(const VariantState &state, const std::map<std::string, std::string> &identity);
+    ReplayEvent VariantReplayEvent(const VariantEvent &cue, const VariantState &state);
 }

@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Tenhou.Client/Tenhou.Client.proj" Type="13B669BE-BB05-4DDF-9536-439F39A36129" />
+  <Project Path="Tenhou.Client.Tests/Tenhou.Client.Tests.proj" Type="13B669BE-BB05-4DDF-9536-439F39A36129" />
+  <Project Path="Tenhou.Server/Tenhou.Server.csproj" />
+  <Project Path="Tenhou.Server.Tests/Tenhou.Server.Tests.csproj" />
+</Solution>

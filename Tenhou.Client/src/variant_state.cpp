@@ -111,13 +111,18 @@ namespace tenhou {
             const int who = Number(Get(f, key + "who"), -1, 3), source = Number(Get(f, key + "from"), -1, 3);
             r.who = who < 0 ? -1 : s.Relative(who); r.from = source < 0 ? -1 : s.Relative(source);
             r.tag = who < 0 ? "draw" : "win";
-            r.reason = Get(f, key + "reason"); r.fan = Number(Get(f, key + "fan"), 0, 64);
+            r.reason = Get(f, key + "reason"); r.fan = Number(Get(f, key + "fan"), 0, 1000);
             r.winning_tile = Number(Get(f, key + "tile"), -1, tile_max);
             const auto base = Numbers(Get(f, key + "base"), -100000000, 100000000, 4, false);
             const auto delta = Numbers(Get(f, key + "delta"), -100000000, 100000000, 4, false);
             if (base.size() != 4 || delta.size() != 4) throw std::runtime_error("Invalid receipt payments");
             for (int seat = 0; seat < 4; ++seat) { r.base[s.Relative(seat)] = base[seat]; r.delta[s.Relative(seat)] = delta[seat]; }
             r.hand = Numbers(Get(f, key + "hand"), 0, tile_max, 14);
+            for (int seat = 0; seat < 4; ++seat) {
+                const auto reveal = key + "reveal" + std::to_string(seat);
+                r.has_revealed[s.Relative(seat)] = f.count(reveal) != 0;
+                r.revealed[s.Relative(seat)] = Numbers(Get(f, reveal), 0, tile_max, 14);
+            }
             r.has_hand = who >= 0; r.has_melds = true;
             if (who >= 0 && (source < 0 || std::find(r.hand.begin(), r.hand.end(), r.winning_tile) == r.hand.end())) throw std::runtime_error("Invalid winning receipt");
             for (const auto &pattern: Split(Get(f, key + "patterns"), ';')) r.entries.push_back({pattern});
@@ -224,23 +229,49 @@ namespace tenhou {
         out.turn = s.Preparing() || s.players[s.turn].retired ? -1 : s.Relative(s.turn);
         out.ended = s.phase == VariantPhase::Ended || s.phase == VariantPhase::Complete;
         out.complete = s.phase == VariantPhase::Complete;
-        if (s.phase == VariantPhase::Claims && s.last_actor >= 0) out.last_discard_seat = s.Relative(s.last_actor);
+        if (s.phase == VariantPhase::Claims && s.last_actor >= 0 && !s.players[s.last_actor].river.empty() &&
+            s.players[s.last_actor].river.back() == s.last_tile) out.last_discard_seat = s.Relative(s.last_actor);
+        if (out.ended) out.turn = -1;
         out.result = s.result; out.events = s.seq;
         out.settlement = s.settlement;
+        if (out.ended && !out.settlement.receipts.empty() && out.settlement.receipts.back().who < 0)
+            out.result = "RYUUKYOKU " + s.result;
         out.wall.InitVariant(s.wall_total, s.wall_front, s.wall_tail, s.wall_offset);
         for (int seat = 0; seat < 4; ++seat) {
             const auto &p = s.players[seat];
             auto &q = out.players[s.Relative(seat)];
             q.name = Get(identity, "n" + std::to_string(seat));
+            q.flowers = p.flowers;
             q.score = p.score; q.known_hand = p.hand;
             q.hidden_count = p.hand.empty() ? p.hidden : 0;
             q.drawn_tile = p.drawn; q.retired = p.retired; q.missing_suit = s.Preparing() ? -1 : p.missing;
             q.winning_tile = p.winning.empty() ? -1 : p.winning.front();
+            if (!s.Sichuan() && out.ended) for (const auto &receipt: out.settlement.receipts)
+                if (receipt.who == s.Relative(seat)) {
+                    q.retired = true; q.winning_tile = receipt.winning_tile; q.drawn_tile = -1;
+                    q.known_hand.erase(std::remove(q.known_hand.begin(), q.known_hand.end(), q.winning_tile), q.known_hand.end());
+                    if (receipt.who == receipt.from && q.hidden_count && p.winning.empty()) --q.hidden_count;
+                }
             for (int tile: p.river) q.discards.push_back({tile});
             q.melds = p.melds;
             for (auto &meld: q.melds) meld.from = s.Relative(meld.from);
         }
         return out;
+    }
+
+    ReplayEvent VariantReplayEvent(const VariantEvent &cue, const VariantState &state) {
+        ReplayEvent event; event.tag = "VARIANT"; event.who = state.Relative(cue.actor);
+        event.attributes["kind"] = cue.kind;
+        if (cue.kind == "draw") event.kind = ReplayEventKind::Draw;
+        else if (cue.kind == "discard") event.kind = ReplayEventKind::Discard;
+        else if (cue.kind == "pon" || cue.kind == "chi" || cue.kind.find("kan") != std::string::npos)
+            event.kind = ReplayEventKind::Meld;
+        else if (cue.kind == "ron" || cue.kind == "tsumo") {
+            event.kind = ReplayEventKind::Win;
+            event.attributes["who"] = std::to_string(event.who);
+            event.attributes["fromWho"] = std::to_string(cue.source < 0 ? event.who : state.Relative(cue.source));
+        }
+        return event;
     }
 
     std::vector<VariantEvent> VariantEventCursor::Consume(const VariantState &state, bool recovering) {

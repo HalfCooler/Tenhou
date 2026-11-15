@@ -8,6 +8,7 @@
 | `client_protocol_check.cpp` | 使用真实客户端协议栈连接测试服务，跑完立直、四川及国标对局 |
 | `variant_ui_check.cpp` | 从服务端测试生成的状态夹具渲染离屏 GDI 牌桌截图 |
 | `variant_check.cpp` | 有类型快照、实体动作、换牌候选、多杠、退场、定缺装饰、牌山游标、恢复事件及提交屏障 |
+| `presentation_check.cpp` | 生产 LobbyView 的开局准备、连续快照排队、摸牌等待、暂停与恢复、跨盘准备；实际牌面资源的侧家和牌间距；结算开窗及逐项音效、静音和隐藏取消 |
 | `lobby_check.cpp` | 用生产 LobbyView 和本地访客会话打开独立验收窗口；仅手动运行 |
 
 在仓库根目录构建和运行：

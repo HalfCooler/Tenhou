@@ -65,6 +65,7 @@ namespace tenhou {
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
     private:
+        friend struct LobbyPresentationCheck;
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
         static LRESULT CALLBACK ExitVoteProcedure(HWND, UINT, WPARAM, LPARAM);
@@ -114,6 +115,7 @@ namespace tenhou {
         void OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot);
 
         void PresentGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot);
+        void PresentVariantState(const LobbySnapshot &snapshot);
 
         const LobbySnapshot &Snapshot() const;
 

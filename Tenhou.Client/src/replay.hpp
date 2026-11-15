@@ -40,6 +40,7 @@ namespace tenhou {
         std::vector<ReplayDiscard> discards;
         std::vector<ReplayMeld> melds;
         std::vector<int> nuki; // Public extracted entities; never a three-tile meld.
+        std::vector<int> flowers;
         int score = 25000;
         int reach = 0; // 0 none, 1 declared, 2 accepted.
         int drawn_tile = -1;

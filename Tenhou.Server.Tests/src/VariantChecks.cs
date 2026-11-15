@@ -104,6 +104,16 @@ internal static class VariantChecks
                     if (!acted || commands > 20000) throw new Exception("Variant game stuck");
                 }
                 SaveFixture();
+                long previousCue = 0;
+                foreach (MatchEvent view in match.Events) {
+                    string[] fresh = view.Data["events"].Split(';', StringSplitOptions.RemoveEmptyEntries)
+                        .Where(c => long.Parse(c.Split(':')[0]) > previousCue).ToArray();
+                    string[] kinds = fresh.Select(c => c.Split(':')[1]).ToArray();
+                    if (kinds.Contains("draw") && kinds.Any(k => k is "discard" or "pon" or "chi" or "open_kan" or "closed_kan" or "added_kan" or "ron" or "tsumo"))
+                        throw new Exception("Automatic draw replaced an action's presentation snapshot");
+                    previousCue = long.Parse(view.Data["event_seq"]);
+                }
+                if (!match.Events[^1].Data.ContainsKey("receipt0_who")) throw new Exception("Variant ended without a settlement receipt");
                 Console.WriteLine($"PASS {rule.Descriptor.Id} seed {seed}: {commands} actions, scores {string.Join(',', match.Scores)}");
             }
         SichuanChecks.Run();

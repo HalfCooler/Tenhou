@@ -172,7 +172,7 @@ public abstract class VariantMatch : IMatch
     public void Submit(int seat, MatchAction action)
     {
         if (!GetActions(seat).Any(a => a.Equivalent(action))) throw new ArgumentException("Illegal or stale action");
-        if (Phase is not ("turn" or "claims")) { SpecialSubmit(seat, action); Cue(action.Kind, seat); }
+        if (Phase is not ("turn" or "claims")) { Cue(action.Kind, seat); SpecialSubmit(seat, action); }
         else if (Phase == "claims")
         {
             Responses[seat] = action;
@@ -181,7 +181,7 @@ public abstract class VariantMatch : IMatch
         else if (action.Kind == "discard")
         {
             VariantPlayer p = Players[seat]; p.Hand.Remove(action.Tiles[0]); p.River.Add(action.Tiles[0]); p.Drawn = -1;
-            LastActor = seat; LastTile = action.Tiles[0]; Cue("discard", seat, LastTile); ClaimKind = "discard"; PrepareClaims(); if (Claims.Count == 0) Resolve();
+            LastActor = seat; LastTile = action.Tiles[0]; Cue("discard", seat, LastTile); ClaimKind = "discard"; PrepareClaims(); if (Claims.Count == 0) { Publish(false); Resolve(); }
         }
         else if (action.Kind == "tsumo") Win([seat], seat, true);
         else if (action.Kind == "added_kan")
@@ -240,7 +240,7 @@ public abstract class VariantMatch : IMatch
         Players[LastActor].Called.Add(LastTile); p.Melds.Add(new(action.Kind, action.Tiles.Append(LastTile).Order().ToArray(), seat, LastActor, LastTile));
         Interrupted = true; Turn = seat; Phase = "turn"; Replacement = false; p.Drawn = -1;
         Cue(action.Kind, seat, LastTile, LastActor);
-        if (action.Kind == "open_kan") { KongPayment(seat, LastActor, "open_kan"); Draw(seat, true); }
+        if (action.Kind == "open_kan") { KongPayment(seat, LastActor, "open_kan"); Publish(false); Draw(seat, true); }
     }
     private void CompleteKong(int seat, MatchAction action)
     {
@@ -252,10 +252,10 @@ public abstract class VariantMatch : IMatch
             TileSet old = p.Melds[index]; p.Melds[index] = old with { Kind = "added_kan", Tiles = old.Tiles.Concat(action.Tiles).Order().ToArray(), Added = action.Tiles[0] };
         }
         p.Drawn = -1; Interrupted = true; KongPayment(seat, seat, action.Kind);
-        Cue(action.Kind, seat, action.Kind == "closed_kan" ? -1 : action.Tiles[0]); Draw(seat, true);
+        Cue(action.Kind, seat, action.Kind == "closed_kan" ? -1 : action.Tiles[0]); Publish(false); Draw(seat, true);
     }
     protected virtual void KongPayment(int seat, int source, string kind) { }
-    protected virtual void Exhausted() { Result = "荒牌流局"; FinishHand(); }
+    protected virtual void Exhausted() { Result = "荒牌流局"; AddReceipt(-1, -1, -1, 0, [], (int[])Points.Clone(), Result); FinishHand(); }
     protected void FinishHand()
     {
         Phase = HandNumber >= TotalHands || ShouldEndMatch ? "complete" : "ended"; Claims.Clear(); Responses.Clear();
@@ -265,7 +265,24 @@ public abstract class VariantMatch : IMatch
         if (payer == recipient || amount < 0) throw new InvalidOperationException("Invalid transfer");
         Points[payer] -= amount; Points[recipient] += amount;
     }
-    protected void Publish()
+    protected void AddReceipt(int seat, int source, int tile, int fan, string[] patterns, int[] before, string reason)
+    {
+        Dictionary<string, string> receipt = new()
+        {
+            ["who"] = seat.ToString(CultureInfo.InvariantCulture), ["from"] = source.ToString(CultureInfo.InvariantCulture),
+            ["tile"] = tile.ToString(CultureInfo.InvariantCulture), ["fan"] = fan.ToString(CultureInfo.InvariantCulture),
+            ["patterns"] = string.Join(';', patterns), ["reason"] = reason, ["base"] = string.Join(',', before),
+            ["delta"] = string.Join(',', Points.Select((p, i) => p - before[i]))
+        };
+        if (seat >= 0)
+        {
+            VariantPlayer p = Players[seat];
+            receipt["hand"] = string.Join(',', (seat == source ? p.Hand : p.Hand.Append(tile)).Order());
+            receipt["melds"] = string.Join(';', p.Melds.Select(m => $"{m.Kind}:{string.Join(',', m.Tiles)}:{m.Source}:{m.Called}:{m.Added}"));
+        }
+        Receipts.Add(receipt);
+    }
+    protected void Publish(bool actionable = true)
     {
         Dictionary<string, string> state = new()
         {
@@ -296,7 +313,7 @@ public abstract class VariantMatch : IMatch
             state["flowers" + s] = string.Join(',', p.Flowers); state["winning" + s] = string.Join(',', p.WinningTiles);
             state["missing" + s] = p.MissingSuit.ToString(CultureInfo.InvariantCulture); state["wins" + s] = p.Wins.ToString(CultureInfo.InvariantCulture);
             state["retired" + s] = Participating(s) ? "0" : "1";
-            state["actions" + s] = string.Join(';', GetActions(s).Select(a => a.Kind + ":" + string.Join(',', a.Tiles)));
+            state["actions" + s] = actionable ? string.Join(';', GetActions(s).Select(a => a.Kind + ":" + string.Join(',', a.Tiles))) : "";
         }
         AddState(state); EventLog.Add(new("MATCHVIEW", state));
     }

@@ -91,12 +91,15 @@ public sealed partial class Platform
         while (table.Cursor < table.Match.Events.Count)
         {
             MatchEvent e = table.Match.Events[table.Cursor];
-            bool movement = e.Kind == "N" || (e.Kind.Length > 1 && char.IsAsciiDigit(e.Kind[1]) && "TUVWDEFGtuvwdefg".Contains(e.Kind[0], StringComparison.Ordinal));
+            bool movement = e.Kind == "MATCHVIEW" || e.Kind == "N" || (e.Kind.Length > 1 && char.IsAsciiDigit(e.Kind[1]) && "TUVWDEFGtuvwdefg".Contains(e.Kind[0], StringComparison.Ordinal));
             if (paced && movement && Now < table.NextEvent) return;
             ++table.Cursor;
             for (int s = 0; s < table.Record.Humans.Count; ++s)
                 Send(table.Record.Humans[s], table.Presentation.Project(e, s, table.Presentation.GameTag == "VGO" ? table.Windows[s] : table.Match.Events.Count));
-            if (paced && movement) table.NextEvent = Now + (e.Kind == "N" ? 400 : 280);
+            if (paced && movement) {
+                string cue = e.Kind == "MATCHVIEW" ? e.Data.GetValueOrDefault("events", "").Split(';').LastOrDefault()?.Split(':').ElementAtOrDefault(1) ?? "" : "";
+                table.NextEvent = Now + (cue is "ron" or "tsumo" ? 2000 : e.Kind == "N" || cue.Contains("kan", StringComparison.Ordinal) ? 400 : 280);
+            }
             if (opening && e.Kind == "INIT") break;
         }
         if (table.Presentation.GameTag != "VGO")

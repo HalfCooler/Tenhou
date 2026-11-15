@@ -7,9 +7,24 @@
 #include <stdexcept>
 
 namespace tenhou {
+    namespace {
+        TableTile WallOrigin(const WallState &wall, int index) {
+            const auto position = wall.Position(index);
+            const int stack = position.second / 2;
+            const int stacks = wall.SideTiles(position.first) / 2;
+            TableTile tile{'y', std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0) +
+                (position.second % 2 ? 17 : 0), -1, position.first};
+            tile.wall_extra = stack == 17 ? 1 : 0;
+            return tile;
+        }
+    }
     std::vector<PositionedTile> ReplayTransition::Frame(double elapsed) const {
         std::vector<PositionedTile> result;
         for (const auto &item: tiles) {
+            if (item.before_flip && elapsed < item.delay) {
+                result.push_back({*item.before_flip, item.from_x, item.from_y});
+                continue;
+            }
             if (elapsed < item.delay) continue;
             if (nuki &&std::string(item.tile.role)=="nuki")
             {
@@ -63,7 +78,7 @@ namespace tenhou {
                                                 != "MANUAL" && event.tag != "VARIANT"))
             return result;
         result.duration = duration;
-        if (event.kind == ReplayEventKind::Meld && DecodeReplayMeld(
+        if (event.kind == ReplayEventKind::Meld && event.tag != "VARIANT" && DecodeReplayMeld(
                 static_cast<unsigned>(std::stoul(event.attributes.at("m"))), event.who).kind == MeldKind::Nuki) {
             result.nuki = true;
             result.duration = 0;
@@ -96,6 +111,18 @@ namespace tenhou {
                         break;
                     }
             unsigned delay = 0;
+            std::optional<TableTile> before_flip;
+            if (event.kind == ReplayEventKind::Win && after.variant && std::string(tile.role) == "retired") {
+                const int index = 17 - tile.slot;
+                for (std::size_t i = 0; i < previous.size(); ++i) {
+                    const auto &old = previous[i];
+                    if (old.direction == tile.direction && std::string(old.role) == "hand" &&
+                        (old.family == 't' ? old.slot : 17 - old.slot) == index) {
+                        found = i; before_flip = old; delay = 60u * (index + 1); break;
+                    }
+                }
+                result.duration = std::max(result.duration, 900u);
+            }
             if (found != previous.size()) {
                 used[found] = true;
                 source = origin(previous[found]);
@@ -117,13 +144,14 @@ namespace tenhou {
                     tile.direction == event.who && std::string(tile.role) == "hand") {
                     // FUN_00491fe0 T/U/V/W: the public wall slot is the origin,
                     // including the reversed replacement sequence for a kan.
-                    const int index = before.wall.pending_kan
+                    const int index = !before.wall.dead_wall && after.wall.tail > before.wall.tail
+                                          ? before.wall.total - 1 - before.wall.tail
+                                          : before.wall.pending_kan
                                           ? (135 - before.wall.replacements) ^ 1
                                           : before.wall.front;
-                    const auto position = before.wall.Position(index);
-                    TableTile wall{'y', position.second / 2 + (position.second % 2 ? 17 : 0), -1, position.first};
+                    auto wall = WallOrigin(before.wall, index);
                     for (const auto &visible: BuildWallScene(before))
-                        if (visible.direction == wall.direction && visible.slot % 17 == wall.slot % 17) {
+                        if (visible.direction == wall.direction && visible.slot % 17 == wall.slot % 17 && visible.wall_extra == wall.wall_extra) {
                             wall.dx = visible.dx;
                             wall.dy = visible.dy;
                             break;
@@ -167,7 +195,7 @@ namespace tenhou {
                                                static_cast<unsigned>(std::ceil((steps + 1) * 1000.0 / 60)));
                 } else source = target;
             }
-            result.tiles.push_back({tile, source.first, source.second, target.first, target.second, delay});
+            result.tiles.push_back({tile, source.first, source.second, target.first, target.second, delay, before_flip});
         }
         return result;
     }
@@ -235,7 +263,7 @@ namespace tenhou {
         sort_tiles_.clear();
         sort_steps_ = 0;
         for (auto &player: initial_.players) if (!player.deal_hand.empty()) player.hand = player.deal_hand;
-        wall_tiles_ = wall && state.wall.known ? 136 : 0;
+        wall_tiles_ = wall && state.wall.known ? static_cast<unsigned>(state.wall.total) : 0;
         std::array < unsigned, 4 > counts{};
         for (unsigned step = 0; step < wall_tiles_ / 4; ++step) {
             hands_.push_back(counts);
@@ -346,12 +374,10 @@ namespace tenhou {
                 // FUN_0048de30 packet branch -> FUN_0048f2b0 / 0048f650:
                 // wall entity origin, speed distance/12, 12 position advances.
                 // Keep the user-authorized clean single sprite (no mode-3 trails).
-                const auto position = initial_.wall.Position(
-                    initial_.wall.initial_removed + static_cast<int>(packet.wall) + slot - static_cast<int>(packet.
-                        begin));
-                TableTile source{'y', position.second / 2 + (position.second % 2 ? 17 : 0), -1, position.first};
+                auto source = WallOrigin(initial_.wall,
+                    initial_.wall.initial_removed + static_cast<int>(packet.wall) + slot - static_cast<int>(packet.begin));
                 for (const auto &visible: wall_scene)
-                    if (visible.direction == source.direction && visible.slot % 17 == source.slot % 17) {
+                    if (visible.direction == source.direction && visible.slot % 17 == source.slot % 17 && visible.wall_extra == source.wall_extra) {
                         source.dx = visible.dx;
                         source.dy = visible.dy;
                         break;
@@ -413,6 +439,11 @@ namespace tenhou {
             case ReplayEventKind::Draw: return {0x69};
             case ReplayEventKind::Discard: return {0x67};
             case ReplayEventKind::Meld: {
+                if (event.tag == "VARIANT") {
+                    const auto &kind = event.attributes.at("kind");
+                    return {113, kind == "chi" ? voice(118, 119, 123)
+                        : kind == "pon" ? voice(136, 137, 141) : voice(127, 128, 132)};
+                }
                 const auto meld = DecodeReplayMeld(static_cast<std::uint32_t>(std::stoul(event.attributes.at("m"))),
                                                    event.who);
                 if (meld.kind == MeldKind::Nuki) return {107};

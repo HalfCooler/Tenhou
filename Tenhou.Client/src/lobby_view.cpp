@@ -303,17 +303,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!matching_ || !client_) return;
         RECT r{};
         GetClientRect(window_, &r);
-        if (variant_) {
-            const bool active = client_->snapshot().variant_active && !client_->snapshot().variant.Sichuan();
-            variant_->Move(r);
-            variant_->Show(active);
-            if (active) {
-                matching_->Show(false);
-                for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
-                settlement_view_->Show(false);
-                return;
-            }
-        }
+        if (variant_) variant_->Show(false);
         const bool game = Snapshot().game.initialized;
         matching_->Move(r);
         matching_->Show(!game);
@@ -322,7 +312,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->Move(board);
         action_view_->Move(board);
         if (game && !show_results_) {
-            if (Snapshot().variant_active && Snapshot().variant.Sichuan()) {
+            if (Snapshot().variant_active) {
                 const auto &s = Snapshot();
                 const auto target = FitNativeCanvas(board, canvas_width_);
                 const auto anchor = table_.ActionAnchor(s.game);
@@ -660,7 +650,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 } &&
                 std::all_of(choices.begin(), choices.end(),
                             [](const OnlineAction &a) { return a.kind == "discard"; })) {
-                if ((!s.variant_active && !automatic_discard_at_) || GetTickCount64() < automatic_discard_at_) return;
+                if (!automatic_discard_at_ || GetTickCount64() < automatic_discard_at_) return;
                 log_("ONLINE AUTO DISCARD tile=" + std::to_string(s.game.players[0].drawn_tile) + " tick=" +
                      std::to_string(GetTickCount64()));
                 Submit(i);
@@ -829,12 +819,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::Update(const LobbySnapshot &incoming) {
         if (incoming.actions.revision != action_revision_) hover_point_ = {-1, -1};
-        if (incoming.variant_active && !incoming.variant.Sichuan()) {
-            ClearPresentationQueue(); CancelSelection(); CancelResultTimer(); ResetActionClock();
-            matching_->SetSnapshot(incoming); variant_->Set(incoming); UpdateExitVote(); Arrange();
-            if (connection_changed_) connection_changed_(incoming);
-            return;
-        }
         const bool paused = client_->snapshot().table_paused;
         if (paused && !paused_at_) {
             paused_at_ = GetTickCount64();
@@ -1061,53 +1045,33 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
         if (snapshot.variant_active) {
-            if (message.tag == "VGO") { ClearPresentationQueue(); StopSound(); start_barrier_ = false; variant_events_ = {}; variant_hand_ = 0; }
+            if (message.tag == "VGO") {
+                ClearPresentationQueue(); StopSound(); CancelResultTimer();
+                start_barrier_ = false; variant_events_ = {}; variant_hand_ = 0;
+                show_results_ = false; match_intro_pending_ = false;
+                return;
+            }
             if (message.tag == "VSTATE") {
                 CancelHandDrag();
-                if (snapshot.variant.hand_number != variant_hand_) {
-                    variant_hand_ = snapshot.variant.hand_number;
-                    automatic_ = {true, false, false, false};
-                    table_.SetAutoSort(true, snapshot.game);
-                    show_results_ = false;
+                if (snapshot.recovering || !IsWindowVisible(window_)) {
+                    ClearPresentationQueue();
+                    PresentVariantState(snapshot);
+                    return;
                 }
-                if (snapshot.game.ended && !snapshot.game.settlement.receipts.empty()) show_results_ = true;
-                const auto &state = snapshot.variant;
-                const auto cues = variant_events_.Consume(state, snapshot.recovering || snapshot.table_paused);
-                if (!variant_events_.resynchronized) {
-                    for (const auto &cue: cues) {
-                        const int actor = state.Relative(cue.actor);
-                        unsigned caption = 0;
-                        ReplayEvent event; event.who = actor;
-                        if (cue.kind == "draw") event.kind = ReplayEventKind::Draw;
-                        else if (cue.kind == "discard") event.kind = ReplayEventKind::Discard;
-                        else if (cue.kind == "pon" || cue.kind == "chi" || cue.kind.find("kan") != std::string::npos) {
-                            caption = cue.kind == "pon" ? 473 : cue.kind == "chi" ? 475 : 474;
-                            PlaySoundId(113); PlaySoundId(cue.kind == "pon" ? 136 : cue.kind == "chi" ? 118 : 127);
-                        } else if (cue.kind == "ron" || cue.kind == "tsumo") {
-                            caption = cue.kind == "ron" ? 476 : 477;
-                            event.kind = ReplayEventKind::Win;
-                            event.attributes["who"] = std::to_string(actor);
-                            event.attributes["fromWho"] = std::to_string(state.Relative(cue.source));
-                        } else if (cue.kind == "exchange" || cue.kind == "dingque") {
-                            captions_.AcceptResource(0, actor, L"选择完毕"); PlaySoundId(106);
-                        }
-                        if (caption) captions_.AcceptResource(caption, actor);
-                        for (auto sound: ReplaySounds(event, snapshot.game.players[actor].gender, effects_only_, individual_voices_)) PlaySoundId(sound);
-                    }
-                    if (captions_.Active()) SetTimer(window_, 8, 15, nullptr);
-                } else captions_.Clear();
-                // Full snapshots are authoritative; batching never fabricates intermediate wire states.
-                ReplayEvent presentation; presentation.tag = "VARIANT";
-                try {
-                    table_.Accept(snapshot.game, presentation, animation_enabled_ && !variant_events_.resynchronized);
-                    if (table_.Animating()) motion_timer_.Start(window_, 6);
-                } catch (const std::exception &error) {
-                    table_.CancelAnimation(); motion_timer_.Stop();
-                    log_(std::string("VARIANT ANIMATION FALLBACK ") + error.what());
+                presentation_queue_.push_back({message, snapshot, sound_enabled_ && audio_error_.empty()});
+                SetTimer(window_, 7, 15, nullptr);
+                if (!opening_.Active() && !match_intro_->Active() && !pause_ticks_ && !draw_end_ticks_ &&
+                    !table_.Animating() && !start_barrier_) PresentationTick();
+                // PREPARE waits for the initial snapshot to be installed before confirming.
+                if (start_barrier_ && (!displaying_ || snapshot.variant.hand_number != variant_hand_)) {
+                    auto item = std::move(presentation_queue_.back()); presentation_queue_.clear();
+                    displayed_ = std::move(item.snapshot); displaying_ = true;
+                    event_sound_allowed_ = item.sound_allowed;
+                    PresentVariantState(displayed_);
                 }
+                return;
             }
-            if (message.tag == "CLOCK") ReceiveActionClock(message, snapshot);
-            if (message.tag != "TABLEEND" && message.tag != "EXITVOTE") return;
+            if (message.tag == "CLOCK") { ReceiveActionClock(message, snapshot); return; }
         }
         // Native RESTORE also repairs a stale action within a running connection.
         // Only a login/reconnect opens the original recovery preparation window.
@@ -1206,7 +1170,79 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         Update(displayed_);
     }
 
+    void LobbyView::PresentVariantState(const LobbySnapshot &snapshot) {
+        const auto &state = snapshot.variant;
+        const bool new_hand = state.hand_number != variant_hand_;
+        const auto cues = variant_events_.Consume(state, snapshot.recovering);
+        const bool live = !snapshot.recovering && IsWindowVisible(window_);
+        if (new_hand) {
+            variant_hand_ = state.hand_number;
+            CancelResultTimer(); show_results_ = false;
+            automatic_ = {true, false, false, false};
+            table_.SetAutoSort(true, snapshot.game);
+        }
+        if (variant_events_.resynchronized || new_hand || !live) {
+            CancelResultTimer(); StopSound();
+            captions_.Clear(); table_.SetDrawEndSlots(14);
+            table_.Accept(snapshot.game, ReplayEvent{}, false);
+            show_results_ = snapshot.game.ended;
+            if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || sound_enabled_)) {
+                table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
+                opening_start_ = GetTickCount64();
+                if (state.hand_number == 1) {
+                    if (start_barrier_) start_sound_pending_ = true;
+                    else if (event_sound_allowed_) PlaySoundId(112);
+                }
+                SetTimer(window_, 2, opening_.interval(), nullptr);
+            }
+            if (start_barrier_ && live) client_->ConfirmMatchStart();
+            return;
+        }
+        ReplayEvent presentation; presentation.tag = "VARIANT";
+        for (const auto &cue: cues) {
+            const auto event = VariantReplayEvent(cue, state);
+            // Automatic continuations have their own snapshots, so a draw cannot replace a call.
+            if (event.kind != ReplayEventKind::Metadata) presentation = event;
+            if (captions_.Accept(event)) SetTimer(window_, 8, 15, nullptr);
+            if (cue.kind == "exchange" || cue.kind == "dingque") {
+                captions_.AcceptResource(0, event.who, L"选择完毕"); SetTimer(window_, 8, 15, nullptr);
+                if (event_sound_allowed_) PlaySoundId(106);
+            } else if (cue.kind == "flower") {
+                captions_.AcceptResource(0, event.who, L"补花"); SetTimer(window_, 8, 15, nullptr);
+                if (event_sound_allowed_) PlaySoundId(107);
+            }
+            if (event_sound_allowed_) PlayEventSound(event, snapshot);
+        }
+        pause_ticks_ = ActionPauseTicks(presentation);
+        pause_after_motion_ = presentation.kind == ReplayEventKind::Draw;
+        const bool draw_end = snapshot.game.ended && !snapshot.game.settlement.receipts.empty() &&
+            snapshot.game.settlement.receipts.back().who < 0;
+        if (draw_end) presentation.kind = ReplayEventKind::DrawEnd;
+        try {
+            table_.Accept(snapshot.game, presentation, animation_enabled_ && !text_details_ && !draw_end);
+            if (table_.Animating()) motion_timer_.Start(window_, 6);
+        } catch (const std::exception &error) {
+            table_.CancelAnimation(); motion_timer_.Stop();
+            log_(std::string("VARIANT ANIMATION FALLBACK ") + error.what());
+        }
+        if (presentation.kind == ReplayEventKind::Draw && presentation.who == 0) {
+            automatic_discard_at_ = GetTickCount64() + kAutomaticDiscardWaitMs;
+            SetTimer(window_, 10, kAutomaticDiscardWaitMs, nullptr);
+        }
+        if (presentation.kind == ReplayEventKind::Win) {
+            pause_ticks_ = 134; pause_after_motion_ = false;
+            if (snapshot.game.ended) {
+                result_deadline_ = GetTickCount64() + 2000;
+                SetTimer(window_, 5, 2000, nullptr);
+            }
+        } else if (draw_end) {
+            draw_end_ticks_ = 28; table_.SetDrawEndSlots(0);
+            SetTimer(window_, 7, 15, nullptr);
+        }
+    }
+
     void LobbyView::PresentGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
+        if (message.tag == "VSTATE") { PresentVariantState(snapshot); return; }
         if (message.tag == "RESTORED") {
             StopSound();
             match_intro_pending_ = false;

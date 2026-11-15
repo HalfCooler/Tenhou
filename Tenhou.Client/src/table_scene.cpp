@@ -105,7 +105,7 @@ namespace tenhou {
                     command.family = 'n'; command.slot = 17 - static_cast<int>(i);
                     command.role = winning ? "winning" : "retired";
                 }
-                if (state.ended && state.result.rfind("RYUUKYOKU", 0) == 0 && i < state.draw_end_slots && !state.
+                if (state.ended && !player.retired && state.result.rfind("RYUUKYOKU", 0) == 0 && i < state.draw_end_slots && !state.
                     settlement.receipts.empty()) {
                     const auto &receipt = state.settlement.receipts.back();
                     // FUN_0048de30 event 0x84 / FUN_00486e80: absent haiN ->
@@ -276,7 +276,8 @@ namespace tenhou {
             offset.x += (face.x - previous.x) * tile.wall_extra;
             offset.y += (face.y - previous.y) * tile.wall_extra;
         }
-        if (tile.drawn && tile.family == 'n' && (tile.direction & 1) && std::string(tile.role) == "hand") {
+        if (tile.drawn && tile.family == 'n' && (tile.direction & 1) &&
+            (std::string(tile.role) == "hand" || std::string(tile.role) == "winning")) {
             // Face-up n rows run opposite to the standing t row. A standing-row
             // draw shift moves these faces into their neighbour. Keep the original
             // n sprite/anchor, then separate the complete native face rectangles.

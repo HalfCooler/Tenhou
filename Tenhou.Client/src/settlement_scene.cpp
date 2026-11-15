@@ -54,7 +54,7 @@ namespace tenhou {
             };
             int ura_y = 322;
             if (r.generic) {
-                text("variant_name", r.who >= 0 ? names[r.who] : "四川血战到底", 24, 12, 580, 16);
+                text("variant_name", r.who >= 0 ? names[r.who] : "盘末结算", 24, 12, 580, 16);
                 if (r.who < 0) text("variant_reason", r.reason, 28, 150, 610, 14);
             }
             if (r.who < 0 && !r.generic) {
@@ -248,9 +248,12 @@ namespace tenhou {
                 if (!r.generic && !r.has_yaku && !r.has_yakuman) text("missing_yaku", "Yaku not supplied", 190, 194, 400, 18);
                 if (r.generic) {
                     text("variant_win", r.who == r.from ? "自摸" : "荣和", 260, 130, 140, 24, 0xffffffff, 1);
-                    for (std::size_t i = 0; i < r.entries.size(); ++i)
-                        text("variant_pattern", r.entries[i].name, 150, 194 + static_cast<int>(i) * 24, 420, 16);
-                    text("variant_fan", std::to_string(r.fan) + " 翻", 270, 360, 140, 22, 0xffffffff, 1);
+                    const auto visible = std::min(shown_yaku, r.entries.size());
+                    const bool pattern_columns = r.entries.size() > 6;
+                    for (std::size_t i = 0; i < std::min<std::size_t>(visible, 14); ++i)
+                        text("variant_pattern", r.entries[i].name, pattern_columns ? 35 + static_cast<int>(i / 7) * 310 : 150,
+                            194 + static_cast<int>(pattern_columns ? i % 7 : i) * 24, pattern_columns ? 300 : 420, 16);
+                    if (totals) text("variant_fan", std::to_string(r.fan) + " 翻", 270, 384, 140, 22, 0xffffffff, 1);
                 }
             }
             if (totals) {

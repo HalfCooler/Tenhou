@@ -11,6 +11,10 @@ namespace tenhou {
         if (event.kind == ReplayEventKind::Win)
             return event.attributes.at("who") == event.attributes.at("fromWho") ? 477 : 476;
         if (event.kind != ReplayEventKind::Meld) return 0;
+        if (event.tag == "VARIANT") {
+            const auto &kind = event.attributes.at("kind");
+            return kind == "chi" ? 475 : kind == "pon" ? 473 : 474;
+        }
         const auto encoded = static_cast<unsigned>(std::stoul(event.attributes.at("m")));
         if (encoded & 4) return 475;
         if (encoded & 0x18) return encoded & 8 ? 473 : 474;

@@ -237,6 +237,12 @@ namespace tenhou {
                                       : state.players[i].score;
                 const auto score = (state.relative_scores && i && value > 0 ? L"+" : L"") + std::to_wstring(value);
                 Caption(g, score, -26 * s, 28 * s, 16 * s, hud);
+                if (!state.players[i].flowers.empty()) {
+                    std::wstring flowers;
+                    for (int tile: state.players[i].flowers) if (tile >= 136 && tile < 144)
+                        flowers += L"春夏秋冬梅兰竹菊"[tile - 136];
+                    Caption(g, flowers, -25 * s, 60 * s, 10 * s, hud, 90 * s);
+                }
                 if (!state.relative_scores) {
                     auto name_hud = hud;
                     if (!state.players[i].connected) name_hud.text_color = 0xffcc0000;

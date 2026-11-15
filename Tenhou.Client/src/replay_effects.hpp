@@ -2,6 +2,7 @@
 #include "table_scene.hpp"
 #include <algorithm>
 #include <functional>
+#include <optional>
 
 namespace tenhou {
     // Presentation only: the ReplaySession remains at the applied event's final state.
@@ -9,6 +10,7 @@ namespace tenhou {
         TableTile tile;
         int from_x = 0, from_y = 0, to_x = 0, to_y = 0;
         unsigned delay = 0;
+        std::optional<TableTile> before_flip;
     };
 
     struct ReplayTransition {

@@ -3,6 +3,7 @@
 #include "action_selection_scene.hpp"
 #include "wall_scene.hpp"
 #include "settlement_scene.hpp"
+#include "replay_effects.hpp"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -31,6 +32,25 @@ int main() {
         auto game = VariantTableState(state, {{"n2", "local"}});
         Check(game.dealer == 1 && game.round == 5 && game.turn == 0 && game.players[0].drawn_tile == 88, "Seat/dealer/draw projection failed");
         Check(game.players[1].known_hand.empty() && game.players[1].hidden_count == 13, "Hidden entities inferred");
+        const auto discard = VariantReplayEvent({1, "discard", 3, 4, -1}, state);
+        const auto draw = VariantReplayEvent({2, "draw", 3, -1, -1}, state);
+        Check(discard.who == 1 && ActionPauseTicks(discard) == 15 && ActionPauseTicks(draw) == 41, "Variant action waits differ from riichi");
+        for (const auto &kind: {"chi", "pon", "open_kan", "closed_kan", "added_kan", "ron", "tsumo"}) {
+            const auto event = VariantReplayEvent({3, kind, 3, 4, std::string(kind) == "tsumo" ? 3 : 0}, state);
+            const unsigned male = std::string(kind) == "chi" ? 119 : std::string(kind) == "pon" ? 137 :
+                std::string(kind) == "ron" ? 155 : std::string(kind) == "tsumo" ? 164 : 128;
+            Check(ReplaySounds(event, 'M').back() == male && ReplaySounds(event, 'M', false, true).back() == male + 1,
+                "Variant call bypasses voice or individual seat preference");
+            Check(ReplaySounds(event, 'M', true) == ReplaySounds(event, '?'), "Effects-only preference ignored");
+            Check(ReplaySounds(event, 'F').back() != ReplaySounds(event, '?').back(), "Female variant voice missing");
+        }
+        for (int total: {108, 136, 144}) {
+            auto opening_state = OnlineTableState(game); opening_state.wall.InitVariant(total, 52, 0, 0);
+            OpeningPresentation opening; opening.Begin(opening_state, true);
+            Check(opening.wall_tiles() == static_cast<unsigned>(total), "Opening used a riichi-sized wall");
+            while (opening.Active()) opening.Tick();
+            Check(opening.dealt() == 52, "Variant opening did not deal four thirteen-tile hands");
+        }
         auto malformed = fields; malformed["hand2"] = "0,0";
         Reject([&] { ParseVariantState(malformed); }, "Duplicate physical entities accepted");
         malformed = fields; malformed["seat"] = "4";
@@ -79,6 +99,24 @@ int main() {
         Check(game.turn == -1 && std::count_if(scene.begin(), scene.end(), [](const TableTile &t) { return std::string(t.role) == "retired" && t.direction == 0 && t.tile == -1; }) == 13, "Retired hand remained face up");
         Check(std::count_if(scene.begin(), scene.end(), [](const TableTile &t) { return std::string(t.role) == "winning" && t.tile == 88; }) == 1, "Winning tile missing");
         Check(game.players[0].discards.size() == 1 && std::any_of(scene.begin(), scene.end(), [](const TableTile &t) { return std::string(t.role) == "river" && t.slot == 1; }), "Missing-suit marker entered river data");
+        const auto before_win = OnlineTableState(VariantTableState(ParseVariantState(Fixture()), {}));
+        auto retired = OnlineTableState(game);
+        const auto transition = BuildReplayTransition(before_win, retired,
+            VariantReplayEvent({1, "tsumo", 2, 88, 2}, state), 240, 1440,
+            [](const TableTile &tile) { return std::make_pair(tile.slot * 10, tile.family == 't' ? 100 : 200); });
+        Check(transition.duration >= 900 && std::count_if(transition.tiles.begin(), transition.tiles.end(),
+            [](const AnimatedTile &tile) { return tile.before_flip.has_value(); }) == 13, "Win folding is immediate");
+        const auto first_frame = transition.Frame(0), last_frame = transition.Frame(transition.duration);
+        Check(std::any_of(first_frame.begin(), first_frame.end(), [](const PositionedTile &t) {
+            return t.tile.direction == 0 && std::string(t.tile.role) == "hand"; }) &&
+            std::none_of(last_frame.begin(), last_frame.end(), [](const PositionedTile &t) {
+            return t.tile.direction == 0 && std::string(t.tile.role) == "hand"; }), "Win flip lost its initial or final hand");
+        SettlementReceipt draw_receipt; draw_receipt.who = -1; draw_receipt.has_revealed[1] = true;
+        draw_receipt.revealed[1] = {0, 4, 8};
+        retired.ended = true; retired.result = "RYUUKYOKU"; retired.settlement.receipts = {draw_receipt};
+        const auto drawn_scene = BuildTableScene(retired);
+        Check(std::any_of(drawn_scene.begin(), drawn_scene.end(), [](const TableTile &t) {
+            return std::string(t.role) == "winning" && t.tile == 88; }), "Draw-end flip erased an earlier winner");
         for (int total: {108, 136, 144}) {
             ReplayState wall; wall.initialized = true;
             for (int front = 0; front <= total; ++front) {
@@ -108,9 +146,12 @@ int main() {
         session.snapshot.table_paused = true; Check(session.SubmitAction(5, 0).empty(), "Paused table accepted action");
         LobbySession snapshots; snapshots.interactive_games = true; snapshots.snapshot.native_service = true;
         snapshots.snapshot.phase = LobbyPhase::Lobby;
+        snapshots.Receive({"UN", {{"sx", "MFMF"}}});
         snapshots.Receive({"VGO", {{"rule", "sichuan-bloodbattle"}, {"table", "test"}}});
         auto full = Fixture(); full["window"] = "7"; full["actions"] = "discard:0;discard:1";
         snapshots.Receive({"VSTATE", full});
+        Check(snapshots.snapshot.game.players[0].gender == 'M' && snapshots.snapshot.game.players[1].gender == 'F',
+            "VGO/VSTATE erased UN voice identity");
         const auto revision = snapshots.snapshot.actions.revision;
         auto invalid = full; invalid["hand2"] = "0,0";
         Reject([&] { snapshots.Receive({"VSTATE", invalid}); }, "Malformed snapshot accepted");
@@ -127,6 +168,26 @@ int main() {
         const auto result = BuildSettlementScene(settlement, 0, {"local", "right", "across", "left"});
         Check(std::none_of(result.tiles.begin(), result.tiles.end(), [](const SettlementTileItem &t) { return t.role == "dora" || t.role == "indicator_back"; }), "Variant settlement contains dora");
         Check(std::any_of(result.text.begin(), result.text.end(), [](const SettlementTextItem &t) { return t.role == "variant_name" && t.text == "local"; }), "Winner name absent from settlement");
+        const auto hidden_patterns = BuildSettlementScene(settlement, 0, {}, 0, 0, true, false);
+        Check(std::none_of(hidden_patterns.text.begin(), hidden_patterns.text.end(), [](const SettlementTextItem &t) {
+            return t.role == "variant_pattern" || t.role == "variant_fan"; }), "Generic settlement bypassed progressive presentation");
+        auto mcr = Fixture(); mcr["rule"] = "guobiao"; mcr["phase"] = "ended";
+        mcr["wall_total"] = "144"; mcr["wall_front"] = "88"; mcr["receipt_count"] = "1";
+        mcr["receipt0_who"] = mcr["receipt0_from"] = "2"; mcr["receipt0_tile"] = "88";
+        mcr["receipt0_fan"] = "88"; mcr["receipt0_hand"] = mcr["hand2"];
+        mcr["receipt0_base"] = "0,0,0,0"; mcr["receipt0_delta"] = "-96,-96,288,-96";
+        mcr["winning2"] = "88"; mcr["drawn2"] = "-1"; mcr["hidden2"] = "13";
+        mcr["hand2"] = "0,1,4,8,12,36,40,44,48,72,76,80,84";
+        const auto mcr_game = VariantTableState(ParseVariantState(mcr), {});
+        Check(mcr_game.settlement.receipts[0].fan == 88 && mcr_game.players[0].retired && mcr_game.turn == -1,
+            "MCR 88-fan receipt or winner folding rejected");
+        Check(BuildTableScene(OnlineTableState(mcr_game)).size() > 0, "MCR self-draw added a fifteenth tile");
+        mcr["receipt0_who"] = mcr["receipt0_from"] = "-1"; mcr["receipt0_tile"] = "-1";
+        mcr["receipt0_hand"] = ""; mcr["receipt0_reveal3"] = "2,6,10";
+        const auto disclosed = ParseVariantState(mcr);
+        Check(disclosed.settlement.receipts[0].has_revealed[1] &&
+            disclosed.settlement.receipts[0].revealed[1] == std::vector<int>({2,6,10}) &&
+            !disclosed.settlement.receipts[0].has_revealed[0], "Draw disclosure did not rotate or invented an absent hand");
         std::cout << "PASS variant parsing, entities, exchange, multi-kan, retirement, wall cursors and revision/pending/recovery\n";
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

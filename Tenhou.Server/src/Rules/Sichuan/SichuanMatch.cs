@@ -143,6 +143,8 @@ public sealed class SichuanMatch : VariantMatch
             Result = ShouldEndMatch ? "击飞终局" : "三家已和，本局结束";
             History.Add(Result); FinishHand(); return;
         }
+        Phase = "claims"; Claims.Clear(); Responses.Clear();
+        Publish(false);
         Draw((source + 1) % 4);
     }
     protected override void KongPayment(int seat, int source, string kind)
@@ -188,24 +190,8 @@ public sealed class SichuanMatch : VariantMatch
             if (Participating(recipient) && maximum[recipient] == 0) Transfer(recipient, payer, amount);
         Result = "牌墙摸完，未和玩家已查花猪、查大叫；未听及花猪退税。";
         AddReceipt(-1, -1, -1, 0, [], before, Result);
+        foreach (int seat in active) Receipts[^1]["reveal" + seat] = string.Join(',', Players[seat].Hand);
         History.Add(Result); FinishHand();
-    }
-    private void AddReceipt(int seat, int source, int tile, int fan, string[] patterns, int[] before, string reason)
-    {
-        Dictionary<string, string> receipt = new()
-        {
-            ["who"] = seat.ToString(CultureInfo.InvariantCulture), ["from"] = source.ToString(CultureInfo.InvariantCulture),
-            ["tile"] = tile.ToString(CultureInfo.InvariantCulture), ["fan"] = fan.ToString(CultureInfo.InvariantCulture),
-            ["patterns"] = string.Join(';', patterns), ["reason"] = reason, ["base"] = string.Join(',', before),
-            ["delta"] = string.Join(',', Points.Select((p, i) => p - before[i]))
-        };
-        if (seat >= 0)
-        {
-            VariantPlayer p = Players[seat];
-            receipt["hand"] = string.Join(',', (seat == source ? p.Hand : p.Hand.Append(tile)).Order());
-            receipt["melds"] = string.Join(';', p.Melds.Select(m => $"{m.Kind}:{string.Join(',', m.Tiles)}:{m.Source}:{m.Called}:{m.Added}"));
-        }
-        Receipts.Add(receipt);
     }
     public override MatchAction ChooseBotAction(int seat)
     {

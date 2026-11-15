@@ -577,6 +577,7 @@ namespace tenhou {
             q.discards = p.discards;
             q.melds = p.melds;
             q.nuki = p.nuki;
+            q.flowers = p.flowers;
         }
         return r;
     }

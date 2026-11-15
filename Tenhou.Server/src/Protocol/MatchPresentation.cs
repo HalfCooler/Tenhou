@@ -28,7 +28,7 @@ public sealed class VariantPresentation : IMatchPresentation
     private readonly IReadOnlyDictionary<string, string> options;
     public VariantPresentation(IReadOnlyDictionary<string, string> options) => this.options = options;
     public string GameTag => "VGO";
-    public bool SupportsAnimation => false;
+    public bool SupportsAnimation => true;
     public string ReplayExtension => "json";
     public int DisplayFlags => 0;
     public string RankCategory => "";

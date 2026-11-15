@@ -328,11 +328,13 @@ namespace tenhou {
         if (r.generic) {
             out << SettlementLabel(r) << "\r\n";
             if (r.who >= 0) {
-                out << Seat(r.who, names) << "  " << r.fan << " 翻\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
+                out << Seat(r.who, names);
+                if (totals) out << "  " << r.fan << " 翻";
+                out << "\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
                 for (const auto &m: r.public_melds) out << m.kind << " [" << Tiles(m.tiles, false) << "]\r\n";
                 for (const auto &entry: r.entries) out << entry.name << "\r\n";
             } else out << r.reason << "\r\n";
-            for (int i = 0; i < 4; ++i) out << Seat(i, names) << ": " << r.base[i] << "  " << std::showpos << r.delta[i] << std::noshowpos << " = " << r.base[i] + r.delta[i] << "\r\n";
+            if (totals) for (int i = 0; i < 4; ++i) out << Seat(i, names) << ": " << r.base[i] << "  " << std::showpos << r.delta[i] << std::noshowpos << " = " << r.base[i] + r.delta[i] << "\r\n";
             return out.str();
         }
         out << SettlementLabel(r) << "\r\n";

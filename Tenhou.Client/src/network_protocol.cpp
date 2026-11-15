@@ -340,6 +340,7 @@ namespace tenhou {
                 return {};
             }
             if (tag == "VGO") {
+                const auto players = snapshot.game.players;
                 snapshot.variant_active = true;
                 snapshot.variant_state = message.attributes;
                 snapshot.variant = {};
@@ -347,6 +348,7 @@ namespace tenhou {
                 snapshot.exit_allowed = Attribute(message, "exit") == "1";
                 snapshot.ranked = false;
                 snapshot.game = {};
+                for (int i = 0; i < 4; ++i) snapshot.game.players[i].gender = players[i].gender;
                 snapshot.actions = {};
                 snapshot.actions.enabled = interactive_games;
                 snapshot.phase = LobbyPhase::Game;
@@ -379,7 +381,9 @@ namespace tenhou {
                     snapshot.last_result_honba = snapshot.last_result_sticks = -1;
                     snapshot.last_result_red = false;
                 }
-                snapshot.game = VariantTableState(snapshot.variant, snapshot.variant_state);
+                auto projected = VariantTableState(snapshot.variant, snapshot.variant_state);
+                for (int i = 0; i < 4; ++i) projected.players[i].gender = snapshot.game.players[i].gender;
+                snapshot.game = std::move(projected);
                 const auto stage = Attribute(message, "phase");
                 snapshot.game.complete = stage == "complete";
                 snapshot.phase = snapshot.game.complete ? LobbyPhase::MatchComplete : LobbyPhase::Game;

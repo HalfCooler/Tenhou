@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
             info.bmiHeader.biHeight = -850; info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
             void *pixels = nullptr; HDC dc = CreateCompatibleDC(nullptr);
             HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0); const auto old = SelectObject(dc, bitmap);
-            if (s.at("rule") == "sichuan-bloodbattle") {
+            {
                 const auto state = tenhou::ParseVariantState(s);
                 const auto game = tenhou::VariantTableState(state, s);
                 tenhou::OnlineTable table;
@@ -63,7 +63,7 @@ int main(int argc, char **argv) {
                     result.Set(game.settlement, names, false);
                     SendMessageW(GetDlgItem(parent, 5400), WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
                 }
-            } else view.Capture(dc);
+            }
             GdiFlush();
             BITMAPFILEHEADER file{}; file.bfType = 0x4d42; file.bfOffBits = sizeof(file) + sizeof(info.bmiHeader);
             file.bfSize = file.bfOffBits + 1200 * 850 * 4;

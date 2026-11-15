@@ -19,6 +19,7 @@ namespace tenhou {
         std::vector<ReplayDiscard> discards;
         std::vector<ReplayMeld> melds;
         std::vector<int> nuki;
+        std::vector<int> flowers;
     };
 
     struct OnlineState {

@@ -31,9 +31,16 @@ public sealed class GuobiaoMatch : VariantMatch
         int seat = winners[0], tile = selfDrawn ? Players[seat].Drawn : LastTile;
         McrScore score = Score(seat, tile, selfDrawn, selfDrawn ? Replacement : ClaimKind == "added_kan");
         if (score.QualifyingPoints < 8) throw new InvalidOperationException("Under-eight-fan win");
+        int[] before = (int[])Points.Clone();
         for (int payer = 0; payer < 4; ++payer)
             if (payer != seat) Transfer(payer, seat, 8 + (selfDrawn || payer == source ? score.Points : 0));
+        AddReceipt(seat, source, tile, score.Points, score.Entries.Select(e => e.Name + (e.Count > 1 ? "×" + e.Count : "")).ToArray(), before, "");
+        Cue(selfDrawn ? "tsumo" : "ron", seat, tile, source);
         ++Players[seat].Wins;
+        if (selfDrawn) Players[seat].Hand.Remove(tile);
+        else if (ClaimKind == "discard") Players[source].Called.Add(tile);
+        else Players[source].WinningTiles.Remove(tile);
+        Players[seat].WinningTiles.Add(tile); Players[seat].Drawn = -1;
         Result = $"座位{seat + 1} {(selfDrawn ? "自摸" : "和牌")} {score.Points}番：" + string.Join("、", score.Entries.Select(e => e.Name + (e.Count > 1 ? "×" + e.Count : "")));
         History.Add(Result); FinishHand();
     }
