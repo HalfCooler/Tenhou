@@ -10,12 +10,7 @@ namespace tenhou {
     namespace {
         TableTile WallOrigin(const WallState &wall, int index) {
             const auto position = wall.Position(index);
-            const int stack = position.second / 2;
-            const int stacks = wall.SideTiles(position.first) / 2;
-            TableTile tile{'y', std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0) +
-                (position.second % 2 ? 17 : 0), -1, position.first};
-            tile.wall_extra = stack == 17 ? 1 : 0;
-            return tile;
+            return WallTile(wall, position.first, position.second / 2, position.second % 2 == 0);
         }
     }
     std::vector<PositionedTile> ReplayTransition::Frame(double elapsed) const {
@@ -145,7 +140,7 @@ namespace tenhou {
                     // FUN_00491fe0 T/U/V/W: the public wall slot is the origin,
                     // including the reversed replacement sequence for a kan.
                     const int index = !before.wall.dead_wall && after.wall.tail > before.wall.tail
-                                          ? before.wall.total - 1 - before.wall.tail
+                                          ? before.wall.total - after.wall.tail
                                           : before.wall.pending_kan
                                           ? (135 - before.wall.replacements) ^ 1
                                           : before.wall.front;
@@ -338,6 +333,7 @@ namespace tenhou {
             auto &p = frame.players[seat];
             p.hand.resize(progress_ ? hands_[progress_ - 1][seat] : 0);
             p.drawn_tile = -1;
+            if (progress_ < deal_steps_) p.flowers.clear();
         }
         if (wall_tiles_) frame.wall.front = initial_.wall.initial_removed + static_cast<int>(dealt());
         if (progress_ < wall_tiles_ / 4) frame.dora_indicators.clear();

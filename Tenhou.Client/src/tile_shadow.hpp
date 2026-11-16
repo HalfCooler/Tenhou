@@ -44,6 +44,7 @@ namespace tenhou {
         const ShadowMask *ground = nullptr;
         const ShadowMask *extra = nullptr;
         const ShadowMask *received = nullptr;
+        std::shared_ptr<ShadowMask> extended_ground, extended_extra;
     };
 
     std::vector<TileShadow> BuildTileShadows(const std::vector<PositionedTile> &scene, TableArtwork &artwork,

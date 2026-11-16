@@ -3,6 +3,8 @@
 #include "animation_clock.hpp"
 #include <algorithm>
 #include <stdexcept>
+#include <objidl.h>
+#include <gdiplus.h>
 
 namespace tenhou {
     TileOffset TableTileOffset(const TableTile &tile, int width) {
@@ -164,7 +166,12 @@ namespace tenhou {
                 extracted.role = "nuki";
                 result.push_back(extracted);
             }
-            int slot = (state.type & 16) ? 1 : 0;
+            if (!player.flowers.empty()) {
+                TableTile flower{'n', 0, player.flowers.front(), seat};
+                flower.role = "flower";
+                result.push_back(flower);
+            }
+            int slot = (state.type & 16) || !player.flowers.empty() ? 1 : 0;
             unsigned meld_sideways = 0;
             for (const auto &meld: player.melds) {
                 auto tiles = meld.tiles;
@@ -223,6 +230,7 @@ namespace tenhou {
         even_ = std::move(even);
         odd_ = std::move(odd);
         width_ = width;
+        variants_.Configure(directory);
         cache_.clear();
         cached_bytes_ = 0;
         frame_ = 1;
@@ -248,7 +256,8 @@ namespace tenhou {
         if (tile.slot < 0 || tile.slot > 255 || tile.direction < 0 || tile.direction > 3)
             throw std::runtime_error("Invalid table resource command");
         const bool aka = std::string(tile.role) == "missing_suit" || (red && std::find(red_tiles_.begin(), red_tiles_.end(), tile.tile) != red_tiles_.end());
-        const unsigned variant = static_cast<unsigned>(aka ? tile.tile / 36 * 10 : TileVariant(tile.tile, false));
+        const bool flower = tile.tile >= 136 && tile.tile < 144;
+        const unsigned variant = static_cast<unsigned>(flower ? 40 + tile.tile - 136 : aka ? tile.tile / 36 * 10 : TileVariant(tile.tile, false));
         const std::uint32_t key = static_cast<unsigned char>(tile.family) | (unsigned(tile.slot) << 8) |
                                   (variant << 16) | (unsigned(tile.direction) << 24);
         const auto found = cache_.find(key);
@@ -256,25 +265,57 @@ namespace tenhou {
             found->second.used = frame_;
             return found->second.image;
         }
-        const bool direct = variant == 34 || variant == 37;
+        const bool direct = flower || variant == 34 || variant == 37;
         const auto &pack = direct ? odd_ : even_;
-        const auto entry = pack.key_index.find(key);
+        const auto entry = pack.key_index.find(flower ? (key & 0xff00ffffu) | (34u << 16) : key);
         if (entry == pack.key_index.end()) throw
                 std::runtime_error("Missing table resource key " + std::to_string(key));
         // The existing decoder applies the evidence-backed startup tint and XOR.
 
         auto decoded = DecodeObject(pack, entry->second, direct ? &even_ : &odd_, true, &rgb_);
+        if (flower) {
+            // Flowers are public n/0 counters, not concealed-hand entities. Use the
+            // original blank face and its measured top-plane parallelogram.
+            if (tile.family != 'n' || tile.slot != 0) throw std::runtime_error("Unsupported flower placeholder");
+            const auto *pattern = variants_.Get(FlowerArtwork(tile.tile));
+            if (!pattern) throw std::runtime_error("Missing flower pattern");
+            Gdiplus::Bitmap surface(decoded.image.width, decoded.image.height, decoded.image.width * 4,
+                PixelFormat32bppARGB, decoded.image.bgra.data());
+            Gdiplus::Bitmap source(pattern->width, pattern->height, pattern->width * 4,
+                PixelFormat32bppARGB, const_cast<BYTE *>(pattern->bgra.data()));
+            const Gdiplus::RotateFlipType rotations[]{Gdiplus::RotateNoneFlipNone, Gdiplus::Rotate270FlipNone,
+                Gdiplus::Rotate180FlipNone, Gdiplus::Rotate90FlipNone};
+            source.RotateFlip(rotations[tile.direction]);
+            // Inset corners within the native white face, measured from obj3 n/0/34.
+            constexpr float planes[4][6]{{.22f,.09f,.76f,.09f,.34f,.62f}, {.17f,.09f,.83f,.09f,.25f,.45f},
+                {.23f,.08f,.85f,.08f,.12f,.51f}, {.20f,.08f,.82f,.08f,.10f,.56f}};
+            Gdiplus::PointF points[3];
+            for (int i = 0; i < 3; ++i) points[i] = {planes[tile.direction][i * 2] * decoded.image.width,
+                planes[tile.direction][i * 2 + 1] * decoded.image.height};
+            Gdiplus::Graphics graphics(&surface);
+            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            if (graphics.DrawImage(&source, points, 3) != Gdiplus::Ok) throw std::runtime_error("Cannot compose flower face");
+        }
         cached_bytes_ += decoded.image.bgra.size();
         return cache_.emplace(key, Cached{std::move(decoded), frame_}).first->second.image;
     }
 
     TileOffset TableArtwork::Offset(const TableTile &tile) {
         auto offset = TableTileOffset(tile, width_);
-        if (tile.family == 'y' && tile.wall_extra) {
-            auto neighbour = tile; --neighbour.slot;
-            const auto &face = Get(tile, false), &previous = Get(neighbour, false);
-            offset.x += (face.x - previous.x) * tile.wall_extra;
-            offset.y += (face.y - previous.y) * tile.wall_extra;
+        if (tile.family == 'y' && (tile.wall_extra || tile.wall_stacks == 18)) {
+            // Use one stable step for both layers and every animation origin.
+            TableTile last{'y', 16, -1, tile.direction}, previous = last; --previous.slot;
+            const auto &face = Get(last, false), &before = Get(previous, false);
+            const double steps = tile.wall_extra - (tile.wall_stacks == 18 ? .5 : 0);
+            offset.x += static_cast<int>((face.x - before.x) * steps);
+            offset.y += static_cast<int>((face.y - before.y) * steps);
+            if (tile.wall_stacks == 18) {
+                // Keep the longer row clear of the outer meld/hand edge.
+                const int inset = std::max(1, 8 * width_ / 1440);
+                constexpr int x[]{0, -1, 0, 1}, y[]{-1, 0, 1, 0};
+                offset.x += x[tile.direction] * inset;
+                offset.y += y[tile.direction] * inset;
+            }
         }
         if (tile.drawn && tile.family == 'n' && (tile.direction & 1) &&
             (std::string(tile.role) == "hand" || std::string(tile.role) == "winning")) {

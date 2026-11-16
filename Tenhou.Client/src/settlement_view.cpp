@@ -41,6 +41,13 @@ namespace tenhou {
                               0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5404), wc.hInstance, nullptr);
         if (!ok_) throw std::runtime_error("Cannot create settlement confirmation");
         SendMessageW(ok_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
+        previous_patterns_ = CreateWindowExW(0, L"BUTTON", L"上一页", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5405), wc.hInstance, nullptr);
+        next_patterns_ = CreateWindowExW(0, L"BUTTON", L"下一页", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5406), wc.hInstance, nullptr);
+        if (!previous_patterns_ || !next_patterns_) throw std::runtime_error("Cannot create pattern paging controls");
+        for (HWND control: {previous_patterns_, next_patterns_})
+            SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
     }
 
     SettlementView::~SettlementView() {
@@ -131,7 +138,16 @@ namespace tenhou {
         Select();
     }
 
+    void SettlementView::SetRoundFinished(bool finished) {
+        if (finished && !round_finished_ && !state_.receipts.empty() && state_.receipts.front().generic) {
+            SendMessageW(choices_, CB_SETCURSEL, 0, 0);
+            Select();
+        }
+        round_finished_ = finished;
+    }
+
     void SettlementView::Select() {
+        pattern_page_ = 0;
         CancelPresentation();
         const auto selected = SendMessageW(choices_, CB_GETCURSEL, 0, 0);
         if (selected >= 0) selected_ = static_cast<std::size_t>(selected);
@@ -265,6 +281,7 @@ namespace tenhou {
         if (shown_yaku_ < YakuCount()) {
             if (r.generic) {
                 ++shown_yaku_;
+                if (animation_enabled_) pattern_page_ = (shown_yaku_ - 1) / kSettlementPatternsPerPage;
                 if (sound_enabled_ && play_sound_) play_sound_(109);
             } else if (!r.yakuman.empty()) {
                 shown_yaku_ = r.yakuman.size();
@@ -307,6 +324,11 @@ namespace tenhou {
         layout.dealer = dealer_;
         layout.honba = honba_;
         layout.sticks = sticks_;
+        layout.pattern_page = pattern_page_;
+        layout.variant_image_size = [this](AssetId id) {
+            const auto *image = display_artwork_.GetVariant(id);
+            return image ? SIZE{image->width, image->height} : SIZE{};
+        };
         layout.tile_bounds = [this](const TableTile &tile) {
             const auto &item = artwork_.Get(tile, red_);
             return RECT{item.x, item.y, item.x + item.image.width, item.y + item.image.height};
@@ -331,7 +353,7 @@ namespace tenhou {
     void SettlementView::Arrange() {
         if (!ok_) return;
         if (peeking_) {
-            for (HWND child: {choices_, details_, ok_}) ShowWindow(child, SW_HIDE);
+            for (HWND child: {choices_, details_, ok_, previous_patterns_, next_patterns_}) ShowWindow(child, SW_HIDE);
             return;
         }
         ShowWindow(ok_, SW_SHOW);
@@ -351,10 +373,20 @@ namespace tenhou {
         const int w = std::max(38, static_cast<int>(56 * unit * fit)), h = std::max(
             18, static_cast<int>(21 * unit * fit));
         const int bottom = std::min(static_cast<int>(r.bottom) - h - 3, y);
+        const auto pages = selected_ < state_.receipts.size() ? SettlementPatternPages(state_.receipts[selected_]) : 1;
+        const int page_y = target.top + static_cast<int>((canvas_ * 3 / 8.0 + 45 * unit) * fit);
+        for (HWND child: {previous_patterns_, next_patterns_}) ShowWindow(child, pages > 1 ? SW_SHOW : SW_HIDE);
+        MoveWindow(previous_patterns_, center - static_cast<int>(160 * unit * fit), page_y,
+            std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
+        MoveWindow(next_patterns_, center + static_cast<int>(80 * unit * fit), page_y,
+            std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
+        EnableWindow(previous_patterns_, !Animating() && pattern_page_ > 0);
+        EnableWindow(next_patterns_, !Animating() && pattern_page_ + 1 < pages);
         const int final_top = (canvas_ * 3 / 4 - static_cast<int>(480 * unit)) / 2;
         MoveWindow(ok_, x, win ? bottom : target.top + static_cast<int>((final_top + 430 * unit) * fit), w, h, TRUE);
         EnableWindow(ok_, confirm_enabled_ && !Animating());
-        const bool next = continuation_ && !state_.has_final;
+        const bool next = continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
+            selected_ + 1 == state_.receipts.size();
         const bool enter_final = state_.has_final && selected_ + 1 == state_.receipts.size();
         SetWindowTextW(ok_, enter_final ? L"END" : L"OK");
         if (!next) {
@@ -375,6 +407,9 @@ namespace tenhou {
 
     void SettlementView::Confirm() {
         if (!visible_ || Animating() || !confirm_enabled_ || !IsWindowEnabled(ok_)) return;
+        if (selected_ < state_.receipts.size() && pattern_page_ + 1 < SettlementPatternPages(state_.receipts[selected_])) {
+            ChangePatternPage(1); return;
+        }
         KillTimer(window_, 2);
         confirm_deadline_ = 0;
         InvalidateRect(window_, nullptr, FALSE);
@@ -406,11 +441,22 @@ namespace tenhou {
 
     bool SettlementView::HandleKey(UINT key) {
         if (!visible_ || !IsWindowVisible(window_)) return false;
+        if (key == VK_NEXT || key == VK_PRIOR) { ChangePatternPage(key == VK_NEXT ? 1 : -1); return true; }
         if (key == VK_RETURN && (GetFocus() == ok_ || GetFocus() == window_)) {
             Confirm();
             return true;
         }
         return false;
+    }
+
+    void SettlementView::ChangePatternPage(int step) {
+        if (Animating() || selected_ >= state_.receipts.size()) return;
+        const int pages = static_cast<int>(SettlementPatternPages(state_.receipts[selected_]));
+        const int page = std::clamp(static_cast<int>(pattern_page_) + step, 0, pages - 1);
+        if (page == static_cast<int>(pattern_page_)) return;
+        pattern_page_ = static_cast<std::size_t>(page);
+        KillTimer(window_, 2); confirm_deadline_ = 0; confirm_seconds_ = -1;
+        Arrange(); InvalidateRect(window_, nullptr, FALSE);
     }
 
     void SettlementView::Menu(POINT point) {
@@ -506,6 +552,15 @@ namespace tenhou {
                                        static_cast<int>(im.width * item.scale / resource_scale),
                                        static_cast<int>(im.height * item.scale / resource_scale)) != Gdiplus::Ok)
                     throw std::runtime_error("Cannot paint settlement label");
+            }
+            for (const auto &item: scene.pattern_images) {
+                const auto *im = display_artwork_.GetVariant(item.asset);
+                if (!im) continue;
+                Gdiplus::Bitmap bitmap(im->width, im->height, im->width * 4, PixelFormat32bppARGB,
+                    const_cast<BYTE *>(im->bgra.data()));
+                if (graphics.DrawImage(&bitmap, item.rect.left, item.rect.top,
+                    item.rect.right - item.rect.left, item.rect.bottom - item.rect.top) != Gdiplus::Ok)
+                    throw std::runtime_error("Cannot paint variant pattern");
             }
             for (const auto &item: scene.text) {
                 if (!item.visible) continue;
@@ -629,6 +684,9 @@ LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wpa
             if (message == WM_COMMAND && LOWORD(wparam) == 5404) {
                 self->Confirm();
                 return 0;
+            }
+            if (message == WM_COMMAND && (LOWORD(wparam) == 5405 || LOWORD(wparam) == 5406)) {
+                self->ChangePatternPage(LOWORD(wparam) == 5405 ? -1 : 1); return 0;
             }
             if (message == WM_COMMAND && LOWORD(wparam) == 5401 && HIWORD(wparam) == CBN_SELCHANGE) {
                 self->Select();

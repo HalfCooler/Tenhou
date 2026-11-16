@@ -176,12 +176,19 @@ int main() {
         mcr["receipt0_who"] = mcr["receipt0_from"] = "2"; mcr["receipt0_tile"] = "88";
         mcr["receipt0_fan"] = "88"; mcr["receipt0_hand"] = mcr["hand2"];
         mcr["receipt0_base"] = "0,0,0,0"; mcr["receipt0_delta"] = "-96,-96,288,-96";
+        mcr["receipt0_patterns"] = "大四喜;花牌×2"; mcr["receipt0_pattern_values"] = "88,1";
+        mcr["receipt0_points"] = "288";
         mcr["winning2"] = "88"; mcr["drawn2"] = "-1"; mcr["hidden2"] = "13";
         mcr["hand2"] = "0,1,4,8,12,36,40,44,48,72,76,80,84";
         const auto mcr_game = VariantTableState(ParseVariantState(mcr), {});
         Check(mcr_game.settlement.receipts[0].fan == 88 && mcr_game.players[0].retired && mcr_game.turn == -1,
             "MCR 88-fan receipt or winner folding rejected");
         Check(BuildTableScene(OnlineTableState(mcr_game)).size() > 0, "MCR self-draw added a fifteenth tile");
+        const auto &paid = mcr_game.settlement.receipts[0];
+        Check(paid.points == 288 && paid.entries[0].value == 88 && paid.entries[1].value == 1 && paid.entries[1].count == 2,
+            "Receipt values or dynamic repetition were lost");
+        auto invalid_values = mcr; invalid_values["receipt0_pattern_values"] = "88";
+        Reject([&] { ParseVariantState(invalid_values); }, "Mismatched per-pattern values accepted");
         mcr["receipt0_who"] = mcr["receipt0_from"] = "-1"; mcr["receipt0_tile"] = "-1";
         mcr["receipt0_hand"] = ""; mcr["receipt0_reveal3"] = "2,6,10";
         const auto disclosed = ParseVariantState(mcr);

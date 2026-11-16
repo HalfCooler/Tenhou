@@ -54,6 +54,8 @@ namespace tenhou {
         bool initialized = false, ended = false;
         bool furiten = false;
         bool variant = false;
+        std::string variant_rule;
+        int total_hands = 0;
         unsigned type = 0;
         unsigned seat_mask = 15;
         std::vector<int> red_tiles{16, 52, 88};

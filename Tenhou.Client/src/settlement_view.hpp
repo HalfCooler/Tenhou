@@ -15,6 +15,7 @@ namespace tenhou {
         ~SettlementView();
 
         void Set(const SettlementState &state, const std::array<std::string, 4> &names, bool red);
+        void SetRoundFinished(bool finished);
 
         void Show(bool visible);
 
@@ -79,6 +80,7 @@ namespace tenhou {
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
         void Select();
+        void ChangePatternPage(int step);
 
         void Arrange();
 
@@ -111,6 +113,7 @@ namespace tenhou {
         std::size_t PreviewTiles() const;
 
         HWND window_ = nullptr, choices_ = nullptr, details_ = nullptr, ok_ = nullptr;
+        HWND previous_patterns_ = nullptr, next_patterns_ = nullptr;
         ULONGLONG confirm_deadline_ = 0;
         ULONGLONG paused_at_ = 0;
         int confirm_seconds_ = -1;
@@ -122,6 +125,7 @@ namespace tenhou {
         std::array<std::string, 4> names_;
         bool red_ = true;
         std::size_t selected_ = 0;
+        std::size_t pattern_page_ = 0;
         std::filesystem::path directory_;
         int canvas_ = 1440, tile_top_ = 88, text_top_ = 200;
         TableArtwork artwork_;
@@ -135,6 +139,7 @@ namespace tenhou {
         int dealer_ = 0, honba_ = -1, sticks_ = -1;
         bool confirm_enabled_ = true;
         bool continuation_ = false;
+        bool round_finished_ = false;
         bool visible_ = false;
         bool peeking_ = false;
         bool peek_enabled_ = true;

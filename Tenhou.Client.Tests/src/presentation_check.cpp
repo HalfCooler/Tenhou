@@ -1,10 +1,14 @@
 #include "settlement_view.hpp"
 #include "replay_effects.hpp"
 #include "lobby_view.hpp"
+#include "tile_shadow.hpp"
+#include "wall_scene.hpp"
+#include "variant_patterns.hpp"
 #include <commctrl.h>
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
+#include <set>
 
 using namespace tenhou;
 namespace tenhou {
@@ -58,7 +62,18 @@ namespace tenhou {
             receive("PREPARE"); receive("VSTATE");
             require(view.displayed_.variant.hand_number == 2 && view.opening_.Active(),
                 "Next-hand PREPARE deadlocked behind the previous displayed hand");
-            receive("START"); view.Disconnect();
+            receive("START"); view.opening_.Cancel();
+            state.rule = "guobiao"; state.wall_total = 144; state.wall_front = 53; state.wall_tail = 2; state.wall = 89;
+            state.phase = VariantPhase::Turn; ++state.hand_number; ++state.seq; ++state.event_seq;
+            state.players[0].flowers = {136,140}; state.events.push_back({state.event_seq, "start", 0, -1, -1});
+            receive("PREPARE"); receive("VSTATE"); receive("START");
+            require(view.opening_flowers_[0], "Fresh guobiao deal lost its automatic flower caption");
+            for (int i = 0; i < 400 && view.opening_.Active(); ++i) SendMessageW(view.window_, WM_TIMER, 2, 0);
+            require(!view.opening_.Active() && view.captions_.Frames().size() == 1 && view.captions_.Frames()[0].resource == 480,
+                "Opening flowers never appeared at the end of the deal");
+            snapshot.recovering = true; receive("VSTATE");
+            require(!view.captions_.Active() && !view.opening_flowers_[0], "Recovery repeated the opening flower effect");
+            view.Disconnect();
         }
     };
 }
@@ -110,6 +125,170 @@ namespace {
         Check(sounds.empty(), "Paused settlement advanced");
         result.SetPaused(false); result.Show(false);
         SendMessageW(window, WM_TIMER, 1, 0); Check(sounds.empty(), "Hidden settlement replayed audio");
+        // Browsing live receipts must not skip earlier winners when the hand ends.
+        result.SetAnimationEnabled(false); result.SetSoundEnabled(false); result.SetContinuation(true);
+        SettlementState ordered;
+        SettlementReceipt first; first.generic = true; first.who = first.from = 0;
+        auto second = first; second.who = second.from = 1;
+        auto draw = first; draw.who = draw.from = -1;
+        ordered.receipts = {first, second, draw}; result.Set(ordered, {}, false);
+        const auto choices = GetDlgItem(window, 5401);
+        SendMessageW(choices, CB_SETCURSEL, 1, 0);
+        SendMessageW(window, WM_COMMAND, MAKEWPARAM(5401, CBN_SELCHANGE), reinterpret_cast<LPARAM>(choices));
+        result.SetRoundFinished(true); result.Show(true);
+        Check(SendMessageW(choices, CB_GETCURSEL, 0, 0) == 0, "Hand-end results did not rewind to the first winner");
+        int advanced = 0; result.SetConfirmHandler([&] { ++advanced; });
+        for (int i = 0; i < 2; ++i) {
+            SendMessageW(window, WM_COMMAND, 5404, 0);
+            Check(SendMessageW(choices, CB_GETCURSEL, 0, 0) == i + 1 && advanced == 0,
+                "Next hand was submitted before all winners and the draw receipt");
+        }
+        SendMessageW(window, WM_COMMAND, 5404, 0);
+        Check(advanced == 1, "Last combined draw receipt did not release confirmation");
+        result.Show(false); result.SetConfirmHandler({});
+    }
+
+    void Guobiao(HWND parent, const std::filesystem::path &resources) {
+        Check(VariantActionButtonSprite(5173, true) == 595 && VariantActionButtonSprite(5173, false) == 599,
+            "Exchange confirmation PNGs disagree with Sprites705.csv");
+        for (unsigned i = 0; i < 3; ++i)
+            Check(VariantActionButtonSprite(5170 + i, true) == 596 + i && VariantActionButtonSprite(5170 + i, false) == 600 + i,
+                "Missing-suit button PNGs disagree with Sprites705.csv");
+        ReplayState status; status.variant = status.initialized = true; status.variant_rule = "sichuan-bloodbattle";
+        status.round = 6;
+        Check(VariantStatusSprites(status) == std::vector<unsigned>({704}), "Early Sichuan All Last");
+        status.round = 7;
+        Check(VariantStatusSprites(status) == std::vector<unsigned>({704,578}), "Missing eighth-hand All Last");
+        status.variant_rule = "guobiao"; status.round = 14;
+        Check(VariantStatusSprites(status) == std::vector<unsigned>({705}), "Early Guobiao All Last");
+        status.round = 15;
+        Check(VariantStatusSprites(status) == std::vector<unsigned>({705,578}), "Missing north-four All Last");
+        status.total_hands = 8; status.round = 7;
+        Check(VariantStatusSprites(status) == std::vector<unsigned>({705,578}), "Configured short Guobiao match ignores its final hand");
+        TableArtwork art; art.Load(resources, 1440);
+        ReplayState table; table.initialized = table.variant = true;
+        table.wall.InitVariant(144, 0, 0, 0);
+        for (int seat = 0; seat < 4; ++seat) {
+            auto &player = table.players[seat]; player.hand.assign(10, -1);
+            if (!seat) player.hand = {4,8,12,16,20,24,28,32,36,40};
+            player.flowers = {136 + seat, 140 + seat};
+            ReplayMeld meld; meld.kind = MeldKind::Pon; meld.from = (seat + 1) % 4;
+            meld.tiles = {0,1,2}; meld.called_tile = 2; player.melds = {meld};
+        }
+        const auto table_scene = BuildTableScene(table);
+        Check(std::count_if(table_scene.begin(), table_scene.end(), [](const TableTile &t) {
+            return std::string(t.role) == "flower"; }) == 4, "Flowers are not public corner counters");
+        for (const auto &tile: table_scene) if (std::string(tile.role) == "flower") {
+            Check(tile.tile == 136 + tile.direction && tile.slot == 0, "Counter did not retain the first flower");
+            for (const auto &meld: table_scene) if (meld.direction == tile.direction && std::string(meld.role) == "meld")
+                Check(meld.slot % 20 > 0, "Flower occupies a meld placeholder");
+        }
+        for (int seat = 0; seat < 4; ++seat) {
+            std::set<Bytes> faces;
+            for (int entity = 136; entity < 144; ++entity) faces.insert(art.Get({'n', 0, entity, seat}).image.bgra);
+            Check(faces.size() == 8, "Flower faces alias each other in the artwork cache");
+        }
+        std::vector<PositionedTile> wall;
+        const auto full = BuildWallScene(table, 144);
+        Check(full.size() == 72, "144-tile wall has fewer than 72 stacks");
+        for (const auto &tile: full) {
+            const auto &im = art.Get(tile); const auto offset = art.Offset(tile);
+            RECT rect{im.x + offset.x, im.y + offset.y, im.x + offset.x + im.image.width, im.y + offset.y + im.image.height};
+            Check(rect.left >= 0 && rect.top >= 0 && rect.right <= 1440 && rect.bottom <= 1080, "Eighteenth stack leaves the canvas");
+            for (const auto &other: table_scene) {
+                const auto &image = art.Get(other); const auto shift = art.Offset(other);
+                RECT target{image.x + shift.x, image.y + shift.y, image.x + shift.x + image.image.width, image.y + shift.y + image.image.height}, intersection{};
+                bool opaque_overlap = false;
+                if (IntersectRect(&intersection, &rect, &target))
+                    for (LONG y = intersection.top; y < intersection.bottom; ++y)
+                        for (LONG x = intersection.left; x < intersection.right; ++x) {
+                            const auto a = (std::size_t(y - rect.top) * im.image.width + x - rect.left) * 4 + 3;
+                            const auto b = (std::size_t(y - target.top) * image.image.width + x - target.left) * 4 + 3;
+                            if (im.image.bgra[a] > 32 && image.image.bgra[b] > 32) opaque_overlap = true;
+                        }
+                if (opaque_overlap) throw std::runtime_error("Full wall direction=" + std::to_string(tile.direction) +
+                    " stack=" + std::to_string(tile.wall_stack) + " overlaps " + other.role + " direction=" + std::to_string(other.direction) +
+                    " slot=" + std::to_string(other.slot) + " area=" + std::to_string(intersection.right - intersection.left) + "x" + std::to_string(intersection.bottom - intersection.top));
+            }
+            auto command = tile;
+            if (tile.wall_stack == 17) command = WallTile(table.wall, tile.direction, 17, false);
+            const auto &image = art.Get(command); const auto shift = art.Offset(command);
+            wall.push_back({command, image.x + shift.x, image.y + shift.y});
+        }
+        const auto shadows = BuildTileShadows(wall, art, ShadowPack::Embedded());
+        Check(shadows.size() == 72, "Eighteenth lower tile lost its shadow to the seventeenth stack");
+        for (const auto &shadow: shadows) Check(shadow.ground != nullptr, "Extended wall lacks a ground shadow");
+        ReplayState before; before.initialized = before.variant = true; before.wall.InitVariant(144, 52, 0, 0);
+        before.players[0].hand = {0,4,8,12,16,20,24,28,32,36,40,44,48};
+        auto after = before; after.wall.InitVariant(144, 53, 3, 0); after.players[0].hand.push_back(52); after.players[0].drawn_tile = 52;
+        ReplayEvent draw; draw.kind = ReplayEventKind::Draw; draw.who = 0;
+        const auto origin = [&](const TableTile &tile) {
+            const auto &image = art.Get(tile); const auto shift = art.Offset(tile);
+            return std::pair<int,int>{image.x + shift.x, image.y + shift.y};
+        };
+        const auto transition = BuildReplayTransition(before, after, draw, 12, 1440, origin);
+        const auto position = before.wall.Position(141); // Two tail flowers followed by the ordinary replacement.
+        const auto expected = origin(WallTile(before.wall, position.first, position.second / 2, position.second % 2 == 0));
+        const auto moving = std::find_if(transition.tiles.begin(), transition.tiles.end(), [](const AnimatedTile &tile) { return tile.tile.tile == 52; });
+        Check(moving != transition.tiles.end() && moving->from_x == expected.first && moving->from_y == expected.second,
+            "Consecutive flowers draw the replacement from the first tail flower instead of the final tile");
+        std::size_t patterns = 0;
+        for (const auto &pattern: kVariantPatterns) if (std::string(pattern.rule) == "guobiao") {
+            ++patterns; Check(FindPatternArtwork("guobiao", pattern.name).has_value(), "Unmapped guobiao fan");
+        }
+        Check(patterns == 82 && !FindPatternArtwork("guobiao", "../secret"), "Pattern catalogue is incomplete or accepts paths");
+        const auto test_directory = std::filesystem::temp_directory_path() / (L"tenhou-variant-art-" + std::to_wstring(GetCurrentProcessId()));
+        struct Cleanup { std::filesystem::path directory; ~Cleanup() { std::error_code error; std::filesystem::remove_all(directory, error); } } cleanup{test_directory};
+        // Exercise authored PNG overrides independently of which user artwork is installed.
+        for (const auto id: {AssetId::Sprite594, AssetId::GuobiaoFan00, AssetId::Sprite599}) {
+            const auto path = test_directory / ResourceManager::Info(id).path;
+            std::filesystem::create_directories(path.parent_path());
+            std::filesystem::copy_file(ResourceManager(resources).Path(AssetId::FlowerMei), path, std::filesystem::copy_options::overwrite_existing);
+        }
+        VariantArtwork custom; custom.Configure(test_directory);
+        Check(custom.GetSprite(594) && custom.Get(AssetId::GuobiaoFan00) && !custom.Get(AssetId::GuobiaoFan01),
+            "Authored PNG lookup, Unicode paths or optional fallback failed");
+        DisplayArtwork display; display.Configure(test_directory, 1440);
+        Check(display.Get(594).bgra == custom.GetSprite(594)->bgra && display.Get(622).bgra == custom.Get(AssetId::GuobiaoFan00)->bgra,
+            "Display sprites and fan names use different numbered PNGs");
+        DisplayArtwork sd; sd.Configure(test_directory, 1024);
+        Check(sd.Get(594).width == static_cast<int>(display.Get(594).width / 1.4), "HD PNG was not scaled for the SD canvas");
+        SettlementState state; SettlementReceipt receipt;
+        receipt.generic = true; receipt.rule = "guobiao"; receipt.who = receipt.from = 0; receipt.fan = 24;
+        for (int i = 0; i < 30; ++i) receipt.entries.push_back(ParseSettlementEntry("花牌×2"));
+        state.receipts = {receipt};
+        for (std::size_t page = 0; page < 3; ++page) {
+            SettlementLayout layout; layout.pattern_page = page;
+            const auto scene = BuildSettlementScene(state, 0, {}, static_cast<std::size_t>(-1), 0, true, true, layout);
+            Check(std::count_if(scene.text.begin(), scene.text.end(), [](const SettlementTextItem &text) {
+                return text.role == "variant_pattern"; }) == (page == 2 ? 2 : 14), "Pattern paging omitted or duplicated entries");
+            Check(std::any_of(scene.text.begin(), scene.text.end(), [](const SettlementTextItem &text) {
+                return text.role == "variant_fan" && text.text == "24 飜"; }), "Guobiao uses the wrong fan unit");
+        }
+        SettlementLayout images; images.variant_image_size = [](AssetId) { return SIZE{225,34}; };
+        const auto image_scene = BuildSettlementScene(state, 0, {}, static_cast<std::size_t>(-1), 0, true, true, images);
+        Check(image_scene.pattern_images.size() == 14, "Numeric pattern PNGs are not connected");
+        for (const auto &item: image_scene.pattern_images)
+            Check(item.rect.left >= image_scene.panel.left && item.rect.right <= image_scene.panel.right, "Long pattern escaped the settlement panel");
+        SettlementReceipt sichuan; sichuan.generic = true; sichuan.rule = "sichuan-bloodbattle";
+        sichuan.who = sichuan.from = 0; sichuan.fan = 2; sichuan.points = 2000;
+        sichuan.entries = {{"底和", 1, 1}, {"根", 1, 1}};
+        const auto sc = BuildSettlementScene(SettlementState{{}, 15, {sichuan}}, 0, {});
+        Check(std::count_if(sc.text.begin(), sc.text.end(), [](const SettlementTextItem &t) {
+            return t.role == "variant_value" && t.text == "1 飜"; }) == 2, "Sichuan per-pattern values are absent");
+        Check(std::any_of(sc.text.begin(), sc.text.end(), [](const SettlementTextItem &t) {
+            return t.role == "variant_fan" && t.text == "2 飜 2000 点"; }), "Sichuan total lost the displayed payment");
+        sichuan.who = sichuan.from = -1; sichuan.entries.clear(); sichuan.reason = "查花猪、查大叫、退税";
+        const auto drawn = BuildSettlementScene(SettlementState{{}, 15, {sichuan}}, 0, {});
+        Check(std::count_if(drawn.images.begin(), drawn.images.end(), [](const SettlementImageItem &im) { return im.id == 461; }) == 1 &&
+            drawn.score_panels.size() == 4, "Variant draw does not share the riichi title and four payment panels");
+        Check(SettlementText(state, 0, {}).find("花牌×2") != std::string::npos, "Text details lost pattern repetitions");
+        SettlementView result(parent); result.SetAnimationEnabled(false); result.Set(state, {}, false); result.Show(true);
+        const auto window = GetDlgItem(parent, 5400);
+        Check(!IsWindowEnabled(GetDlgItem(window, 5405)) && IsWindowEnabled(GetDlgItem(window, 5406)), "Paging controls have the wrong initial state");
+        Check(result.HandleKey(VK_NEXT) && result.HandleKey(VK_NEXT), "PageDown is not routed to pattern paging");
+        Check(IsWindowEnabled(GetDlgItem(window, 5405)) && !IsWindowEnabled(GetDlgItem(window, 5406)), "Last pattern page is inaccessible");
+        result.Show(false);
     }
 }
 int main(int argc, char **argv) {
@@ -124,9 +303,9 @@ int main(int argc, char **argv) {
         parent = CreateWindowExW(0, L"STATIC", L"Presentation checks", WS_POPUP,
             -32000, -32000, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Check(parent != nullptr, "Cannot create test parent"); ShowWindow(parent, SW_SHOWNOACTIVATE);
-        Settlement(parent); LobbyPresentationCheck::Run(parent, argv[1]); DestroyWindow(parent); parent = nullptr;
+        Settlement(parent); Guobiao(parent, argv[1]); LobbyPresentationCheck::Run(parent, argv[1]); DestroyWindow(parent); parent = nullptr;
         Gdiplus::GdiplusShutdown(gdiplus);
-        std::cout << "PASS side winning-tile geometry and settlement opening/pattern sounds, waits, mute, pause and hide\n";
+        std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation and recovery\n";
         return 0;
     } catch (const std::exception &error) {
         if (parent) DestroyWindow(parent);

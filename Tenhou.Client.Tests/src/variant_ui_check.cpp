@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
                 if (state.phase == tenhou::VariantPhase::Exchange) interaction.hint = L"换三张  0 / 3";
                 else if (state.phase == tenhou::VariantPhase::Missing) interaction.hint = L"请选择定缺花色：万、筒、索";
                 table.Paint(dc, {0, 0, 1200, 850}, game, true, nullptr, &interaction);
-                if (argc == 5 && std::string(argv[4]) == "--settlement") {
+                if (argc == 5 && std::string(argv[4]).rfind("--settlement", 0) == 0) {
                     if (game.settlement.receipts.empty()) throw std::runtime_error("No settlement supplied");
                     tenhou::SettlementView result(parent);
                     result.Configure(resources, 1440); result.Move({0, 0, 1200, 850}); result.SetContext(game.dealer, -1, -1);
@@ -61,7 +61,13 @@ int main(int argc, char **argv) {
                     for (int i = 0; i < 4; ++i) names[i] = game.players[i].name;
                     result.SetBackgroundPainter([&](HDC target, RECT bounds) { table.Paint(target, bounds, game, false); });
                     result.Set(game.settlement, names, false);
-                    SendMessageW(GetDlgItem(parent, 5400), WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+                    result.SetAnimationEnabled(false); result.Show(true);
+                    if (std::string(argv[4]).rfind("--settlement-page=", 0) == 0) {
+                        const int page = std::stoi(std::string(argv[4]).substr(18));
+                        if (page < 0 || page > 10) throw std::runtime_error("Invalid settlement page");
+                        for (int i = 0; i < page; ++i) SendMessageW(GetDlgItem(parent, 5400), WM_COMMAND, 5406, 0);
+                    }
+                    SendMessageW(GetDlgItem(parent, 5400), WM_PRINT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT | PRF_CHILDREN);
                 }
             }
             GdiFlush();

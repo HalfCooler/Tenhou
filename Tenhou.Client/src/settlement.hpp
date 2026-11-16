@@ -14,6 +14,8 @@ namespace tenhou {
         std::string name;
         int value = 0, count = 1;
     };
+    SettlementEntry ParseSettlementEntry(const std::string &text);
+    std::string SettlementEntryLabel(const SettlementEntry &entry);
     struct SettlementMeld {
         std::string kind;
         std::vector<int> tiles;
@@ -23,7 +25,10 @@ namespace tenhou {
     // Immutable display receipts. These never change live hand visibility or pay scores.
     struct SettlementReceipt {
         bool generic = false;
+        std::string rule;
+        std::vector<int> flowers;
         int fan = 0;
+        int points = 0; // Server-supplied displayed payout; delta retains all actual transfers.
         std::vector<SettlementEntry> entries;
         std::vector<SettlementMeld> public_melds;
         unsigned seat_mask = 15;

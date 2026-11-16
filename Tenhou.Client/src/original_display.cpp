@@ -8,6 +8,20 @@
 #include <stdexcept>
 
 namespace tenhou {
+    unsigned VariantActionButtonSprite(unsigned control, bool hot) {
+        if (control == 5173) return hot ? 595 : 599;
+        if (control >= 5170 && control <= 5172) return (hot ? 596 : 600) + control - 5170;
+        return 0;
+    }
+
+    std::vector<unsigned> VariantStatusSprites(const ReplayState &state) {
+        if (!state.variant) return {};
+        const unsigned rule = state.variant_rule.rfind("sichuan", 0) == 0 ? 704 : 705;
+        std::vector<unsigned> ids{rule};
+        const int last = state.total_hands > 0 ? state.total_hands - 1 : (rule == 704 ? 7 : 15);
+        if (state.initialized && state.round >= last) ids.push_back(578);
+        return ids;
+    }
     bool HudInteraction::Handle(HWND window, RECT board, int width, UINT message, LPARAM point) {
         if (message == WM_TIMER) {
             KillTimer(window, 9);
@@ -154,6 +168,7 @@ namespace tenhou {
     }
 
     void DisplayArtwork::Configure(const std::filesystem::path &directory, int width) {
+        variants_.Configure(directory);
         directory_ = directory;
         width_ = width;
         pack_ = {};
@@ -161,7 +176,25 @@ namespace tenhou {
         captions_.clear();
     }
 
+    const Image *DisplayArtwork::FindSprite(unsigned id) {
+        if (const auto cached = images_.find(id); cached != images_.end()) return &cached->second;
+        const auto *source = variants_.GetSprite(id);
+        if (!source) return nullptr;
+        if (width_ == 1440) return &images_.emplace(id, *source).first->second;
+        Image scaled;
+        scaled.width = std::max(1, static_cast<int>(source->width / 1.4));
+        scaled.height = std::max(1, static_cast<int>(source->height / 1.4));
+        scaled.bgra.resize(std::size_t(scaled.width) * scaled.height * 4);
+        for (int y = 0; y < scaled.height; ++y) for (int x = 0; x < scaled.width; ++x) {
+            const auto from = (std::size_t(y * source->height / scaled.height) * source->width + x * source->width / scaled.width) * 4;
+            const auto to = (std::size_t(y) * scaled.width + x) * 4;
+            std::copy_n(source->bgra.data() + from, 4, scaled.bgra.data() + to);
+        }
+        return &images_.emplace(id, std::move(scaled)).first->second;
+    }
+
     const Image &DisplayArtwork::Get(unsigned id) {
+        if (const auto *custom = FindSprite(id)) return *custom;
         auto cached = images_.find(id);
         if (cached != images_.end()) return cached->second;
         if (pack_.entries.empty()) {
@@ -237,12 +270,6 @@ namespace tenhou {
                                       : state.players[i].score;
                 const auto score = (state.relative_scores && i && value > 0 ? L"+" : L"") + std::to_wstring(value);
                 Caption(g, score, -26 * s, 28 * s, 16 * s, hud);
-                if (!state.players[i].flowers.empty()) {
-                    std::wstring flowers;
-                    for (int tile: state.players[i].flowers) if (tile >= 136 && tile < 144)
-                        flowers += L"春夏秋冬梅兰竹菊"[tile - 136];
-                    Caption(g, flowers, -25 * s, 60 * s, 10 * s, hud, 90 * s);
-                }
                 if (!state.relative_scores) {
                     auto name_hud = hud;
                     if (!state.players[i].connected) name_hud.text_color = 0xffcc0000;
@@ -268,7 +295,7 @@ namespace tenhou {
             };
             int y = 0;
             for (unsigned id: rules) {
-                if (variant) break;
+                if (variant && id != level) break;
                 const auto &im = Get(id);
                 Sprite(g, id, width_ - im.width, y);
                 y += im.height;
@@ -305,10 +332,29 @@ namespace tenhou {
     }
 
     void DisplayArtwork::PaintStatus(Gdiplus::Graphics &g, const ReplayState &state) {
-        if (state.variant) return;
         const auto saved = g.Save();
         g.ResetTransform();
         try {
+            if (state.variant) {
+                const auto ids = VariantStatusSprites(state);
+                const unsigned rule = ids.front();
+                // Keep the original second rule-label row, even while its PNG is being authored.
+                int y = Get(566).height;
+                if (const auto *label = FindSprite(rule)) {
+                    Sprite(g, rule, width_ - label->width, y);
+                    y += label->height;
+                } else {
+                    const int height = Get(570).height;
+                    const auto hud = BuildOriginalHud(state, width_);
+                    Caption(g, rule == 704 ? L"赤羽" : L"国标", static_cast<float>(width_ - Get(570).width),
+                        static_cast<float>(y), 18 * hud.scale, hud, static_cast<float>(Get(570).width));
+                    y += height;
+                }
+                if (ids.size() > 1) {
+                    const auto &im = Get(578); Sprite(g, 578, width_ - im.width, y);
+                }
+                g.Restore(saved); return;
+            }
             // FUN_0049c900: append 578 when round >= the game's last scheduled hand.
             if (state.initialized && state.round >= static_cast<int>(
                     ((state.type & 8 | 6) >> 1) - (state.type >> 4 & 1))) {
@@ -374,8 +420,8 @@ namespace tenhou {
     }
 
     void DisplayArtwork::PaintNukiCounts(Gdiplus::Graphics &g, const ReplayState &state, TableArtwork &tiles) {
-        if (!(state.type & 16) || std::all_of(state.players.begin(), state.players.end(),
-                                              [](const ReplayPlayer &p) { return p.nuki.empty(); })) return;
+        if (std::all_of(state.players.begin(), state.players.end(),
+                [](const ReplayPlayer &p) { return p.nuki.empty() && p.flowers.empty(); })) return;
         // 0049c200 / 004aa250: one n/0 sprite plus a rotated xN count,
         // System bold 12*1.4, white fill and four one-pixel black offsets.
         const auto saved = g.Save();
@@ -385,10 +431,12 @@ namespace tenhou {
                                12 * (width_ == 1440 ? 1.4f : 1.f), Gdiplus::FontStyleBold, Gdiplus::UnitPixel);
             Gdiplus::SolidBrush black(Gdiplus::Color(0xff000000)), white(Gdiplus::Color(0xffffffff));
             for (int seat = 0; seat < 4; ++seat) {
-                if (!SeatPresent(state.seat_mask, seat) || state.players[seat].nuki.empty()) continue;
+                const auto &player = state.players[seat];
+                const bool flower = !player.flowers.empty();
+                if (!SeatPresent(state.seat_mask, seat) || (!flower && (!(state.type & 16) || player.nuki.empty()))) continue;
                 // 00480930 maps the original entity sentinel 254 to variant 37.
-                const auto &tile = tiles.Get({'n', 0, -1, seat});
-                const auto text = L"\nx" + std::to_wstring(state.players[seat].nuki.size());
+                const auto &tile = tiles.Get({'n', 0, flower ? player.flowers.front() : -1, seat});
+                const auto text = (flower ? L"\n×" : L"\nx") + std::to_wstring(flower ? player.flowers.size() : player.nuki.size());
                 Gdiplus::RectF measure;
                 // WM_CREATE measures the fixed two-line PE string, not the
                 // current count. The standard mode leaves the first line blank.

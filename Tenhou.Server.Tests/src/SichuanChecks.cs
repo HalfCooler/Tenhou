@@ -54,6 +54,9 @@ internal static class SichuanChecks
     {
         SichuanValue value = Value(hand, melds);
         Check(value.Fan == fan && value.Patterns.Contains(pattern), $"{hand}: expected {fan}/{pattern}, got {value.Fan}/{string.Join(',', value.Patterns)}");
+        Check(value.PatternValues.Length == value.Patterns.Length, "Missing Sichuan per-pattern values");
+        int total = value.Patterns.Select((name, i) => value.PatternValues[i] * (name.StartsWith("根×", StringComparison.Ordinal) ? int.Parse(name[2..]) : 1)).Sum();
+        Check(total == value.Fan, "Per-pattern values disagree with uncapped Sichuan score");
     }
     private static SichuanMatch Rig(string[] texts, string draws, Dictionary<string, string>? options = null)
     {
@@ -158,6 +161,8 @@ internal static class SichuanChecks
         SichuanMatch match = Rig(["123456789m2345p", "123456789s2345m", "111222p666777s8p", ""], "5p5m8p");
         Check(match.Scores.All(p => p == 50000), "Starting points changed");
         match.Submit(0, new("tsumo"));
+        Check(match.Events[^1].Data["receipt0_pattern_values"] == "1" && match.Events[^1].Data["receipt0_points"] == "1000",
+            "Winning receipt lost the pattern value or per-payer payment");
         string fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "ui-fixtures"); Directory.CreateDirectory(fixtureDirectory);
         File.WriteAllLines(Path.Combine(fixtureDirectory, "sichuan-bloodbattle-retired.txt"),
         [Protocol.Wire.Encode("VGO", new Dictionary<string, string> { ["rule"] = "sichuan-bloodbattle", ["title"] = "四川麻将 · 血战到底",

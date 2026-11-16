@@ -222,6 +222,7 @@ namespace tenhou {
         HudInteraction hud_interaction_;
         std::uint64_t pressed_revision_ = 0;
         ActionCaptions captions_;
+        std::array<bool, 4> opening_flowers_{};
         bool clock_active_ = false;
         ULONGLONG clock_deadline_ = 0;
         int clock_base_ms_ = -1;

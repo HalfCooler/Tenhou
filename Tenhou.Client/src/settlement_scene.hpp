@@ -28,9 +28,17 @@ namespace tenhou {
         int x = 0, y = 0;
         double scale = 1;
     };
+    struct SettlementPatternImage {
+        AssetId asset;
+        RECT rect{};
+    };
+    inline constexpr std::size_t kSettlementPatternsPerPage = 14;
+    std::size_t SettlementPatternPages(const SettlementReceipt &receipt);
 
     struct SettlementLayout {
         int width = 1024, dealer = 0, honba = -1, sticks = -1;
+        std::size_t pattern_page = 0;
+        std::function<SIZE(AssetId)> variant_image_size;
         // Resource geometry is read by the view/probe, without exposing live hands.
         std::function<RECT(const TableTile &)> tile_bounds;
         std::function<SIZE(unsigned)> image_size;
@@ -49,6 +57,7 @@ namespace tenhou {
         std::vector<SettlementTextItem> text;
         std::vector<SettlementTileItem> tiles;
         std::vector<SettlementImageItem> images;
+        std::vector<SettlementPatternImage> pattern_images;
     };
 
     // Native 1024/1440 canvas; original sprites stay unscaled at native resolution.

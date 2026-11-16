@@ -6,6 +6,9 @@
 #include <sstream>
 
 namespace tenhou {
+    std::size_t SettlementPatternPages(const SettlementReceipt &receipt) {
+        return receipt.generic ? std::max<std::size_t>(1, (receipt.entries.size() + kSettlementPatternsPerPage - 1) / kSettlementPatternsPerPage) : 1;
+    }
     namespace {
         std::string Number(double n, bool sign = false) {
             std::ostringstream s;
@@ -54,10 +57,10 @@ namespace tenhou {
             };
             int ura_y = 322;
             if (r.generic) {
-                text("variant_name", r.who >= 0 ? names[r.who] : "盘末结算", 24, 12, 580, 16);
+                if (r.who >= 0) text("variant_name", names[r.who], 24, 12, 580, 16);
                 if (r.who < 0) text("variant_reason", r.reason, 28, 150, 610, 14);
             }
-            if (r.who < 0 && !r.generic) {
+            if (r.who < 0) {
                 // FUN_004af580 chooses these exact reason image IDs from type.
                 unsigned title = 461;
                 if (r.reason == "yao9") title = 467;
@@ -247,13 +250,73 @@ namespace tenhou {
                 if (count > 14) text("overflow", "More yaku: F2 / Text details", 210, 170, 350, 14);
                 if (!r.generic && !r.has_yaku && !r.has_yakuman) text("missing_yaku", "Yaku not supplied", 190, 194, 400, 18);
                 if (r.generic) {
-                    text("variant_win", r.who == r.from ? "自摸" : "荣和", 260, 130, 140, 24, 0xffffffff, 1);
+                    const unsigned win = r.who == r.from ? 477 : 476;
+                    const auto win_size = size(win);
+                    const double win_scale = std::min(1.0, double(px(45)) / std::max(1L, win_size.cy));
+                    image(win, left + (px(660) - static_cast<int>(win_size.cx * win_scale)) / 2, top + px(123), win_scale);
+                    text("variant_win", r.who == r.from ? "自摸" : "荣和", 260, 130, 140, 24, 0xffffffff, 1, false);
+                    // Share the original digit, 飜 and 点 sprites; fit a whole run without stretching it.
+                    const auto glyph_run = [&](const std::vector<unsigned> &glyphs, int x, int y, int max_width, bool centered) {
+                        int width = 0, height = 1;
+                        for (unsigned id: glyphs) {
+                            width += id ? size(id).cx : px(14);
+                            if (id) height = std::max(height, static_cast<int>(size(id).cy));
+                        }
+                        const double fit = std::min({1.0, double(px(max_width)) / std::max(1, width), double(px(22)) / height});
+                        int cursor = left + px(x) - (centered ? static_cast<int>(width * fit) / 2 : 0);
+                        for (unsigned id: glyphs) {
+                            if (id) image(id, cursor, top + px(y), fit);
+                            cursor += static_cast<int>((id ? size(id).cx : px(14)) * fit);
+                        }
+                    };
+                    const auto number = [](int value) {
+                        std::vector<unsigned> glyphs;
+                        for (char c: std::to_string(value)) glyphs.push_back(552 + c - '0');
+                        return glyphs;
+                    };
                     const auto visible = std::min(shown_yaku, r.entries.size());
-                    const bool pattern_columns = r.entries.size() > 6;
-                    for (std::size_t i = 0; i < std::min<std::size_t>(visible, 14); ++i)
-                        text("variant_pattern", r.entries[i].name, pattern_columns ? 35 + static_cast<int>(i / 7) * 310 : 150,
-                            194 + static_cast<int>(pattern_columns ? i % 7 : i) * 24, pattern_columns ? 300 : 420, 16);
-                    if (totals) text("variant_fan", std::to_string(r.fan) + " 翻", 270, 384, 140, 22, 0xffffffff, 1);
+                    const auto pages = SettlementPatternPages(r), page = std::min(layout.pattern_page, pages - 1);
+                    const auto begin = page * kSettlementPatternsPerPage;
+                    const auto end = std::min(r.entries.size(), begin + kSettlementPatternsPerPage);
+                    const bool pattern_columns = end - begin > 6;
+                    for (std::size_t i = begin; i < std::min(visible, end); ++i) {
+                        const auto &entry = r.entries[i];
+                        const auto normalized = ParseSettlementEntry(entry.name);
+                        const auto pattern = FindPatternArtwork(r.rule, normalized.name);
+                        const int repetitions = entry.count > 1 ? entry.count : normalized.count;
+                        const int j = static_cast<int>(i - begin);
+                        const int x = pattern_columns ? 35 + j / 7 * 310 : 150;
+                        const int y = 194 + (pattern_columns ? j % 7 : j) * 24;
+                        const int width = pattern_columns ? 225 : 300;
+                        const int name_width = width - (repetitions > 1 ? 40 : 0);
+                        const auto image_size = pattern && layout.variant_image_size ? layout.variant_image_size(pattern->asset) : SIZE{};
+                        if (image_size.cx > 0 && image_size.cy > 0) {
+                            const double fit = std::min(double(px(name_width)) / image_size.cx, double(px(22)) / image_size.cy);
+                            scene.pattern_images.push_back({pattern->asset, {left + px(x), top + px(y),
+                                left + px(x) + static_cast<int>(image_size.cx * fit), top + px(y) + static_cast<int>(image_size.cy * fit)}});
+                            if (repetitions > 1) text("variant_multiplier", "×" + std::to_string(repetitions), x + width - 35, y, 40, 14);
+                        } else text("variant_pattern", normalized.name + (repetitions > 1 ? "×" + std::to_string(repetitions) : ""), x, y, width, 16);
+                        const int value = entry.value > 0 ? entry.value : (pattern ? pattern->value : 0);
+                        if (value > 0) {
+                            auto glyphs = number(value * repetitions); glyphs.push_back(562);
+                            glyph_run(glyphs, x + width + 10, y, 70, false);
+                            text("variant_value", std::to_string(value * repetitions) + " 飜", x + width + 10, y, 70, 14, 0xffffffff, 0, false);
+                        }
+                    }
+                    if (pages > 1) text("variant_page", std::to_string(page + 1) + " / " + std::to_string(pages), 280, 365, 100, 14, 0xffffffff, 1);
+                    if (!r.flowers.empty()) text("variant_flowers", "花牌 ×" + std::to_string(r.flowers.size()), 35, 132, 200, 14);
+                    if (totals) {
+                        auto glyphs = number(r.fan); glyphs.push_back(562);
+                        const int payout = r.points > 0 ? r.points : std::max(0, r.delta[r.who]);
+                        if (payout > 0) {
+                            glyphs.push_back(0);
+                            const auto points = number(payout); glyphs.insert(glyphs.end(), points.begin(), points.end());
+                            glyphs.push_back(564);
+                        }
+                        glyph_run(glyphs, 330, 395, 590, true);
+                        text("variant_fan", std::to_string(r.fan) + " 飜" + (payout > 0 ? " " + std::to_string(payout) + " 点" : ""),
+                            35, 395, 590, 22, 0xffffffff, 1, false);
+                    }
                 }
             }
             if (totals) {
@@ -444,6 +507,13 @@ namespace tenhou {
             if (i)out << ',';
             const auto &im = s.images[i];
             out << "{\"id\":" << im.id << ",\"x\":" << im.x << ",\"y\":" << im.y << ",\"scale\":" << im.scale << '}';
+        }
+        out << "],\"pattern_images\":[";
+        for (std::size_t i = 0; i < s.pattern_images.size(); ++i) {
+            if (i) out << ',';
+            const auto &item = s.pattern_images[i];
+            out << "{\"asset\":" << NetworkJson(ResourceManager::Info(item.asset).name) << ",\"x\":" << item.rect.left <<
+                ",\"y\":" << item.rect.top << ",\"right\":" << item.rect.right << ",\"bottom\":" << item.rect.bottom << '}';
         }
         out << "]}";
         return out.str();

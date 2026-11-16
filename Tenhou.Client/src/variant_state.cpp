@@ -108,10 +108,12 @@ namespace tenhou {
             const auto key = "receipt" + std::to_string(i) + "_";
             SettlementReceipt r;
             r.generic = true;
+            r.rule = s.rule;
             const int who = Number(Get(f, key + "who"), -1, 3), source = Number(Get(f, key + "from"), -1, 3);
             r.who = who < 0 ? -1 : s.Relative(who); r.from = source < 0 ? -1 : s.Relative(source);
             r.tag = who < 0 ? "draw" : "win";
             r.reason = Get(f, key + "reason"); r.fan = Number(Get(f, key + "fan"), 0, 1000);
+            r.points = Number(Get(f, key + "points", "0"), 0, 100000000);
             r.winning_tile = Number(Get(f, key + "tile"), -1, tile_max);
             const auto base = Numbers(Get(f, key + "base"), -100000000, 100000000, 4, false);
             const auto delta = Numbers(Get(f, key + "delta"), -100000000, 100000000, 4, false);
@@ -125,7 +127,10 @@ namespace tenhou {
             }
             r.has_hand = who >= 0; r.has_melds = true;
             if (who >= 0 && (source < 0 || std::find(r.hand.begin(), r.hand.end(), r.winning_tile) == r.hand.end())) throw std::runtime_error("Invalid winning receipt");
-            for (const auto &pattern: Split(Get(f, key + "patterns"), ';')) r.entries.push_back({pattern});
+            for (const auto &pattern: Split(Get(f, key + "patterns"), ';')) r.entries.push_back(ParseSettlementEntry(pattern));
+            const auto values = Numbers(Get(f, key + "pattern_values"), 0, 1000, 82, false);
+            if (!values.empty() && values.size() != r.entries.size()) throw std::runtime_error("Invalid receipt pattern values");
+            for (std::size_t n = 0; n < values.size(); ++n) r.entries[n].value = values[n];
             for (const auto &meld: Split(Get(f, key + "melds"), ';')) {
                 const auto parts = Split(meld, ':');
                 if (parts.size() != 5 || r.public_melds.size() >= 4) throw std::runtime_error("Invalid receipt meld");
@@ -191,6 +196,8 @@ namespace tenhou {
                 p.melds.push_back(std::move(m));
             }
         }
+        for (auto &receipt: s.settlement.receipts) if (receipt.who >= 0)
+            receipt.flowers = s.players[(receipt.who + s.local) % 4].flowers;
         s.initialized = true;
         return s;
     }
@@ -224,6 +231,7 @@ namespace tenhou {
         OnlineState out;
         out.started = out.initialized = s.initialized;
         out.variant = true; out.type = 2; out.red_tiles.clear();
+        out.variant_rule = s.rule; out.total_hands = s.total_hands;
         out.round = s.hand_number - 1;
         out.dealer = s.Relative(s.dealer);
         out.turn = s.Preparing() || s.players[s.turn].retired ? -1 : s.Relative(s.turn);

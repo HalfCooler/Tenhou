@@ -77,7 +77,8 @@ namespace tenhou {
             graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor); // native mode 5
             for (const auto &item: Frames()) {
                 if (item.tick == 100) continue;
-                if (!item.text.empty()) {
+                const auto *custom = item.resource >= 594 ? artwork.FindSprite(item.resource) : nullptr;
+                if (!item.text.empty() && !custom) {
                     Gdiplus::FontFamily family(L"KaiTi");
                     Gdiplus::GraphicsPath path;
                     Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter);
@@ -90,13 +91,13 @@ namespace tenhou {
                     graphics.DrawPath(&outline, &path); graphics.FillPath(&ink, &path);
                     continue;
                 }
-                const auto &image = artwork.Get(item.resource);
+                const auto &image = custom ? *custom : artwork.Get(item.resource);
                 Gdiplus::Bitmap bitmap(image.width, image.height, image.width * 4, PixelFormat32bppARGB,
                                        const_cast<BYTE *>(image.bgra.data()));
-                const int w = static_cast<int>(image.width * item.scale), h = static_cast<int>(
-                    image.height * item.scale);
-                const int x = static_cast<int>(xs[width == 1440][item.who] - image.width * item.scale * .5f);
-                const int y = static_cast<int>(ys[width == 1440][item.who] - image.height * item.scale * .5f);
+                const float scale = item.scale;
+                const int w = static_cast<int>(image.width * scale), h = static_cast<int>(image.height * scale);
+                const int x = xs[width == 1440][item.who] - w / 2;
+                const int y = ys[width == 1440][item.who] - h / 2;
                 Gdiplus::ColorMatrix matrix{
                     {{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0}, {0, 0, 0, item.alpha, 0}, {0, 0, 0, 0, 1}}
                 };

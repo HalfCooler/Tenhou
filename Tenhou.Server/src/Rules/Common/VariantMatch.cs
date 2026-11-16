@@ -265,14 +265,17 @@ public abstract class VariantMatch : IMatch
         if (payer == recipient || amount < 0) throw new InvalidOperationException("Invalid transfer");
         Points[payer] -= amount; Points[recipient] += amount;
     }
-    protected void AddReceipt(int seat, int source, int tile, int fan, string[] patterns, int[] before, string reason)
+    protected void AddReceipt(int seat, int source, int tile, int fan, string[] patterns, int[] before, string reason,
+        int[]? patternValues = null, int displayPoints = 0)
     {
         Dictionary<string, string> receipt = new()
         {
             ["who"] = seat.ToString(CultureInfo.InvariantCulture), ["from"] = source.ToString(CultureInfo.InvariantCulture),
             ["tile"] = tile.ToString(CultureInfo.InvariantCulture), ["fan"] = fan.ToString(CultureInfo.InvariantCulture),
             ["patterns"] = string.Join(';', patterns), ["reason"] = reason, ["base"] = string.Join(',', before),
-            ["delta"] = string.Join(',', Points.Select((p, i) => p - before[i]))
+            ["delta"] = string.Join(',', Points.Select((p, i) => p - before[i])),
+            ["pattern_values"] = string.Join(',', patternValues ?? []),
+            ["points"] = displayPoints.ToString(CultureInfo.InvariantCulture)
         };
         if (seat >= 0)
         {

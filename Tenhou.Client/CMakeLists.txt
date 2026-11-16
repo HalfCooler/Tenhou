@@ -27,7 +27,7 @@ target_include_directories(tenhou_replay PUBLIC src)
 target_compile_definitions(tenhou_replay PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_replay PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_replay PUBLIC zlib_inflate)
-add_library(tenhou_table STATIC src/table_scene.cpp src/replay_effects.cpp src/replay_audio.cpp src/original_display.cpp
+add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_effects.cpp src/replay_audio.cpp src/original_display.cpp
         src/wall_scene.cpp src/action_selection_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
@@ -49,10 +49,13 @@ add_custom_target(tenhou_assets ${asset_copy_commands}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${TENHOU_OUTPUT_DIRECTORY}/licenses"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/vendor/zlib/LICENSE"
             "${TENHOU_OUTPUT_DIRECTORY}/licenses/zlib-LICENSE.txt"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/sources/mahjong_graphic/LICENSE"
+            "${TENHOU_OUTPUT_DIRECTORY}/licenses/mahjong_graphic-LICENSE.txt"
         DEPENDS ${asset_runtime_files} VERBATIM)
 add_dependencies(tenhou_rebuild tenhou_assets)
 install(TARGETS tenhou_rebuild RUNTIME DESTINATION client)
 install(FILES vendor/zlib/LICENSE DESTINATION client/licenses RENAME zlib-LICENSE.txt)
+install(FILES assets/sources/mahjong_graphic/LICENSE DESTINATION client/licenses RENAME mahjong_graphic-LICENSE.txt)
 
 # Test source ownership stays with the corresponding test project.
 option(TENHOU_BUILD_CLIENT_TESTS "Build the client-specific checks" OFF)

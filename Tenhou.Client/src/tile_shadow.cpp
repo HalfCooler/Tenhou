@@ -124,7 +124,7 @@ namespace tenhou {
                                                                [&](const PositionedTile &other) {
                                                                    return other.tile.family == 'y' && other.tile.
                                                                           direction == t.direction && other.tile.slot ==
-                                                                          t.slot - 17;
+                                                                           t.slot - 17 && other.tile.wall_extra == t.wall_extra;
                                                                }))
                 continue; // Lower sprite belongs to the same top placeholder.
             const auto &image = artwork.Get(t);
@@ -201,13 +201,30 @@ namespace tenhou {
                     if (next && aligned(current, *next)) current.ground = mask(current, current.slot, 1);
                 }
             } else if (current.family == 'y') {
-                auto *previous = find('y', current.slot - 1, d);
+                TileShadow *previous = nullptr;
+                for (auto &candidate: result)
+                    if (candidate.family == 'y' && candidate.placed.tile.direction == d &&
+                        candidate.slot + candidate.placed.tile.wall_extra == current.slot + current.placed.tile.wall_extra - 1) {
+                        previous = &candidate; break;
+                    }
+                // At the extra eighteenth stack, project the last available
+                // neighbour masks by the same native step as the reused sprite.
+                const auto previous_mask = [&](int kind, std::shared_ptr<ShadowMask> &storage) -> const ShadowMask * {
+                    if (const auto *original = mask(current, previous->slot, kind)) return original;
+                    const auto *source = mask(current, previous->slot - 1, kind);
+                    if (!source) return nullptr;
+                    storage = std::make_shared<ShadowMask>(*source);
+                    TableTile last{'y', previous->slot, -1, d}, before = last; --before.slot;
+                    const auto &a = artwork.Get(last), &b = artwork.Get(before);
+                    storage->x += a.x - b.x; storage->y += a.y - b.y;
+                    return storage.get();
+                };
                 if (previous && previous->code != 0xfd) {
-                    if (current.code == 0xfe) previous->ground = mask(current, current.slot - 1, 2);
+                    if (current.code == 0xfe) previous->ground = previous_mask(2, previous->extended_ground);
                     if (current.code == 0xfd) {
-                        previous->ground = mask(current, current.slot - 1, 0);
-                        previous->extra = mask(current, current.slot - 1, 3);
-                        current.received = mask(current, current.slot - 1, 4);
+                        previous->ground = previous_mask(0, previous->extended_ground);
+                        previous->extra = previous_mask(3, previous->extended_extra);
+                        current.received = mask(current, std::min(previous->slot, 15), 4);
                     }
                 }
             }

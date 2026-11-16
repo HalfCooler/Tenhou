@@ -34,7 +34,8 @@ public sealed class GuobiaoMatch : VariantMatch
         int[] before = (int[])Points.Clone();
         for (int payer = 0; payer < 4; ++payer)
             if (payer != seat) Transfer(payer, seat, 8 + (selfDrawn || payer == source ? score.Points : 0));
-        AddReceipt(seat, source, tile, score.Points, score.Entries.Select(e => e.Name + (e.Count > 1 ? "×" + e.Count : "")).ToArray(), before, "");
+        AddReceipt(seat, source, tile, score.Points, score.Entries.Select(e => e.Name + (e.Count > 1 ? "×" + e.Count : "")).ToArray(), before, "",
+            score.Entries.Select(e => e.Points).ToArray(), Points[seat] - before[seat]);
         Cue(selfDrawn ? "tsumo" : "ron", seat, tile, source);
         ++Players[seat].Wins;
         if (selfDrawn) Players[seat].Hand.Remove(tile);

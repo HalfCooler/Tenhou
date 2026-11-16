@@ -8,3 +8,5 @@ build/
 Tenhou.Server/data/
 Tenhou.Server/server.local.json
 **/platform-session-*.txt
+
+~$*

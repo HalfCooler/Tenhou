@@ -9,6 +9,23 @@
 #include <stdexcept>
 
 namespace tenhou {
+    SettlementEntry ParseSettlementEntry(const std::string &text) {
+        SettlementEntry entry{text};
+        const auto at = text.rfind("×");
+        if (at != std::string::npos) {
+            int count = 0;
+            const auto begin = text.data() + at + std::string("×").size(), end = text.data() + text.size();
+            const auto result = std::from_chars(begin, end, count);
+            if (result.ec == std::errc{} && result.ptr == end && count > 0 && count <= 1000) {
+                entry.name = text.substr(0, at); entry.count = count;
+            }
+        }
+        return entry;
+    }
+
+    std::string SettlementEntryLabel(const SettlementEntry &entry) {
+        return entry.name + (entry.count > 1 ? "×" + std::to_string(entry.count) : "");
+    }
     namespace {
         using Attributes = std::map<std::string, std::string>;
         [[noreturn]] void Fail(const std::string &message) { throw std::runtime_error("Settlement: " + message); }
@@ -329,10 +346,14 @@ namespace tenhou {
             out << SettlementLabel(r) << "\r\n";
             if (r.who >= 0) {
                 out << Seat(r.who, names);
-                if (totals) out << "  " << r.fan << " 翻";
+                if (totals) out << "  " << r.fan << " 飜" << (r.points > 0 ? "  " + std::to_string(r.points) + " 点" : "");
                 out << "\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
                 for (const auto &m: r.public_melds) out << m.kind << " [" << Tiles(m.tiles, false) << "]\r\n";
-                for (const auto &entry: r.entries) out << entry.name << "\r\n";
+                for (const auto &entry: r.entries) {
+                    out << SettlementEntryLabel(entry);
+                    if (entry.value > 0) out << " " << entry.value * entry.count << " 飜";
+                    out << "\r\n";
+                }
             } else out << r.reason << "\r\n";
             if (totals) for (int i = 0; i < 4; ++i) out << Seat(i, names) << ": " << r.base[i] << "  " << std::showpos << r.delta[i] << std::noshowpos << " = " << r.base[i] + r.delta[i] << "\r\n";
             return out.str();
@@ -407,7 +428,8 @@ namespace tenhou {
             field("ba", r.ba);
             field("base", r.base);
             field("delta", r.delta);
-            out << ",\"generic\":" << r.generic << ",\"fan\":" << r.fan << ",\"entries\":[";
+            out << ",\"rule\":" << Quote(r.rule); field("flowers", r.flowers);
+            out << ",\"generic\":" << r.generic << ",\"fan\":" << r.fan << ",\"points\":" << r.points << ",\"entries\":[";
             for (std::size_t j = 0; j < r.entries.size(); ++j) {
                 if (j) out << ',';
                 out << '[' << Quote(r.entries[j].name) << ',' << r.entries[j].value << ',' << r.entries[j].count << ']';

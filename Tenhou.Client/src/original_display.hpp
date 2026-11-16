@@ -1,6 +1,7 @@
 #pragma once
 #include "replay.hpp"
 #include "resource_pack.hpp"
+#include "variant_artwork.hpp"
 #include <windows.h>
 #include <array>
 #include <map>
@@ -48,6 +49,8 @@ namespace tenhou {
     RECT FitNativeCanvas(RECT bounds, int width);
 
     RECT OriginalAutoButtonRect(int width, int index);
+    unsigned VariantActionButtonSprite(unsigned control, bool hot);
+    std::vector<unsigned> VariantStatusSprites(const ReplayState &state);
 
     // 004aa250: n/0/254 maps to the standing-back rectangle, then odd
     // directions swap measured text extents before the count window is placed.
@@ -76,6 +79,9 @@ namespace tenhou {
         void Configure(const std::filesystem::path &directory, int width);
 
         const Image &Get(unsigned id);
+        // Authored numeric PNG only; absent images retain the caller's existing fallback.
+        const Image *FindSprite(unsigned id);
+        const Image *GetVariant(AssetId id) { return variants_.Get(id); }
 
         static float MeasureText(const std::string &text, float em);
 
@@ -103,6 +109,7 @@ namespace tenhou {
         std::filesystem::path directory_;
         int width_ = 1440;
         ResourcePack pack_;
+        VariantArtwork variants_;
         std::map<unsigned, Image> images_;
     };
 } // namespace tenhou

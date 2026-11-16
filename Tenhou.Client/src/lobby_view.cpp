@@ -916,6 +916,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->SetConfirmEnabled(
             !paused && !snapshot.recovering && !client_->snapshot().exit_pending && snapshot.actions.pending.empty() &&
             (!snapshot.game.complete || snapshot.phase == LobbyPhase::MatchComplete));
+        settlement_view_->SetRoundFinished(!history && snapshot.game.variant && snapshot.game.ended);
         settlement_view_->Show(show_results_ && result_available);
         if (result_pending_ && show_results_ &&result_available) settlement_view_->Present();
         result_pending_ = false;
@@ -940,6 +941,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             match_intro_->Cancel();
         }
         opening_.Cancel();
+        opening_flowers_ = {};
         deferred_sounds_.clear();
         table_.CancelAnimation();
         result_pending_ = false;
@@ -1183,11 +1185,15 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
         if (variant_events_.resynchronized || new_hand || !live) {
             CancelResultTimer(); StopSound();
+            opening_flowers_ = {};
             captions_.Clear(); table_.SetDrawEndSlots(14);
             table_.Accept(snapshot.game, ReplayEvent{}, false);
             show_results_ = snapshot.game.ended;
             if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || sound_enabled_)) {
                 table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
+                if (!state.Sichuan() && !state.events.empty() && state.events.back().kind == "start")
+                    for (int seat = 0; seat < 4; ++seat)
+                        opening_flowers_[state.Relative(seat)] = !state.players[seat].flowers.empty();
                 opening_start_ = GetTickCount64();
                 if (state.hand_number == 1) {
                     if (start_barrier_) start_sound_pending_ = true;
@@ -1199,17 +1205,21 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             return;
         }
         ReplayEvent presentation; presentation.tag = "VARIANT";
+        std::array<bool, 4> flower_caption{};
         for (const auto &cue: cues) {
             const auto event = VariantReplayEvent(cue, state);
             // Automatic continuations have their own snapshots, so a draw cannot replace a call.
             if (event.kind != ReplayEventKind::Metadata) presentation = event;
             if (captions_.Accept(event)) SetTimer(window_, 8, 15, nullptr);
             if (cue.kind == "exchange" || cue.kind == "dingque") {
-                captions_.AcceptResource(0, event.who, L"选择完毕"); SetTimer(window_, 8, 15, nullptr);
+                captions_.AcceptResource(594, event.who, L"选择完毕"); SetTimer(window_, 8, 15, nullptr);
                 if (event_sound_allowed_) PlaySoundId(106);
             } else if (cue.kind == "flower") {
-                captions_.AcceptResource(0, event.who, L"补花"); SetTimer(window_, 8, 15, nullptr);
-                if (event_sound_allowed_) PlaySoundId(107);
+                if (!flower_caption[event.who]) {
+                    flower_caption[event.who] = true;
+                    captions_.AcceptResource(480, event.who); SetTimer(window_, 8, 15, nullptr);
+                    if (event_sound_allowed_) PlaySoundId(107);
+                }
             }
             if (event_sound_allowed_) PlayEventSound(event, snapshot);
         }
@@ -1474,7 +1484,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 ScreenToClient(item.hwndItem, &point);
                 const bool hot = IsWindowEnabled(item.hwndItem) && PtInRect(&item.rcItem, point);
                 const bool variant_choice = item.CtlID >= 5170 && item.CtlID <= 5173;
-                const unsigned id = variant_choice ? 0 : (item.CtlID == 5151 ? 448 : ids[item.CtlID - 5121]) + (hot ? 9 : 0);
+                const unsigned variant_id = VariantActionButtonSprite(item.CtlID, hot);
+                const unsigned id = variant_choice ? (action_artwork_.FindSprite(variant_id) ? variant_id : 0) :
+                    (item.CtlID == 5151 ? 448 : ids[item.CtlID - 5121]) + (hot ? 9 : 0);
                 Gdiplus::Graphics graphics(item.hDC);
                 const auto paint = [&](unsigned resource) {
                     const auto &im = action_artwork_.Get(resource);
@@ -1813,6 +1825,15 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                         SetTimer(window, 2, self->opening_.interval(), nullptr);
                         if (!self->opening_.Active()) {
                             self->log_("ONLINE OPENING DONE");
+                            bool flowers = false;
+                            for (int seat = 0; seat < 4; ++seat) if (self->opening_flowers_[seat]) {
+                                self->captions_.AcceptResource(480, seat); flowers = true;
+                            }
+                            self->opening_flowers_ = {};
+                            if (flowers) {
+                                SetTimer(window, 8, 15, nullptr);
+                                if (self->event_sound_allowed_) self->PlaySoundId(107);
+                            }
                             self->UpdateActions();
                             self->Arrange();
                         }

@@ -1,6 +1,7 @@
 #pragma once
 #include "object_pack.hpp"
 #include "replay.hpp"
+#include "variant_artwork.hpp"
 #include <map>
 
 namespace tenhou {
@@ -15,6 +16,7 @@ namespace tenhou {
         int river_reach_slot = -1; // Declaration preceding this tile in the same row.
         bool river_waiting = false;
         int wall_extra = 0; // Additional stacks translated from measured native resource anchors.
+        int wall_stack = -1, wall_stacks = 0; // Logical identity, independent of the reused sprite slot.
     };
 
     struct PositionedTile {
@@ -62,6 +64,7 @@ namespace tenhou {
         std::vector<int> red_tiles_{16, 52, 88};
         std::array<float, 3> rgb_{0, 0, 38.0f / 255.0f};
         ObjectPack even_, odd_;
+        VariantArtwork variants_;
         int width_ = 0;
 
         struct Cached {

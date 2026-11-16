@@ -4,6 +4,14 @@
 #include <stdexcept>
 
 namespace tenhou {
+    TableTile WallTile(const WallState &wall, int seat, int stack, bool stacked) {
+        const int stacks = wall.SideTiles(seat) / 2;
+        const int resource = std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0);
+        TableTile tile{'y', resource + (stacked ? 0 : 17), -1, seat};
+        tile.wall_stack = stack; tile.wall_stacks = stacks; tile.wall_extra = std::max(0, stack - 16);
+        tile.role = "wall";
+        return tile;
+    }
     std::vector<TableTile> BuildWallScene(const ReplayState &state, unsigned placed) {
         std::vector<TableTile> scene;
         const auto &wall = state.wall;
@@ -31,14 +39,9 @@ namespace tenhou {
             for (int stack = 0; stack < wall.SideTiles(seat) / 2; ++stack) {
                 const bool top = alive[seat][stack * 2], bottom = alive[seat][stack * 2 + 1];
                 if (!top && !bottom) continue;
-                const int stacks = wall.SideTiles(seat) / 2;
-                const int resource = std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0);
                 const bool stacked = wall.dead_wall ? top : top && bottom;
-                TableTile tile{'y', resource + (stacked ? 0 : 17), top && wall.dead_wall ? indicators[seat][stack] : -1, seat};
-                // The eighteenth stack uses a translated upper-stack sprite, never y17 (a lower tile).
-                if (stack == 17) {
-                    tile.wall_extra = 1;
-                }
+                auto tile = WallTile(wall, seat, stack, stacked);
+                if (top && wall.dead_wall) tile.tile = indicators[seat][stack];
                 tile.role = tile.tile < 0 ? "wall" : "wall_indicator";
                 // FUN_0049cab0 / FUN_004902f0: split at physical index 120,
                 // then move the tail stacks by the literal per-seat PE offsets.

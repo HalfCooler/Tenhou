@@ -544,6 +544,7 @@ namespace tenhou {
         r.ended = s.ended;
         r.furiten = s.furiten;
         r.variant = s.variant;
+        r.variant_rule = s.variant_rule; r.total_hands = s.total_hands;
         r.type = s.type;
         r.seat_mask = s.seat_mask;
         r.red_tiles = s.red_tiles;

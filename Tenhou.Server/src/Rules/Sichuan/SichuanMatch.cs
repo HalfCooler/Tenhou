@@ -6,7 +6,10 @@ using Tenhou.Server.Rules.Common;
 
 namespace Tenhou.Server.Rules.Sichuan;
 
-public sealed record SichuanValue(int Fan, string[] Patterns);
+public sealed record SichuanValue(int Fan, string[] Patterns)
+{
+    public int[] PatternValues { get; init; } = [];
+}
 public sealed class SichuanMatch : VariantMatch
 {
     private readonly IReadOnlyDictionary<string, string> options;
@@ -110,14 +113,15 @@ public sealed class SichuanMatch : VariantMatch
         var best = forms.OrderByDescending(f => f.Fan + roots - f.IncludedRoots).ThenByDescending(f => f.Fan).First();
         int fan = best.Fan + roots - best.IncludedRoots;
         List<string> patterns = [best.Name];
-        if (roots > best.IncludedRoots) patterns.Add("根×" + (roots - best.IncludedRoots));
+        List<int> patternValues = [best.Fan];
+        if (roots > best.IncludedRoots) { patterns.Add("根×" + (roots - best.IncludedRoots)); patternValues.Add(1); }
         if (special)
         {
-            if (selfDrawn && Replacement) { ++fan; patterns.Add("杠上花"); }
-            if (!selfDrawn && ClaimKind == "added_kan") { ++fan; patterns.Add("抢杠"); }
-            if (!selfDrawn && lastKongSeat == LastActor && ClaimKind == "discard") { ++fan; patterns.Add("杠上炮"); }
+            if (selfDrawn && Replacement) { ++fan; patterns.Add("杠上花"); patternValues.Add(1); }
+            if (!selfDrawn && ClaimKind == "added_kan") { ++fan; patterns.Add("抢杠"); patternValues.Add(1); }
+            if (!selfDrawn && lastKongSeat == LastActor && ClaimKind == "discard") { ++fan; patterns.Add("杠上炮"); patternValues.Add(1); }
         }
-        return new(Capped(fan), patterns.ToArray());
+        return new(Capped(fan), patterns.ToArray()) { PatternValues = patternValues.ToArray() };
     }
     protected override bool CanWin(int seat, int tile, bool selfDrawn, bool aboutKong) => Participating(seat) && Score(seat, tile, selfDrawn) is not null;
     protected override void Win(int[] winners, int source, bool selfDrawn)
@@ -128,7 +132,7 @@ public sealed class SichuanMatch : VariantMatch
         int[] before = (int[])Points.Clone();
         if (selfDrawn) { for (int payer = 0; payer < 4; ++payer) if (payer != seat && Participating(payer)) Transfer(payer, seat, amount); }
         else Transfer(source, seat, amount);
-        AddReceipt(seat, source, tile, value.Fan, value.Patterns, before, "");
+        AddReceipt(seat, source, tile, value.Fan, value.Patterns, before, "", value.PatternValues, amount);
         Cue(selfDrawn ? "tsumo" : "ron", seat, tile, source);
         if (firstWinner < 0) firstWinner = nextDealer = seat;
         ++Players[seat].Wins;
