@@ -77,6 +77,7 @@ namespace tenhou {
         bool FinalPage() const { return visible_ && state_.has_final && selected_ == state_.receipts.size(); }
 
     private:
+        friend struct SettlementPresentationCheck;
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
         void Select();

@@ -142,10 +142,8 @@ namespace tenhou {
         out.sticks[3] = Multiply({.9f, 0, 0, 1, 0, 0}, Multiply(Rotation(.6f), out.seats[3]));
         const auto scaled = [&](float n) { return static_cast<int>(n * out.scale); };
         out.sprites.push_back({407u + static_cast<unsigned>((state.round / 4) % 4), scaled(-30), scaled(-17)});
-        if (!state.variant) {
-            out.sprites.push_back({403u + static_cast<unsigned>(state.round % 4), scaled(-10), scaled(-17)});
-            out.sprites.push_back({411, scaled(10), scaled(-17)});
-        }
+        out.sprites.push_back({403u + static_cast<unsigned>(state.round % 4), scaled(-10), scaled(-17)});
+        out.sprites.push_back({411, scaled(10), scaled(-17)});
         for (int i = 0; i < 4; ++i) {
             if (!SeatPresent(state.seat_mask, i)) continue;
             const unsigned wind = static_cast<unsigned>(SeatWind(state.seat_mask, state.dealer, i));
@@ -247,10 +245,7 @@ namespace tenhou {
                 Sprite(g, item.id, item.x, item.y, item.center_x, item.center_y);
             }
             Transform(g, {1, 0, 0, 1, hud.center[0], hud.center[1]});
-            if (state.variant) {
-                Caption(g, L"第" + std::to_wstring(state.round + 1) + L"盘", -8 * s, -17 * s, 12 * s, hud);
-                Caption(g, L"余" + std::to_wstring(state.wall.total - state.wall.front - state.wall.tail), -20 * s, 6 * s, 12 * s, hud);
-            } else {
+            if (!state.variant) {
             const auto sticks = std::to_wstring(state.sticks), honba = std::to_wstring(state.honba);
             const float sw = MeasureText(std::to_string(state.sticks), 12 * s), hw = MeasureText(
                 std::to_string(state.honba), 12 * s);

@@ -58,9 +58,10 @@ namespace tenhou {
         }
         selection_ = s;
         actions_ = a;
+        selection_.Sync(actions_);
         game_ = game;
         red_ = (game.type & 2) == 0;
-        const bool show = visible && s.Active() && s.group != "riichi" && !s.HandSelection();
+        const bool show = visible && selection_.Active() && selection_.group != "riichi" && !selection_.HandSelection();
         ShowWindow(window_, show ? SW_SHOW : SW_HIDE);
         Arrange();
         InvalidateRect(window_, nullptr, FALSE);

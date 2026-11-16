@@ -32,6 +32,14 @@ int main() {
         auto game = VariantTableState(state, {{"n2", "local"}});
         Check(game.dealer == 1 && game.round == 5 && game.turn == 0 && game.players[0].drawn_tile == 88, "Seat/dealer/draw projection failed");
         Check(game.players[1].known_hand.empty() && game.players[1].hidden_count == 13, "Hidden entities inferred");
+        auto dealt = fields; dealt["deal2"] = "84,0,80,1,76,4,72,8,48,12,44,36,40";
+        const auto dealt_state = ParseVariantState(dealt);
+        const auto dealt_game = VariantTableState(dealt_state, {});
+        Check(dealt_game.players[0].deal_hand == dealt_state.players[2].deal_hand &&
+            OnlineTableState(dealt_game).players[0].deal_hand == dealt_state.players[2].deal_hand,
+            "Original deal order was sorted or lost in the table projection");
+        auto invalid_deal = dealt; invalid_deal["deal1"] = dealt["deal2"];
+        Reject([&] { ParseVariantState(invalid_deal); }, "Hidden opponent deal entities were accepted");
         const auto discard = VariantReplayEvent({1, "discard", 3, 4, -1}, state);
         const auto draw = VariantReplayEvent({2, "draw", 3, -1, -1}, state);
         Check(discard.who == 1 && ActionPauseTicks(discard) == 15 && ActionPauseTicks(draw) == 41, "Variant action waits differ from riichi");
@@ -152,6 +160,14 @@ int main() {
         snapshots.Receive({"VSTATE", full});
         Check(snapshots.snapshot.game.players[0].gender == 'M' && snapshots.snapshot.game.players[1].gender == 'F',
             "VGO/VSTATE erased UN voice identity");
+        for (const auto &kind: {"GOK", "STARTREADY"}) {
+            snapshots.Receive({"READYACK", {{"table", "test"}, {"kind", kind}}});
+            Check(snapshots.snapshot.actions.choices.size() == 2,
+                "Opening acknowledgement consumed the initial variant actions");
+        }
+        ActionSelection stale; stale.Open(snapshots.snapshot.actions, "discard");
+        auto withdrawn = snapshots.snapshot.actions; withdrawn.choices.clear(); stale.Sync(withdrawn);
+        Check(!stale.Active(), "Withdrawn actions retained stale selection indices");
         const auto revision = snapshots.snapshot.actions.revision;
         auto invalid = full; invalid["hand2"] = "0,0";
         Reject([&] { snapshots.Receive({"VSTATE", invalid}); }, "Malformed snapshot accepted");
@@ -159,7 +175,15 @@ int main() {
         full["phase"] = "ended"; full["actions"] = "";
         snapshots.Receive({"VSTATE", full});
         Check(snapshots.snapshot.actions.choices.size() == 1 && snapshots.snapshot.actions.choices[0].kind == "next", "Ended phase lacks next-ready barrier");
-        full["phase"] = "complete"; snapshots.Receive({"VSTATE", full});
+        snapshots.SubmitAction(snapshots.snapshot.actions.revision, 0);
+        snapshots.Receive({"READYACK", {{"table", "test"}, {"kind", "NEXTREADY"}}});
+        Check(snapshots.snapshot.actions.pending.empty() && snapshots.snapshot.actions.choices.empty(),
+            "Next-ready acknowledgement did not release the submission barrier");
+        full["phase"] = "turn"; full["actions"] = "discard:0;discard:1";
+        snapshots.Receive({"VSTATE", full});
+        snapshots.Receive({"READYACK", {{"table", "test"}, {"kind", "NEXTREADY"}}});
+        Check(snapshots.snapshot.actions.choices.size() == 2, "Late next-ready acknowledgement erased a newer offer");
+        full["phase"] = "complete"; full["actions"] = ""; snapshots.Receive({"VSTATE", full});
         Check(snapshots.snapshot.phase == LobbyPhase::MatchComplete && snapshots.snapshot.actions.choices.empty(), "Complete phase offered next-ready");
         SettlementState settlement; SettlementReceipt receipt;
         receipt.generic = true; receipt.tag = "win"; receipt.who = 0; receipt.from = 1; receipt.has_hand = true;

@@ -162,7 +162,7 @@ namespace tenhou {
                     native_token.assign(std::istreambuf_iterator<char>(file), {});
                     if (native_token.size() != 64 || !std::all_of(native_token.begin(), native_token.end(),
                         [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
-                        throw std::runtime_error("Invalid platform session file");
+                        native_token.clear(); // A damaged recovery hint must not block login.
                 }
                 session.native_token = native_token;
                 session.snapshot.recovering = resume;

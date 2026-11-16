@@ -333,9 +333,13 @@ namespace tenhou {
         const auto phase = snapshot.phase;
         if (snapshot.native_service) {
             if (tag == "READYACK") {
-                if (snapshot.variant_active && Attribute(message, "table") == snapshot.exit_table) {
+                // STARTREADY can be acknowledged after the initial VSTATE offers.
+                // Only NEXTREADY consumes an action; opening acknowledgements do not.
+                if (snapshot.variant_active && Attribute(message, "table") == snapshot.exit_table &&
+                    Attribute(message, "kind") == "NEXTREADY" && snapshot.actions.pending == "next") {
                     snapshot.actions.pending.clear();
                     snapshot.actions.choices.clear();
+                    ++snapshot.actions.revision;
                 }
                 return {};
             }

@@ -325,7 +325,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                                bw * (target.right - target.left) / canvas_width_, bh * (target.bottom - target.top) / (canvas_width_ * 3 / 4), TRUE);
                     ShowWindow(controls_.at(id), SW_SHOW);
                 };
-                if (s.variant.phase == VariantPhase::Missing)
+                if (s.variant.phase == VariantPhase::Missing && LocalTableInput() && !Moving())
                     for (int suit = 0; suit < 3; ++suit) {
                         const auto found = std::find_if(s.actions.choices.begin(), s.actions.choices.end(), [suit](const OnlineAction &a) { return a.kind == "dingque" && a.suit == suit; });
                         if (found != s.actions.choices.end()) {
@@ -333,7 +333,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                             EnableWindow(controls_.at(5170 + suit), LocalTableInput() && s.actions.pending.empty());
                         }
                     }
-                if (s.variant.phase == VariantPhase::Exchange && selection_.Active()) {
+                if (s.variant.phase == VariantPhase::Exchange && LocalTableInput() && !Moving() &&
+                    selection_.group == "exchange" && selection_.Confirm(s.actions) != static_cast<std::size_t>(-1)) {
                     place(5173, anchor.x + 65);
                     EnableWindow(controls_.at(5173), LocalTableInput() && selection_.Confirm(s.actions) != static_cast<std::size_t>(-1));
                 }
@@ -1050,7 +1051,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (message.tag == "VGO") {
                 ClearPresentationQueue(); StopSound(); CancelResultTimer();
                 start_barrier_ = false; variant_events_ = {}; variant_hand_ = 0;
-                show_results_ = false; match_intro_pending_ = false;
+                show_results_ = false; match_intro_pending_ = true;
                 return;
             }
             if (message.tag == "VSTATE") {
@@ -1201,7 +1202,16 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 }
                 SetTimer(window_, 2, opening_.interval(), nullptr);
             }
-            if (start_barrier_ && live) client_->ConfirmMatchStart();
+            if (new_hand && live && !snapshot.game.ended && match_intro_pending_) {
+                match_intro_pending_ = false;
+                if (original_display_ && !text_details_ && snapshot.actions.enabled) {
+                    RECT area{}; GetClientRect(window_, &area);
+                    match_intro_->Move(area);
+                    match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type, match_dan_);
+                    log_("ONLINE MATCH INTRO BEGIN");
+                }
+            }
+            if (start_barrier_ && live && !match_intro_->Active()) client_->ConfirmMatchStart();
             return;
         }
         ReplayEvent presentation; presentation.tag = "VARIANT";

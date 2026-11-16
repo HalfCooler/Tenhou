@@ -257,7 +257,10 @@ namespace tenhou {
         packets_.clear();
         sort_tiles_.clear();
         sort_steps_ = 0;
-        for (auto &player: initial_.players) if (!player.deal_hand.empty()) player.hand = player.deal_hand;
+        for (auto &player: initial_.players) if (!player.deal_hand.empty()) {
+            player.hand = player.deal_hand;
+            player.drawn_tile = -1; // The dealer's first draw follows the thirteen-tile deal/sort.
+        }
         wall_tiles_ = wall && state.wall.known ? static_cast<unsigned>(state.wall.total) : 0;
         std::array < unsigned, 4 > counts{};
         for (unsigned step = 0; step < wall_tiles_ / 4; ++step) {

@@ -154,6 +154,21 @@ internal static class Program
         {
             Platform platform = new(settings, store, registry.Rules, registry.Presentations);
             Task host = new TcpHost(settings, platform).RunAsync(stop.Token);
+            // NoName can recover a valid guest, but stale/account tokens are only hints.
+            string accountToken;
+            await using (Client account = new())
+            {
+                await account.Connect(port); await account.Login(name: "guest_fallback_owner", register: true);
+                accountToken = account.Seen.First(m => m.Tag == "SESSION").Get("token");
+            }
+            foreach (string cached in new[] { new string('f', 64), accountToken })
+            {
+                await using Client guest = new(); await guest.Connect(port); await guest.Login(cached);
+                string fresh = guest.Seen.First(m => m.Tag == "SESSION").Get("token");
+                Check(fresh.Length == 64 && fresh != cached, "NoName did not replace an unusable cached token");
+                await guest.Until("PROFILE");
+                Check(guest.Seen.Last(m => m.Tag == "PROFILE").Get("account") == "", "NoName inherited an account identity");
+            }
             if (nativeClient is not null)
             foreach (int queue in new[] { 101, 201, 301 })
             {

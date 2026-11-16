@@ -10,6 +10,8 @@
 2. 收到平台 `HELO` 后发送 `CAPS version="1" token="..."`，账号登录附带 `password`，注册附带 `register="1" nickname="..."`。
 3. 服务端返回 `SESSION token="..." rid="..."`，然后下发目录与大厅。
 
+NoName 的 `token` 只是续接访客会话的提示：令牌有效时恢复原会话；不存在或属于注册账号时自动创建新的访客会话，并用 `SESSION` 返回新令牌，不要求用户手动清理本地文件。注册账号仍使用密码认证。
+
 目录以 `CATALOGBEGIN` 开始、`CATALOGEND` 结束，中间为：
 
 - `RULE id/name/presentation/version`。
@@ -31,6 +33,8 @@
 
 立直使用 `UN/GO/INIT`、摸打/副露/和牌事件，以及既有 `D/N/REACH` 操作。GOK、STARTREADY、NEXTREADY 是幂等准备屏障；READYACK 确认提交，等待其他玩家时不再触发客户端动作超时。
 
+`READYACK table/kind` 的 kind 对应原准备命令。`GOK` 和 `STARTREADY` 的回执不得清除 VSTATE 已授予的动作；`NEXTREADY` 的回执只解除正在等待该回执的次局提交，不得清除更新的动作快照。
+
 四川和国标使用：
 
 - `VGO table/rule/seat/n0..n3/exit`：对局身份与绝对座位。
@@ -39,6 +43,8 @@
 - `VACT table/window/kind/tiles`：选择服务器授予的操作。
 
 `VSTATE` 是完整快照，缺失的 handN 不得沿用旧快照。`handN` 仅向本人或明牌视角提供；`hiddenN` 表示当前暗手张数，`drawnN` 仅提供给本人。`meldsN="kind:tiles;..."` 配套 `meld_infoN="source,called;..."` 与 `meld_addedN="added,..."`，顺序一致，非补杠的 added 为 -1。来源座位为绝对座位；对手暗杠实体继续隐藏为 `closed_kan:?`。
+
+首个开局快照可附带 `dealN`：该家十三张普通牌的原始发牌顺序（含自动补花所得的替代牌），客户端用于先发牌再理牌；实际 `handN` 继续使用规则状态中的顺序。`dealN` 的可见范围与 `handN` 一致，对手暗手不披露；后续快照不携带、不沿用。
 
 `wall_total/wall_front/wall_tail/wall_offset` 表示总牌数、前取数量、尾取数量和开口，满足 total = front + tail + wall；不传未来牌实体。108 张使用两边 14 墩、两边 13 墩，136/144 张每边分别为 17/18 墩；均由公开游标消费。客户端根据实际资源锚点绘制，第 18 墩不使用下层槽位充当上层。
 

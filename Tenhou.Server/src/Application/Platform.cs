@@ -205,7 +205,9 @@ public sealed partial class Platform
         }
         else if (register) throw new ArgumentException("NoName不能注册为账号");
         else if (token.Length > 0 && (!sessions.TryGetValue(token, out Session? guest) || guest.Account.Length > 0))
-            throw new ArgumentException("访客会话无效，请清除本地会话后重试");
+            // A cached guest token is only a recovery hint. A reset server or a
+            // previous account login must not prevent one-click NoName admission.
+            token = "";
         if (token.Length == 0)
         {
             if (sessions.Count >= 10000) throw new ArgumentException("会话容量已满");

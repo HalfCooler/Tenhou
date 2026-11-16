@@ -214,23 +214,24 @@ namespace tenhou {
                 artwork_.Sprite(g, 403 + state_.round % 4, cx - static_cast<int>(10 * u),
                                 cy - static_cast<int>(17 * u));
                 artwork_.Sprite(g, 411, cx + static_cast<int>(10 * u), cy - static_cast<int>(17 * u));
-                artwork_.Sprite(g, 401, cx - static_cast<int>(18 * u), cy + static_cast<int>(6 * u), false, true);
-                artwork_.Sprite(g, 402, cx + static_cast<int>(2 * u), cy + static_cast<int>(6 * u), false, true);
-                Text(g, std::to_wstring(state_.sticks), cx - 12 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
-                     Gdiplus::Color(255, 0, 0, 0));
-                Text(g, std::to_wstring(state_.honba), cx + 8 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
-                     Gdiplus::Color(255, 0, 0, 0));
+                if (!state_.variant) {
+                    artwork_.Sprite(g, 401, cx - static_cast<int>(18 * u), cy + static_cast<int>(6 * u), false, true);
+                    artwork_.Sprite(g, 402, cx + static_cast<int>(2 * u), cy + static_cast<int>(6 * u), false, true);
+                    Text(g, std::to_wstring(state_.sticks), cx - 12 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
+                         Gdiplus::Color(255, 0, 0, 0));
+                    Text(g, std::to_wstring(state_.honba), cx + 8 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
+                         Gdiplus::Color(255, 0, 0, 0));
+                }
             }
             const float u = width_ == 1440 ? 1.4f : 1.0f;
-            artwork_.PaintChrome(g, type_);
+            artwork_.PaintChrome(g, type_, {true, false, false, false}, -1, state_.variant);
             const float left = width_ / 2.0f - 270 * u, top = h / 2.0f - 200 * u;
             Gdiplus::SolidBrush shade(Gdiplus::Color(220, 0, 0, 0));
             g.FillRectangle(&shade, left, top, 540 * u, 400 * u);
             Gdiplus::Pen border(Gdiplus::Color(180, 180, 180), 1);
             g.DrawRectangle(&border, left, top, 540 * u, 400 * u);
-            if (resuming_) artwork_.Sprite(g, 464, static_cast<int>(left + 270 * u), static_cast<int>(top + 71 * u),
-                                           true, false);
-            else Text(g, L"对局", left, top + 71 * u, 540 * u, 48 * u, 40 * u, L"KaiTi");
+            artwork_.Sprite(g, resuming_ ? 464 : 463, static_cast<int>(left + 270 * u),
+                            static_cast<int>(top + 71 * u), true, false);
             // Absolute/relative seat 0 stays at the bottom; dealer only changes wind.
             constexpr int xs[]{175, 315, 175, 35}, ys[]{274, 239, 204, 239};
             for (int i: {2, 3, 1, 0}) {

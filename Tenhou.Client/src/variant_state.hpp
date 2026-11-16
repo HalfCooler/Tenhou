@@ -11,7 +11,7 @@ namespace tenhou {
     };
 
     struct VariantPlayer {
-        std::vector<int> hand, river, flowers, winning;
+        std::vector<int> hand, deal_hand, river, flowers, winning;
         std::vector<ReplayMeld> melds;
         int hidden = 0, drawn = -1, missing = -1, score = 0;
         bool retired = false;

@@ -154,6 +154,11 @@ namespace tenhou {
             p.hand = Numbers(Get(f, "hand" + id), 0, tile_max, 14);
             p.hidden = Number(Get(f, "hidden" + id), 0, 14);
             if (!p.hand.empty() && p.hand.size() != static_cast<std::size_t>(p.hidden)) throw std::runtime_error("Inconsistent variant hand");
+            p.deal_hand = Numbers(Get(f, "deal" + id), 0, tile_max, 13);
+            if (f.count("deal" + id) && (p.deal_hand.size() != 13 ||
+                !std::all_of(p.deal_hand.begin(), p.deal_hand.end(), [&](int tile) {
+                    return std::find(p.hand.begin(), p.hand.end(), tile) != p.hand.end();
+                }))) throw std::runtime_error("Invalid variant deal order");
             p.drawn = Number(Get(f, "drawn" + id, "-1"), -1, tile_max);
             if (p.drawn >= 0 && std::find(p.hand.begin(), p.hand.end(), p.drawn) == p.hand.end()) throw std::runtime_error("Unowned drawn tile");
             p.river = Numbers(Get(f, "river" + id), 0, tile_max, 108);
@@ -251,6 +256,7 @@ namespace tenhou {
             q.name = Get(identity, "n" + std::to_string(seat));
             q.flowers = p.flowers;
             q.score = p.score; q.known_hand = p.hand;
+            q.deal_hand = p.deal_hand;
             q.hidden_count = p.hand.empty() ? p.hidden : 0;
             q.drawn_tile = p.drawn; q.retired = p.retired; q.missing_suit = s.Preparing() ? -1 : p.missing;
             q.winning_tile = p.winning.empty() ? -1 : p.winning.front();

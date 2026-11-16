@@ -45,7 +45,9 @@ public sealed class VariantPresentation : IMatchPresentation
         for (int s = 0; s < 4; ++s)
         {
             data["hidden" + s] = data["hand" + s].Split(',', StringSplitOptions.RemoveEmptyEntries).Length.ToString(CultureInfo.InvariantCulture);
-            if (s != viewer && options.GetValueOrDefault("open_hands") != "1") data.Remove("hand" + s);
+            if (s != viewer && options.GetValueOrDefault("open_hands") != "1") {
+                data.Remove("hand" + s); data.Remove("deal" + s);
+            }
             if (s != viewer) data.Remove("drawn" + s);
             if (s != viewer)
                 data["melds" + s] = string.Join(';', data["melds" + s].Split(';').Select(m => m.StartsWith("closed_kan:", StringComparison.Ordinal) ? "closed_kan:?" : m));

@@ -8,6 +8,7 @@ namespace Tenhou.Server.Rules.Common;
 public sealed class VariantPlayer
 {
     public List<int> Hand { get; } = [];
+    public List<int> DealHand { get; } = [];
     public List<int> River { get; } = [];
     public List<int> Flowers { get; } = [];
     public List<int> WinningTiles { get; } = [];
@@ -85,7 +86,7 @@ public abstract class VariantMatch : IMatch
             int seat = (Dealer + i % 4) % 4; int tile = TakeTile(seat, false);
             if (tile < 0) throw new InvalidOperationException("Wall exhausted while dealing"); Players[seat].Hand.Add(tile);
         }
-        foreach (VariantPlayer player in Players) player.Hand.Sort();
+        foreach (VariantPlayer player in Players) { player.DealHand.AddRange(player.Hand); player.Hand.Sort(); }
         Begin(); Cue("start", Dealer); Publish(); Validate();
     }
     protected virtual void Begin() => Draw(Dealer);
@@ -309,6 +310,7 @@ public abstract class VariantMatch : IMatch
         for (int s = 0; s < 4; ++s)
         {
             VariantPlayer p = Players[s]; state["hand" + s] = string.Join(',', p.Hand); state["river" + s] = string.Join(',', p.River.Where(t => !p.Called.Contains(t)));
+            if (cues.Count > 0 && cues[^1].Kind == "start") state["deal" + s] = string.Join(',', p.DealHand);
             state["melds" + s] = string.Join(';', p.Melds.Select(m => m.Kind + ":" + string.Join(',', m.Tiles)));
             state["meld_info" + s] = string.Join(';', p.Melds.Select(m => $"{m.Source},{m.Called}"));
             state["meld_added" + s] = string.Join(',', p.Melds.Select(m => m.Added));

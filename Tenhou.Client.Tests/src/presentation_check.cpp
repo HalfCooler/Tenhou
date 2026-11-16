@@ -14,6 +14,63 @@ using namespace tenhou;
 namespace tenhou {
     // Exercise the production receive/display boundary with packet bursts and a stalled UI timer.
     struct LobbyPresentationCheck {
+        static void ProtocolOpening(HWND parent, const std::filesystem::path &resources, const std::string &rule) {
+            LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
+            view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
+            LobbySession session; session.interactive_games = true;
+            session.snapshot.native_service = true; session.snapshot.phase = LobbyPhase::Lobby;
+            auto receive = [&](const NetworkMessage &message) {
+                session.Receive(message);
+                const auto &snapshot = session.snapshot;
+                const_cast<LobbySnapshot &>(view.client_->snapshot()) = snapshot;
+                view.OnGameEvent(message, snapshot); view.Update(snapshot);
+            };
+            auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            receive({"VGO", {{"rule", rule}, {"table", "opening-check"}}});
+            const bool sichuan = rule == "sichuan-bloodbattle";
+            std::map<std::string, std::string> fields{
+                {"phase", sichuan ? "exchange" : "turn"}, {"seat", "0"}, {"dealer", "0"}, {"turn", "0"},
+                {"hand_number", "1"}, {"total_hands", "8"}, {"seq", "1"}, {"event_seq", "1"},
+                {"events", "1:start:0:-1:-1"}, {"wall_total", sichuan ? "108" : "144"},
+                {"wall", sichuan ? "56" : "92"}, {"wall_front", "52"}, {"window", "1"},
+                {"scores", "50000,50000,50000,50000"}, {"hand0", "0,4,8,12,16,20,24,28,32,36,40,44,48"},
+                {"hidden0", "13"}, {"hidden1", "13"}, {"hidden2", "13"}, {"hidden3", "13"},
+                {"actions", sichuan ? "exchange:0,4,8;exchange:4,8,12" : "discard:0;discard:4"}};
+            for (int hand = 1; hand <= 2; ++hand) {
+                fields["hand_number"] = std::to_string(hand); fields["seq"] = fields["event_seq"] = std::to_string(hand);
+                fields["events"] = std::to_string(hand) + ":start:0:-1:-1";
+                receive({"PREPARE", {}}); receive({"VSTATE", fields});
+                require(view.opening_.Active() && view.variant_hand_ == hand, "Protocol opening did not install the new hand");
+                require(view.match_intro_->Active() == (hand == 1), "First match introduction was skipped or repeated between hands");
+                require(!IsWindowVisible(view.controls_.at(5173)), "Exchange confirmation appeared before dealing/selection");
+                if (hand == 1) {
+                    const auto steps = view.opening_.steps();
+                    SendMessageW(view.window_, WM_TIMER, 2, 0);
+                    require(view.opening_.steps() == steps && view.match_intro_->Active(),
+                        "Deal started before the match introduction was confirmed");
+                }
+                receive({"READYACK", {{"table", "opening-check"}, {"kind", "STARTREADY"}}});
+                receive({"START", {}});
+                if (hand == 1) {
+                    require(view.match_intro_->Active(), "Server START flashed away the local match introduction");
+                    view.match_intro_->Finish();
+                }
+                require(session.snapshot.actions.choices.size() == 2 && !view.start_barrier_,
+                    "Ready acknowledgement erased the initial/next-hand actions");
+                if (sichuan) require(view.selection_.Active() && view.selection_.indices.size() == 2,
+                    "Ready acknowledgement invalidated the exchange selection");
+                for (int tick = 0; tick < 400 && view.opening_.Active(); ++tick) SendMessageW(view.window_, WM_TIMER, 2, 0);
+                require(!view.opening_.Active() && !IsWindowVisible(view.controls_.at(5173)),
+                    "Exchange confirmation appeared without three selected tiles");
+                if (sichuan) {
+                    for (int tile: {0, 4, 8}) view.selection_.Pick(view.Snapshot().actions, tile);
+                    view.Arrange();
+                    require(IsWindowVisible(view.controls_.at(5173)) && IsWindowEnabled(view.controls_.at(5173)),
+                        "A legal three-tile exchange has no confirmation button");
+                }
+            }
+            view.Disconnect();
+        }
         static void Run(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
@@ -34,6 +91,8 @@ namespace tenhou {
             receive("VGO"); receive("PREPARE"); receive("VSTATE");
             require(view.opening_.Active() && view.start_barrier_ && view.displayed_.game.events == 1,
                 "Variant initial snapshot deadlocked behind PREPARE");
+            require(view.match_intro_->Active(), "Variant first hand skipped the match introduction");
+            view.match_intro_->Finish();
             receive("START"); require(!view.start_barrier_, "Variant START did not release opening");
             view.opening_.Cancel();
             state.phase = VariantPhase::Turn; state.turn = 1; state.wall_front = 53; state.wall = 55;
@@ -74,6 +133,39 @@ namespace tenhou {
             snapshot.recovering = true; receive("VSTATE");
             require(!view.captions_.Active() && !view.opening_flowers_[0], "Recovery repeated the opening flower effect");
             view.Disconnect();
+        }
+    };
+    struct SettlementPresentationCheck {
+        static void Run(HWND parent) {
+            auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            SettlementView result(parent); result.SetAnimationEnabled(false); result.SetSoundEnabled(false);
+            SettlementState state; SettlementReceipt win; win.generic = true; win.who = win.from = 0;
+            win.entries = {{"清一色"}}; auto second = win; second.who = second.from = 1;
+            auto draw = win; draw.who = draw.from = -1; state.receipts = {win, second, draw};
+            int advanced = 0; result.SetConfirmHandler([&] { ++advanced; });
+            result.Set(state, {}, false); result.SetContinuation(true); result.SetRoundFinished(true); result.Show(true);
+            const auto expire = [&] {
+                require(result.confirm_deadline_ != 0 && result.confirm_seconds_ == 5,
+                    "A variant receipt has no fresh five-second OK countdown");
+                result.confirm_deadline_ = GetTickCount64(); result.ConfirmTick();
+            };
+            result.SetConfirmEnabled(false);
+            require(!result.confirm_deadline_, "Disabled confirmation retained a running countdown");
+            result.SetConfirmEnabled(true);
+            for (std::size_t i = 0; i < state.receipts.size(); ++i) {
+                require(result.selected_ == i && advanced == 0, "Countdown skipped a player or submitted next hand early");
+                expire();
+            }
+            require(advanced == 1, "Last receipt did not automatically continue the hand");
+            result.Show(false); require(!result.confirm_deadline_, "Hidden results retained the OK countdown");
+            // The final match hand and every page of a long fan list also advance.
+            state.receipts = {win}; state.receipts[0].entries.resize(kSettlementPatternsPerPage + 1, {"花牌"});
+            result.SetContinuation(false); result.Set(state, {}, false); result.Show(true);
+            expire(); require(result.pattern_page_ == 1 && advanced == 1, "Fan page did not auto-advance");
+            expire(); require(advanced == 2, "Final hand without continuation had no automatic OK");
+            result.Show(false); result.SetRoundFinished(false); result.Show(true);
+            require(!result.confirm_deadline_, "History browsing started a live-hand countdown");
+            result.Show(false);
         }
     };
 }
@@ -166,6 +258,34 @@ namespace {
         status.total_hands = 8; status.round = 7;
         Check(VariantStatusSprites(status) == std::vector<unsigned>({705,578}), "Configured short Guobiao match ignores its final hand");
         TableArtwork art; art.Load(resources, 1440);
+        for (const auto &rule: {"sichuan-bloodbattle", "guobiao"}) {
+            const int rounds = std::string(rule) == "guobiao" ? 16 : 8;
+            ReplayState hud_state; hud_state.variant = true; hud_state.variant_rule = rule;
+            for (int round = 0; round < rounds; ++round) {
+                hud_state.round = round;
+                const auto hud = BuildOriginalHud(hud_state, 1440);
+                Check(hud.sprites[0].id == 407u + round / 4 && hud.sprites[1].id == 403u + round % 4 &&
+                    hud.sprites[2].id == 411, "Variant round title does not reuse riichi wind/number/hand artwork");
+            }
+            ReplayState opening_state; opening_state.variant = opening_state.initialized = true;
+            opening_state.wall.InitVariant(rounds == 8 ? 108 : 144, 52, 0, 0);
+            const std::vector<int> order{48,0,44,4,40,8,36,12,32,16,28,20,24};
+            for (auto &player: opening_state.players) player.hand.assign(13, -1);
+            opening_state.players[0].hand = order; std::sort(opening_state.players[0].hand.begin(), opening_state.players[0].hand.end());
+            opening_state.players[0].deal_hand = order;
+            OpeningPresentation opening; opening.Begin(opening_state, true, &art);
+            opening.Tick(opening.wall_tiles() / 4 + 1);
+            Check(opening.Frame().players[0].hand == std::vector<int>(order.begin(), order.begin() + 4),
+                "Variant first deal packet arrived already sorted");
+            while (opening.Active()) opening.Tick();
+            auto scene = opening.Scene(art); std::vector<std::pair<int,int>> slots;
+            for (const auto &tile: scene) if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand")
+                slots.emplace_back(tile.tile.slot, tile.tile.tile);
+            std::sort(slots.begin(), slots.end());
+            for (std::size_t i = 0; i < slots.size(); ++i)
+                Check(slots[i].second == static_cast<int>(i) * 4, "Variant opening did not sort after the full deal");
+            Check(slots.size() == 13, "Variant sort omitted dealt entities");
+        }
         ReplayState table; table.initialized = table.variant = true;
         table.wall.InitVariant(144, 0, 0, 0);
         for (int seat = 0; seat < 4; ++seat) {
@@ -303,7 +423,10 @@ int main(int argc, char **argv) {
         parent = CreateWindowExW(0, L"STATIC", L"Presentation checks", WS_POPUP,
             -32000, -32000, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Check(parent != nullptr, "Cannot create test parent"); ShowWindow(parent, SW_SHOWNOACTIVATE);
-        Settlement(parent); Guobiao(parent, argv[1]); LobbyPresentationCheck::Run(parent, argv[1]); DestroyWindow(parent); parent = nullptr;
+        Settlement(parent); SettlementPresentationCheck::Run(parent); Guobiao(parent, argv[1]);
+        LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "sichuan-bloodbattle");
+        LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
+        LobbyPresentationCheck::Run(parent, argv[1]); DestroyWindow(parent); parent = nullptr;
         Gdiplus::GdiplusShutdown(gdiplus);
         std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation and recovery\n";
         return 0;

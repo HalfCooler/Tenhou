@@ -49,7 +49,10 @@ namespace tenhou {
     }
 
     void ActionSelection::Sync(const ActionSnapshot &actions) {
-        if (!actions.enabled || actions.revision != revision || !actions.pending.empty()) Clear();
+        if (!actions.enabled || actions.revision != revision || !actions.pending.empty() ||
+            std::any_of(indices.begin(), indices.end(), [&](std::size_t i) {
+                return i >= actions.choices.size() || ActionGroup(actions.choices[i].kind) != group;
+            })) Clear();
         revision = actions.revision;
     }
 

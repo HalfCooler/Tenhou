@@ -144,6 +144,7 @@ namespace tenhou {
             Select();
         }
         round_finished_ = finished;
+        Arrange();
     }
 
     void SettlementView::Select() {
@@ -385,16 +386,18 @@ namespace tenhou {
         const int final_top = (canvas_ * 3 / 4 - static_cast<int>(480 * unit)) / 2;
         MoveWindow(ok_, x, win ? bottom : target.top + static_cast<int>((final_top + 430 * unit) * fit), w, h, TRUE);
         EnableWindow(ok_, confirm_enabled_ && !Animating());
-        const bool next = continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
-            selected_ + 1 == state_.receipts.size();
+        const bool next = (continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
+            selected_ + 1 == state_.receipts.size()) ||
+            (round_finished_ && selected_ < state_.receipts.size() && state_.receipts[selected_].generic);
         const bool enter_final = state_.has_final && selected_ + 1 == state_.receipts.size();
         SetWindowTextW(ok_, enter_final ? L"END" : L"OK");
-        if (!next) {
+        const bool countdown = next && visible_ && confirm_ready_ && confirm_enabled_ && !Animating();
+        if (!countdown) {
             KillTimer(window_, 2);
             confirm_deadline_ = 0;
             confirm_seconds_ = -1;
         }
-        if (next && visible_ && confirm_ready_ && confirm_enabled_ && !Animating() && confirm_seconds_ < 0) {
+        if (countdown && confirm_seconds_ < 0) {
             confirm_seconds_ = 5;
             confirm_deadline_ = GetTickCount64() + 5000;
             SetTimer(window_, 2, 100, nullptr);

@@ -66,6 +66,21 @@ internal static class VariantChecks
                 Dictionary<string, string> options = rule is SichuanRuleSet ? new() : new() { ["hands"] = "1" };
                 IMatch match = rule.Create(options, new Random(seed)), replay = rule.Create(options, new Random(seed + 200));
                 match.Start(); replay.Start(match.Walls[0]); int commands = 0;
+                VariantMatch opening = (VariantMatch)match;
+                Protocol.VariantPresentation openingPresentation = new(rule.Normalize(options));
+                Protocol.WireMessage openingView = Protocol.Wire.Parse(openingPresentation.Project(match.Events[^1], 0, 1));
+                for (int seat = 0; seat < 4; ++seat)
+                {
+                    int[] deal = opening.Players[seat].DealHand.ToArray();
+                    if (deal.Length != 13 || !deal.All(opening.Players[seat].Hand.Contains) ||
+                        match.Events[^1].Data["deal" + seat] != string.Join(',', deal))
+                        throw new Exception("Variant original deal order was lost before publication");
+                    if ((seat == 0 && openingView.Get("deal0") != string.Join(',', deal)) ||
+                        (seat != 0 && openingView.Attributes.ContainsKey("deal" + seat)))
+                        throw new Exception("Variant deal order projection lost own tiles or exposed an opponent");
+                }
+                if (opening.Players.All(p => p.DealHand.SequenceEqual(p.DealHand.Order())))
+                    throw new Exception("Variant deal order was already sorted");
                 HashSet<string> fixturePhases = [];
                 void SaveFixture()
                 {
