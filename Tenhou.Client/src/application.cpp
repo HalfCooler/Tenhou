@@ -156,7 +156,7 @@ namespace tenhou {
         Check(window_ != nullptr, "CreateWindowExA");
         Check(SetPropA(window_, instance_property_.c_str(), reinterpret_cast<HANDLE>(1)) != FALSE,
               "Set instance identity");
-        SetWindowTextW(window_, L"天鳳 / Windows版");
+        SetWindowTextW(window_, L"Tenhou Rebuild / Windows x64");
         client_menu_ = CreateMenu();
         Check(client_menu_ != nullptr, "Create client menu");
         AppendMenuW(client_menu_, MF_STRING, kSettings, L"设置...");
