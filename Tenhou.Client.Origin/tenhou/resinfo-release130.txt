@@ -1,0 +1,1 @@
+BASEURL=http://tenhou.net/1/app/win130_0124/
