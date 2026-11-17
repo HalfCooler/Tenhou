@@ -29,6 +29,16 @@
   },
   "palette": [
     {
+      "key": "option_outline",
+      "rgba": [32, 32, 32, 255],
+      "calibrated": true
+    },
+    {
+      "key": "info_gray",
+      "rgba": [239, 239, 239, 255],
+      "calibrated": true
+    },
+    {
       "key": "none",
       "rgba": [
         0,
@@ -198,7 +208,7 @@
       "spacing_pt": -0.5,
       "bold": true,
       "fill": "dark_gray",
-      "outline": "black",
+      "outline": "option_outline",
       "shadow": false,
       "alignment": "center",
       "decoration": "none",
@@ -325,7 +335,7 @@
       "size_pt": 16,
       "spacing_pt": 0,
       "bold": true,
-      "fill": "white",
+      "fill": "info_gray",
       "outline": "none",
       "shadow": false,
       "alignment": "right",

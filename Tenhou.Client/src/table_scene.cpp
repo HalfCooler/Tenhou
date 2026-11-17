@@ -350,6 +350,9 @@ namespace tenhou {
             // A face-up wall resource contains only the upper tile. Use the
             // full back stack's footprint to order it against adjacent stacks.
             if (tile.family == 'y') tile.tile = -1;
+            // Sideways meld faces have a shorter image, but occupy the same
+            // tabletop depth as an upright tile in that placeholder.
+            if (tile.family == 'n' && (tile.slot / 20 == 1 || tile.slot / 20 == 3)) tile.slot %= 20;
             const auto &image = artwork.Get(tile, red);
             const int x = image.x, y = image.y, height = image.image.height, width = image.image.width;
             const auto &face = artwork.Get(placed.tile, red);

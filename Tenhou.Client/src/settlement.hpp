@@ -50,6 +50,9 @@ namespace tenhou {
         std::array<double, 4> final_scores{}, final_points{};
     };
 
+    // Keep immediate transfers (e.g. Sichuan kongs), hiding only receipt payments.
+    std::array<int, 4> ScoresBeforeSettlement(std::array<int, 4> scores, const SettlementState &settlement);
+
     void AppendSettlement(SettlementState &state, const std::string &tag,
                           const std::map<std::string, std::string> &attributes, unsigned seat_mask = 15);
 

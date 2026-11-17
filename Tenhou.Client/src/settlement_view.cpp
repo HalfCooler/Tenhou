@@ -366,10 +366,11 @@ namespace tenhou {
         ShowWindow(choices_, multiple || details ? SW_SHOW : SW_HIDE);
         const auto target = Target();
         const bool win = selected_ < state_.receipts.size();
+        const bool draw = win && state_.receipts[selected_].who < 0;
         const double unit = canvas_ == 1440 ? 1.4 : 1.0, fit = double(target.right - target.left) / canvas_;
         const int center = target.left + (target.right - target.left) / 2;
         const int x = center + static_cast<int>((win ? -23 : -28) * unit * fit), y =
-                target.top + static_cast<int>((canvas_ * 3 / 8.0 + 271 * unit) * fit);
+                target.top + static_cast<int>((canvas_ * 3 / 8.0 + (draw ? 100 : 271) * unit) * fit);
         // Same native rectangle as SettlementScene::confirm, including centering.
         const int w = std::max(38, static_cast<int>(56 * unit * fit)), h = std::max(
             18, static_cast<int>(21 * unit * fit));

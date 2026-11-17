@@ -64,6 +64,8 @@ namespace tenhou {
 
         auto after = Project(online);
         auto before = previous_;
+        if (event.kind == ReplayEventKind::Init || after.round != before.round || after.settlement.receipts.empty())
+            settlement_presented_ = false;
         previous_ = after; // Retain only the public projection, even if artwork fails.
         if (event.kind == ReplayEventKind::Metadata && event.tag != "VARIANT") return; // Identity refresh keeps a running move.
         CancelAnimation();
@@ -161,6 +163,12 @@ namespace tenhou {
             background_ = std::move(bg);
         }
         auto state = opening && opening->Active() ? opening->Frame() : Project(online);
+        if (!settlement_presented_) {
+            std::array<int, 4> scores{};
+            for (int seat = 0; seat < 4; ++seat) scores[seat] = state.players[seat].score;
+            scores = ScoresBeforeSettlement(scores, online.settlement);
+            for (int seat = 0; seat < 4; ++seat) state.players[seat].score = scores[seat];
+        }
         artwork_.SetRedTiles(online.red_tiles);
         state.relative_scores = relative_scores_;
         const bool red = (online.type & 2) == 0;

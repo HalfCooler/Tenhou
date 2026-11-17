@@ -367,16 +367,25 @@ namespace tenhou {
                     if (entry.first == "rule" || entry.first == "title" || entry.first == "table" ||
                         entry.first == "n0" || entry.first == "n1" || entry.first == "n2" || entry.first == "n3")
                         fields.emplace(entry);
-                snapshot.variant = ParseVariantState(fields);
+                auto variant = ParseVariantState(fields);
+                const bool same_preparation = !snapshot.recovering && snapshot.variant.Preparing() &&
+                    variant.phase == snapshot.variant.phase && variant.hand_number == snapshot.variant.hand_number &&
+                    variant.local == snapshot.variant.local;
+                snapshot.variant = std::move(variant);
                 snapshot.variant_state = std::move(fields);
                 const auto window = Integer(Attribute(message, "window"));
                 if (window != snapshot.native_window || Attribute(message, "actions").empty() || snapshot.recovering)
                     snapshot.actions.pending.clear();
+                auto choices = ParseVariantActions(Attribute(message, "actions"), snapshot.exit_table,
+                                                   window, snapshot.variant.wall_total);
+                const bool unchanged_offer = same_preparation && window == snapshot.native_window &&
+                    std::equal(choices.begin(), choices.end(), snapshot.actions.choices.begin(), snapshot.actions.choices.end(),
+                        [](const OnlineAction &a, const OnlineAction &b) {
+                            return a.kind == b.kind && a.tiles == b.tiles && a.suit == b.suit && a.messages == b.messages;
+                        });
                 snapshot.native_window = window;
-                snapshot.actions.choices.clear();
-                ++snapshot.actions.revision;
-                snapshot.actions.choices = ParseVariantActions(Attribute(message, "actions"), snapshot.exit_table,
-                                                                snapshot.native_window, snapshot.variant.wall_total);
+                if (!unchanged_offer) ++snapshot.actions.revision;
+                snapshot.actions.choices = std::move(choices);
                 if (snapshot.game.variant && snapshot.game.round != snapshot.variant.hand_number - 1 &&
                     !snapshot.game.settlement.receipts.empty()) {
                     snapshot.last_settlement = snapshot.game.settlement;

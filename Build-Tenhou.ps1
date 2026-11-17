@@ -44,6 +44,9 @@ param(
     [string]$DotNet = '',
     [switch]$Help
 )
+
+chcp 65001 | Out-Null
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 

@@ -70,6 +70,32 @@ namespace tenhou {
                         "A legal three-tile exchange has no confirmation button");
                 }
             }
+            if (sichuan) {
+                const auto revision = view.Snapshot().actions.revision;
+                view.pressed_tile_ = 8; view.pressed_revision_ = revision;
+                fields["seq"] = fields["event_seq"] = "3";
+                fields["events"] = "2:start:0:-1:-1;3:exchange:1:-1:-1";
+                receive({"VSTATE", fields});
+                require(view.Snapshot().actions.revision == revision && view.selection_.selected == std::vector<int>({0,4,8}) &&
+                    view.pressed_tile_ == 8 && view.selection_.Confirm(view.Snapshot().actions) == 0,
+                    "Peer exchange interrupted the local selection or mouse press");
+                fields["phase"] = "missing"; fields["actions"] = "dingque:0;dingque:1;dingque:2"; fields["window"] = "2";
+                fields["seq"] = fields["event_seq"] = "4";
+                fields["events"] += ";4:exchange:2:-1:-1";
+                receive({"VSTATE", fields});
+                require(view.Snapshot().actions.revision != revision && !view.selection_.Active(),
+                    "New preparation phase retained an old exchange request");
+                SendMessageW(view.window_, WM_APP + 26, 5170, 0);
+                const auto missing_revision = view.button_revision_;
+                fields["seq"] = fields["event_seq"] = "5";
+                fields["events"] += ";5:dingque:3:-1:-1";
+                receive({"VSTATE", fields});
+                require(view.Snapshot().actions.revision == missing_revision && view.button_revision_ == missing_revision &&
+                    IsWindowEnabled(view.controls_.at(5170)), "Peer dingque interrupted a pressed suit button");
+                fields["window"] = "3";
+                receive({"VSTATE", fields});
+                require(view.Snapshot().actions.revision != missing_revision, "Changed server window retained a stale request");
+            }
             view.Disconnect();
         }
         static void Run(HWND parent, const std::filesystem::path &resources) {
@@ -403,6 +429,21 @@ namespace {
         const auto drawn = BuildSettlementScene(SettlementState{{}, 15, {sichuan}}, 0, {});
         Check(std::count_if(drawn.images.begin(), drawn.images.end(), [](const SettlementImageItem &im) { return im.id == 461; }) == 1 &&
             drawn.score_panels.size() == 4, "Variant draw does not share the riichi title and four payment panels");
+        auto riichi_draw = sichuan; riichi_draw.generic = false; riichi_draw.reason.clear();
+        const auto compact = BuildSettlementScene(SettlementState{{}, 15, {riichi_draw}}, 0, {});
+        Check(EqualRect(&drawn.panel, &compact.panel) && drawn.panel.bottom - drawn.panel.top == 300 &&
+            std::none_of(drawn.text.begin(), drawn.text.end(), [](const SettlementTextItem &t) { return t.role == "variant_reason"; }),
+            "Draw window is oversized or still contains the long variant reason");
+        for (const auto &panel: drawn.score_panels)
+            Check(panel.left >= drawn.panel.left && panel.right <= drawn.panel.right && panel.top >= drawn.panel.top &&
+                panel.bottom <= drawn.confirm.top, "Compact draw payment card escaped the panel");
+        for (const auto &rule: {"", "sichuan-bloodbattle", "guobiao"}) {
+            SettlementState payments; SettlementReceipt a, b;
+            a.rule = b.rule = rule; a.who = 0; a.delta = {3000,-1000,-1000,-1000};
+            b.who = 1; b.delta = {-2000,2000,0,0}; payments.receipts = {a,b};
+            Check(ScoresBeforeSettlement({52000,50000,49000,49000}, payments) == std::array<int,4>{51000,49000,50000,50000},
+                "Win payments leaked onto the table or immediate kong points were hidden");
+        }
         Check(SettlementText(state, 0, {}).find("花牌×2") != std::string::npos, "Text details lost pattern repetitions");
         SettlementView result(parent); result.SetAnimationEnabled(false); result.Set(state, {}, false); result.Show(true);
         const auto window = GetDlgItem(parent, 5400);

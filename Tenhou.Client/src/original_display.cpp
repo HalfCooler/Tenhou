@@ -430,8 +430,23 @@ namespace tenhou {
     void DisplayArtwork::AppendHud(FinalScene &scene, const ReplayState &state) {
         const auto hud = BuildOriginalHud(state, width_);
         const float hd = width_ == 1024 ? 1.4f : 1.f;
-        for (const auto &item : hud.text) {
+        std::array<Gdiplus::PointF, 2> round_centers{};
+        for (std::size_t i = 0; i < 3; i += 2) {
+            const auto &item = hud.text[i];
+            const auto run = TextRun(item.key, static_cast<float>(item.x), static_cast<float>(item.y));
+            const auto &ink = run.layout.metrics.ink;
+            round_centers[i / 2] = {run.anchor.X + ink.Width / 2, run.anchor.Y + ink.Height / 2};
+        }
+        for (std::size_t i = 0; i < hud.text.size(); ++i) {
+            const auto &item = hud.text[i];
             auto run = TextRun(item.key, static_cast<float>(item.x), static_cast<float>(item.y), item.center_x, item.center_y);
+            if (i == 1) {
+                const auto &ink = run.layout.metrics.ink;
+                run.anchor = {(round_centers[0].X + round_centers[1].X) / 2,
+                              (round_centers[0].Y + round_centers[1].Y) / 2};
+                run.transform[4] = -ink.X - ink.Width / 2;
+                run.transform[5] = -ink.Y - ink.Height / 2;
+            }
             const Affine base{1, 0, 0, 1, hud.center[0], hud.center[1]};
             const auto &t = item.seat < 0 ? base : hud.seats[item.seat];
             const float x = static_cast<float>(run.anchor.X + run.transform[4]);

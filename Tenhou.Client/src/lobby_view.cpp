@@ -925,6 +925,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             (!snapshot.game.complete || snapshot.phase == LobbyPhase::MatchComplete));
         settlement_view_->SetRoundFinished(!history && snapshot.game.variant && snapshot.game.ended);
         settlement_view_->Show(show_results_ && result_available);
+        if (show_results_ && result_available && !history && snapshot.game.ended) table_.PresentSettlement();
         if (result_pending_ && show_results_ &&result_available) settlement_view_->Present();
         result_pending_ = false;
         UpdateActions();
@@ -1061,7 +1062,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 return;
             }
             if (message.tag == "VSTATE") {
-                CancelHandDrag();
+                if (!snapshot.variant.Preparing() || snapshot.actions.revision != Snapshot().actions.revision)
+                    CancelHandDrag();
                 if (snapshot.recovering || !IsWindowVisible(window_)) {
                     ClearPresentationQueue();
                     PresentVariantState(snapshot);
@@ -1245,7 +1247,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             snapshot.game.settlement.receipts.back().who < 0;
         if (draw_end) presentation.kind = ReplayEventKind::DrawEnd;
         try {
-            table_.Accept(snapshot.game, presentation, animation_enabled_ && !text_details_ && !draw_end);
+            table_.Accept(snapshot.game, presentation, animation_enabled_ && !text_details_ && !draw_end && !state.Preparing());
             if (table_.Animating()) motion_timer_.Start(window_, 6);
         } catch (const std::exception &error) {
             table_.CancelAnimation(); motion_timer_.Stop();

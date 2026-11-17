@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(Tenhou.Client VERSION 0.27.0 LANGUAGES C CXX RC)
+if (MSVC)
+    add_compile_options(/utf-8)
+    add_compile_definitions(_UTF8_SOURCE)
+endif()
+
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build configuration" FORCE)
 endif ()
@@ -54,13 +59,14 @@ add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome
 target_compile_options(tenhou_rebuild PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus winmm comdlg32 shell32 comctl32 ole32)
 # Runs even when only an asset changed, without relinking the executable.
-add_custom_target(tenhou_assets ${asset_copy_commands}
+add_custom_target(tenhou_assets
+        COMMAND "${CMAKE_COMMAND}" -P "${asset_generated_directory}/stage_assets.cmake"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${TENHOU_OUTPUT_DIRECTORY}/licenses"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/vendor/zlib/LICENSE"
             "${TENHOU_OUTPUT_DIRECTORY}/licenses/zlib-LICENSE.txt"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/sources/mahjong_graphic/LICENSE"
             "${TENHOU_OUTPUT_DIRECTORY}/licenses/mahjong_graphic-LICENSE.txt"
-        DEPENDS ${asset_runtime_files} VERBATIM)
+        VERBATIM)
 add_dependencies(tenhou_rebuild tenhou_assets)
 install(TARGETS tenhou_rebuild RUNTIME DESTINATION client)
 install(FILES vendor/zlib/LICENSE DESTINATION client/licenses RENAME zlib-LICENSE.txt)

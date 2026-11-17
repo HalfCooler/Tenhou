@@ -9,8 +9,9 @@ set(asset_entries "")
 set(asset_rc "// Generated from assets/catalog.cmake. Do not edit.\n")
 set(asset_keys "")
 set(asset_resource_ids "")
-set(asset_runtime_files "")
-set(asset_copy_commands "")
+# Keep Unicode asset paths out of native makefiles and shell command lines.
+# NMake can misdecode them even when the console code page is UTF-8.
+set(asset_copy_script "# Generated from assets/catalog.cmake. Do not edit.\n")
 
 macro(tenhou_asset key path storage resource_id requirement legacy)
     if ("${key}" IN_LIST asset_keys)
@@ -43,10 +44,9 @@ macro(tenhou_asset key path storage resource_id requirement legacy)
             string(APPEND asset_rc "${resource_id} RCDATA \"${asset_source}\"\n")
         else ()
             get_filename_component(asset_subdirectory "${path}" DIRECTORY)
-            list(APPEND asset_runtime_files "${asset_source}")
-            list(APPEND asset_copy_commands
-                COMMAND "${CMAKE_COMMAND}" -E make_directory "${TENHOU_OUTPUT_DIRECTORY}/resources/${asset_subdirectory}"
-                COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${asset_source}" "${TENHOU_OUTPUT_DIRECTORY}/resources/${path}")
+            string(APPEND asset_copy_script
+                "file(MAKE_DIRECTORY [==[${TENHOU_OUTPUT_DIRECTORY}/resources/${asset_subdirectory}]==])\n"
+                "file(COPY_FILE [==[${asset_source}]==] [==[${TENHOU_OUTPUT_DIRECTORY}/resources/${path}]==] ONLY_IF_DIFFERENT)\n")
             install(FILES "${asset_source}" DESTINATION "client/resources/${asset_subdirectory}")
         endif ()
     endif ()
@@ -63,6 +63,8 @@ macro(tenhou_pattern key rule name value)
     string(APPEND variant_pattern_entries "        {\"${rule}\", \"${name}\", AssetId::${key}, ${value}},\n")
 endmacro()
 include("${CMAKE_CURRENT_SOURCE_DIR}/assets/catalog.cmake")
+file(WRITE "${asset_generated_directory}/stage_assets.cmake.in" "${asset_copy_script}")
+configure_file("${asset_generated_directory}/stage_assets.cmake.in" "${asset_generated_directory}/stage_assets.cmake" COPYONLY)
 file(WRITE "${asset_generated_directory}/variant_patterns.hpp.in"
     "// Generated from assets/catalog.cmake.\n#pragma once\n#include \"asset_catalog.hpp\"\nnamespace tenhou {\nstruct VariantPatternInfo { const char *rule; const char *name; AssetId asset; int value; };\ninline constexpr VariantPatternInfo kVariantPatterns[]{\n${variant_pattern_entries}};\nstruct SpriteAsset { unsigned id; AssetId asset; };\ninline constexpr SpriteAsset kSpriteAssets[]{\n${sprite_entries}};\n}\n")
 configure_file("${asset_generated_directory}/variant_patterns.hpp.in" "${asset_generated_directory}/variant_patterns.hpp" COPYONLY)

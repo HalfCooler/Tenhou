@@ -49,6 +49,7 @@ namespace tenhou {
         }
 
         void SetDrawEndSlots(unsigned slots) { draw_end_slots_ = slots; }
+        void PresentSettlement() { settlement_presented_ = true; }
 
         void Configure(const std::filesystem::path &directory, int width);
 
@@ -103,6 +104,7 @@ namespace tenhou {
         TablePresentation presentation_;
         ReplayState previous_;
         unsigned draw_end_slots_ = 14;
+        bool settlement_presented_ = false;
         double paused_at_ = 0;
     };
 } // namespace tenhou

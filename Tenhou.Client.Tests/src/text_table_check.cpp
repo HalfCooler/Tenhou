@@ -101,6 +101,10 @@ namespace tenhou {
                 Surface surface(1197, 897);
                 const auto first = scene.Snapshot(native, native * 3 / 4, surface.width, surface.height);
                 Require(first.size() == 17, "P3 HUD/Info/option/furiten text command coverage");
+                const auto &wind = first[0].bounds, &number = first[1].bounds, &unit = first[2].bounds;
+                Require(std::abs(2 * (number.left + number.right) - wind.left - wind.right - unit.left - unit.right) <= 4 &&
+                    std::abs(2 * (number.top + number.bottom) - wind.top - wind.bottom - unit.top - unit.bottom) <= 4,
+                    "Round numeral is not centered between the wind and hand unit");
                 scene.Paint(surface.dc, native, native * 3 / 4, surface.width, surface.height, {0, 0, surface.width, surface.height});
                 const auto stats = artwork.Text().CacheStats();
                 for (int frame = 0; frame < 10; ++frame) {
@@ -111,6 +115,42 @@ namespace tenhou {
                 Require(stats.layout_builds == after.layout_builds && stats.raster_builds == after.raster_builds,
                     "P3 static HUD rebuilds text layouts/rasters");
             }
+        }
+        void SettlementScores(const std::filesystem::path &resources, const std::filesystem::path &output) {
+            for (int rule = 0; rule < 3; ++rule) {
+                auto paid = State(rule); paid.round = 0; paid.furiten = false;
+                SettlementReceipt a, b; a.who = 0; a.delta = {3000,-1000,-1000,-1000};
+                b.who = 1; b.delta = {-2000,2000,0,0}; paid.settlement.receipts = {a,b};
+                auto before = paid; before.settlement = {};
+                for (int seat = 0; seat < 4; ++seat) before.players[seat].score -= a.delta[seat] + b.delta[seat];
+                Surface actual(1197,897), expected(1197,897);
+                OnlineTable table, reference; table.Configure(resources,1440); reference.Configure(resources,1440);
+                table.Accept(paid, {}, false);
+                table.Paint(actual.dc, {0,0,1197,897}, paid);
+                reference.Paint(expected.dc, {0,0,1197,897}, before);
+                Equal(actual, expected, "Win scores before settlement rule " + std::to_string(rule));
+                table.PresentSettlement(); actual.Clear(); expected.Clear();
+                auto after = paid; after.settlement = {};
+                table.Paint(actual.dc, {0,0,1197,897}, paid);
+                reference.Paint(expected.dc, {0,0,1197,897}, after);
+                Equal(actual, expected, "Win scores after settlement rule " + std::to_string(rule));
+                ReplayEvent init; init.kind = ReplayEventKind::Init;
+                table.Accept(before, init, false); table.Accept(paid, {}, false);
+                actual.Clear(); expected.Clear();
+                table.Paint(actual.dc, {0,0,1197,897}, paid);
+                reference.Paint(expected.dc, {0,0,1197,897}, before);
+                Equal(actual, expected, "Next-hand score presentation reset");
+            }
+            auto state = State(1); state.round = 0; state.type = 2;
+            auto &top = state.players[2]; top.hidden_count = 4;
+            for (int kind: {14,10,4}) {
+                ReplayMeld meld; meld.kind = MeldKind::OpenKan; meld.from = kind == 10 ? 0 : 1;
+                meld.tiles = {kind*4,kind*4+1,kind*4+2,kind*4+3}; meld.called_tile = kind*4;
+                top.melds.push_back(meld);
+            }
+            OnlineTable table; table.Configure(resources,1440); Surface image(1440,1080);
+            table.Paint(image.dc, {0,0,1440,1080}, state);
+            image.Save(output / "meld-overlap.png");
         }
     }
 
@@ -155,7 +195,23 @@ namespace tenhou {
         static void Run(HWND parent, const std::filesystem::path &resources) {
             const auto output = resources.parent_path() / "text-p3";
             std::filesystem::create_directories(output);
-            TextLayers(resources); Online(resources, output);
+            TextLayers(resources); Online(resources, output); SettlementScores(resources, output);
+            {
+                Surface surface(1197,897); auto game = State(1);
+                OnlineTable table; table.Configure(resources,1440);
+                SettlementState state; SettlementReceipt draw; draw.generic = true; draw.who = draw.from = -1;
+                draw.rule = "sichuan-bloodbattle"; draw.reason = "查花猪、查大叫、退税";
+                draw.base = {50000,50000,50000,50000}; draw.delta = {3000,-1000,-1000,-1000}; state.receipts = {draw};
+                SettlementView view(parent); view.Configure(resources,1440); view.SetAnimationEnabled(false);
+                view.Move({0,0,1197,897}); view.Set(state, {"Player 1","Player 2","Player 3","Player 4"}, false);
+                view.SetBackgroundPainter([&](HDC dc, RECT bounds) { table.Paint(dc,bounds,game); });
+                view.Show(true);
+                const auto window = GetDlgItem(parent,5400); RECT button{};
+                GetWindowRect(GetDlgItem(window,5404), &button);
+                MapWindowPoints(nullptr,window,reinterpret_cast<POINT *>(&button),2);
+                Require(button.top > 520 && button.bottom < 623, "Compact draw confirmation escaped its panel");
+                view.Capture(surface.dc); surface.Save(output / "compact-draw.png");
+            }
             const auto isolated = std::filesystem::temp_directory_path() / ("tenhou-text-p3-" + std::to_string(GetCurrentProcessId()));
             struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{isolated};
             std::filesystem::copy(resources, isolated, std::filesystem::copy_options::recursive);

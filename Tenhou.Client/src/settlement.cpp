@@ -10,6 +10,12 @@
 #include <stdexcept>
 
 namespace tenhou {
+    std::array<int, 4> ScoresBeforeSettlement(std::array<int, 4> scores, const SettlementState &settlement) {
+        for (const auto &receipt: settlement.receipts)
+            for (int seat = 0; seat < 4; ++seat) scores[seat] -= receipt.delta[seat];
+        return scores;
+    }
+
     SettlementEntry ParseSettlementEntry(const std::string &text) {
         SettlementEntry entry{text};
         const auto at = text.rfind("×");

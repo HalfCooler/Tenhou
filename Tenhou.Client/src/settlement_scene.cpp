@@ -62,7 +62,6 @@ namespace tenhou {
             int ura_y = 322;
             if (r.generic) {
                 if (r.who >= 0) text("variant_name", names[r.who], 24, 12, 580, 16);
-                if (r.who < 0) text("variant_reason", r.reason, 28, 150, 610, 14);
             }
             if (r.who < 0) {
                 // FUN_004af580 chooses these exact reason image IDs from type.
@@ -390,6 +389,21 @@ namespace tenhou {
                     image(402, left + px(334), top + px(496));
                     text("sticks", std::to_string(sticks), 340, 493, 24, 12);
                 }
+            }
+            if (r.who < 0) {
+                // Draws only need the title, payment cards and confirmation.
+                // Share this compact layout across all rules.
+                const int compact_top = (scene.height - px(300)) / 2;
+                const int shift = compact_top + px(95) - (top + px(445));
+                scene.panel = {left + px(60), compact_top, left + px(600), compact_top + px(300)};
+                scene.confirm = {left + px(307), compact_top + px(250), left + px(363), compact_top + px(271)};
+                for (auto &panel: scene.score_panels) OffsetRect(&panel, 0, shift);
+                for (auto &item: scene.text) {
+                    if (item.role == "reason") OffsetRect(&item.rect, 0, compact_top - top);
+                    else OffsetRect(&item.rect, 0, shift);
+                }
+                for (auto &item: scene.images)
+                    item.y += item.id >= 461 && item.id <= 472 ? compact_top - top : shift;
             }
             return scene;
         }
