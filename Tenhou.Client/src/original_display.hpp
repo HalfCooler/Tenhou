@@ -50,6 +50,7 @@ namespace tenhou {
 
     RECT OriginalAutoButtonRect(int width, int index);
     unsigned VariantActionButtonSprite(unsigned control, bool hot);
+    unsigned ActionButtonSprite(unsigned control, bool hot);
     std::vector<unsigned> VariantStatusSprites(const ReplayState &state);
 
     // 004aa250: n/0/254 maps to the standing-back rectangle, then odd

@@ -4,6 +4,7 @@
 #include "matchmaking_view.hpp"
 #include "preference_actions.hpp"
 #include "replay_effects.hpp"
+#include "text_catalog.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -103,12 +104,17 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             controls_[id] = control;
             SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         };
-        const wchar_t *buttons[]{L"打牌", L"吃", L"碰", L"杠", L"立直", L"荣和", L"自摸", L"流局", L"跳过", L"次局"};
+        const wchar_t *buttons[]{L"打牌", TextLabel(TextKey::button_normal_chi).data(),
+            TextLabel(TextKey::button_normal_pon).data(), TextLabel(TextKey::button_normal_kan).data(),
+            TextLabel(TextKey::button_normal_riichi).data(), TextLabel(TextKey::button_normal_ron).data(),
+            TextLabel(TextKey::button_normal_tsumo).data(), TextLabel(TextKey::button_normal_abort_draw).data(),
+            TextLabel(TextKey::button_normal_pass).data(), L"次局"};
         for (int i = 1; i <= 8; ++i) add(5120 + i, L"BUTTON", buttons[i],
                                          WS_TABSTOP | (i >= 1 && i <= 8 ? BS_OWNERDRAW : BS_PUSHBUTTON));
-        add(5151, L"BUTTON", L"北", WS_TABSTOP | BS_OWNERDRAW);
-        for (int i = 0; i < 3; ++i) add(5170 + i, L"BUTTON", i == 0 ? L"万" : i == 1 ? L"筒" : L"索", WS_TABSTOP | BS_OWNERDRAW);
-        add(5173, L"BUTTON", L"确认换牌", WS_TABSTOP | BS_OWNERDRAW);
+        add(5151, L"BUTTON", TextLabel(TextKey::button_normal_nuki).data(), WS_TABSTOP | BS_OWNERDRAW);
+        constexpr TextKey suits[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
+        for (int i = 0; i < 3; ++i) add(5170 + i, L"BUTTON", TextLabel(suits[i]).data(), WS_TABSTOP | BS_OWNERDRAW);
+        add(5173, L"BUTTON", TextLabel(TextKey::button_normal_exchange).data(), WS_TABSTOP | BS_OWNERDRAW);
         add(5174, L"BUTTON", L"结算", WS_TABSTOP | BS_PUSHBUTTON);
         add(5129, L"BUTTON", L"下一盘", WS_TABSTOP | BS_PUSHBUTTON);
         for (int id: {5170, 5171, 5172, 5173, 5129}) SetWindowSubclass(controls_[id], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
@@ -1222,7 +1228,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (event.kind != ReplayEventKind::Metadata) presentation = event;
             if (captions_.Accept(event)) SetTimer(window_, 8, 15, nullptr);
             if (cue.kind == "exchange" || cue.kind == "dingque") {
-                captions_.AcceptResource(594, event.who, L"选择完毕"); SetTimer(window_, 8, 15, nullptr);
+                captions_.AcceptResource(594, event.who, std::wstring(TextLabel(TextKey::caption_complete))); SetTimer(window_, 8, 15, nullptr);
                 if (event_sound_allowed_) PlaySoundId(106);
             } else if (cue.kind == "flower") {
                 if (!flower_caption[event.who]) {
@@ -1488,7 +1494,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         bool rendered = false;
         if (original_display_) {
             try {
-                constexpr unsigned ids[]{443, 441, 442, 446, 444, 445, 447, 449};
                 POINT point{};
                 GetCursorPos(&point);
                 ScreenToClient(item.hwndItem, &point);
@@ -1496,7 +1501,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 const bool variant_choice = item.CtlID >= 5170 && item.CtlID <= 5173;
                 const unsigned variant_id = VariantActionButtonSprite(item.CtlID, hot);
                 const unsigned id = variant_choice ? (action_artwork_.FindSprite(variant_id) ? variant_id : 0) :
-                    (item.CtlID == 5151 ? 448 : ids[item.CtlID - 5121]) + (hot ? 9 : 0);
+                    ActionButtonSprite(item.CtlID, hot);
                 Gdiplus::Graphics graphics(item.hDC);
                 const auto paint = [&](unsigned resource) {
                     const auto &im = action_artwork_.Get(resource);

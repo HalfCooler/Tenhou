@@ -15,7 +15,7 @@ namespace tenhou {
         int value = 0, count = 1;
     };
     SettlementEntry ParseSettlementEntry(const std::string &text);
-    std::string SettlementEntryLabel(const SettlementEntry &entry);
+    std::string SettlementEntryLabel(const SettlementEntry &entry, const std::string &rule = {});
     struct SettlementMeld {
         std::string kind;
         std::vector<int> tiles;

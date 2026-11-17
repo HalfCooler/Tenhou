@@ -22,6 +22,8 @@ Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Cli
 
 自行制作四川、国标素材时，参见[图片制作规范与清单](ASSET-AUTHORING.md)：包含原始按钮、动作浮字、役种图片的透明PNG、精确尺寸、字体信息边界和逐项制作CSV。参考图可通过 `scripts/Export-DisplayReferences.ps1` 重新导出；新增PNG仍需登记资源并接入绘制代码。
 
+表内文字图片迁移见 [TrueType 文字渲染实施计划](TRUETYPE-TEXT-PLAN.md)。P0 已建立 [文字目录与显式导入工具](../../Tenhou.Client/assets/text/README.md)，覆盖 296 Text、7 Image、481 完整样式修正与 Info 继承；当前文案及修正规格见 [核对记录](TRUETYPE-TEXT-P0-REVIEW.md)，代码文字回退已同步目录，普通/悬停按钮按黑边/橙边选择。字体绘制与现有 PNG 入口的迁移将在 P1–P5 实施。
+
 `--resources <目录>` 和配置中的 `[REBUILD] ResourceDirectory` 继续指定外置资源根目录。优先查找清单中的分类路径，找不到时兼容旧版平铺文件名，例如 `_res2.dat`。`TENHOU_ASSET_DIRECTORY` 也接受这两种目录布局；内嵌模板始终取自仓库。自定义背景及音频仍按原配置解析。仓库只提供 HD 牌面，清单中的 SD 牌面条目为可选兼容项。
 
 默认大厅 BGM 每次重新开始播放时，从 `_bgm0.wav`、`_bgm1.wav` 等概率独立选择，允许连续重复；大厅状态刷新不重选。`BGM_LOBBY0/1` 的自定义文件和 `none` 继续按对应大厅类型生效，设置页的默认曲目试听保持固定。对局 BGM 沿用 `BGM_GAME*` 配置，未配置时没有默认对局背景音乐。

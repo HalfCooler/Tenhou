@@ -1,0 +1,125 @@
+// Generated from assets/text/catalog.json. Do not edit.
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <optional>
+#include <string_view>
+
+namespace tenhou {
+enum class TextCategory { Center, Self, Option, Yaku, Button, Title, Nagashi, Caption, Info, Normal };
+enum class TextAlignment { left, center, right };
+enum class TextDecoration { none, info_gradient };
+enum class TextComposition { plain, chi_selection };
+enum class TextColor {
+@color_enum@    Count
+};
+enum class TextStyleKey {
+@style_enum@    Count
+};
+enum class TextLabelKey {
+@label_enum@    Count
+};
+enum class TextKey {
+@text_enum@    Count
+};
+// Separate type and inventory: images cannot be passed to a text lookup.
+enum class TextImageKey {
+@image_enum@    Count
+};
+struct TextRgba { std::uint8_t r, g, b, a; };
+struct TextPaletteEntry { TextColor key; TextRgba rgba; bool calibrated; };
+inline constexpr TextPaletteEntry kTextPalette[]{
+@color_entries@};
+struct TextStyle {
+    TextStyleKey key;
+    std::wstring_view font;
+    double size_pt, spacing_pt;
+    bool bold;
+    TextColor fill, outline;
+    bool shadow;
+    TextAlignment alignment;
+    TextDecoration decoration;
+};
+inline constexpr TextStyle kTextStyles[]{
+@style_entries@};
+struct TextLabelDefinition { TextLabelKey key; std::wstring_view label; std::string_view utf8; };
+inline constexpr TextLabelDefinition kTextLabels[]{
+@label_entries@};
+struct TextDefinition {
+    TextKey key;
+    unsigned origin_id;
+    TextLabelKey label_key;
+    std::wstring_view label;
+    TextCategory category;
+    TextStyleKey style;
+    TextComposition composition;
+};
+inline constexpr TextDefinition kTextDefinitions[]{
+@text_entries@};
+struct ImageDefinition { TextImageKey key; unsigned origin_id; };
+inline constexpr ImageDefinition kTextImageDefinitions[]{
+@image_entries@};
+struct RulePatternDefinition {
+    std::string_view rule, server_name;
+    TextKey text;
+    int default_value;
+};
+inline constexpr RulePatternDefinition kTextRulePatterns[]{
+@rule_entries@};
+struct TextGradientStop { double position; std::uint8_t gray; };
+inline constexpr TextGradientStop kInfoBodyGradient[]{
+@gradient_body@};
+inline constexpr TextGradientStop kInfoPenultimateGradient[]{
+@gradient_penultimate_row@};
+inline constexpr TextGradientStop kInfoLastGradient[]{
+@gradient_last_row@};
+inline constexpr double kInfoWidthBaseAdvances = @info_width@;
+inline constexpr unsigned kInfoReferenceOriginId = @info_reference@;
+inline constexpr std::optional<double> kInfoBackgroundAlpha = std::nullopt;
+inline constexpr std::optional<double> kInfoPaddingPt = std::nullopt;
+struct ChiSelectionDefinition {
+    std::wstring_view main, secondary;
+    std::optional<double> secondary_size_pt, offset_pt;
+};
+inline constexpr ChiSelectionDefinition kChiSelection{L@chi_main_literal@, L@chi_secondary_literal@, @chi_secondary_size@, std::nullopt};
+inline constexpr std::string_view kTextSourceSha256 = "@source_sha@";
+inline constexpr std::string_view kTextSourceWorksheet = @worksheet_literal@;
+
+constexpr const TextDefinition *FindText(TextKey key) {
+    const auto index = static_cast<std::size_t>(key);
+    return index < std::size(kTextDefinitions) ? &kTextDefinitions[index] : nullptr;
+}
+constexpr std::wstring_view TextLabel(TextKey key) {
+    const auto *text = FindText(key);
+    return text ? text->label : std::wstring_view{};
+}
+constexpr std::string_view TextUtf8(TextKey key) {
+    const auto *text = FindText(key);
+    return text ? kTextLabels[static_cast<std::size_t>(text->label_key)].utf8 : std::string_view{};
+}
+constexpr const TextStyle *FindTextStyle(TextStyleKey key) {
+    const auto index = static_cast<std::size_t>(key);
+    return index < std::size(kTextStyles) ? &kTextStyles[index] : nullptr;
+}
+// Transitional adapter. Business code should use TextKey as it migrates.
+constexpr const TextDefinition *FindTextByOrigin(unsigned id) {
+    for (const auto &text : kTextDefinitions) if (text.origin_id == id) return &text;
+    return nullptr;
+}
+constexpr const ImageDefinition *FindTextImageByOrigin(unsigned id) {
+    for (const auto &image : kTextImageDefinitions) if (image.origin_id == id) return &image;
+    return nullptr;
+}
+constexpr const RulePatternDefinition *FindTextRulePattern(std::string_view rule, std::string_view name) {
+    if (rule.substr(0, 7) == "sichuan") rule = "sichuan";
+    for (const auto &pattern : kTextRulePatterns)
+        if (pattern.rule == rule && pattern.server_name == name) return &pattern;
+    return nullptr;
+}
+static_assert(std::size(kTextDefinitions) == static_cast<std::size_t>(TextKey::Count));
+static_assert(std::size(kTextStyles) == static_cast<std::size_t>(TextStyleKey::Count));
+static_assert(std::size(kTextLabels) == static_cast<std::size_t>(TextLabelKey::Count));
+static_assert(std::size(kTextPalette) == static_cast<std::size_t>(TextColor::Count));
+static_assert(std::size(kTextImageDefinitions) == static_cast<std::size_t>(TextImageKey::Count));
+}

@@ -1,5 +1,6 @@
 #include "settlement_scene.hpp"
 #include "network_protocol.hpp"
+#include "text_catalog.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <iomanip>
@@ -21,6 +22,9 @@ namespace tenhou {
                                              std::size_t shown_yaku, bool ura, bool totals,
                                              const SettlementLayout &layout) {
             SettlementScene scene;
+            const auto han_unit = std::string(TextUtf8(TextKey::unit_han));
+            const auto fu_unit = std::string(TextUtf8(TextKey::unit_fu));
+            const auto points_unit = std::string(TextUtf8(TextKey::unit_points));
             scene.width = layout.width;
             scene.height = layout.width * 3 / 4;
             const double scale = layout.width == 1440 ? 1.4 : 1.0;
@@ -70,7 +74,7 @@ namespace tenhou {
                 else if (r.reason == "kaze4") title = 471;
                 else if (r.reason == "nm") title = 472;
                 image(title, scene.width / 2 - size(title).cx / 2, top + px(30));
-                text("reason", r.reason.empty() ? "流局" : r.reason, 80, 30, 500, 24, 0xffffffff, 1, false);
+                text("reason", std::string(TextUtf8(FindTextByOrigin(title)->key)), 80, 30, 500, 24, 0xffffffff, 1, false);
             }
             if (r.who >= 0) {
                 // Original tehai capture: t/i -> n/(17-i), translated -6; machi -4.
@@ -232,9 +236,9 @@ namespace tenhou {
                     if (id >= 0 && id < 55) image(481 + id, left + px(x), top + px(y), glyph_scale);
                     else text("unknown_yaku", SettlementYakuName(id), x, y, columns == 1 ? 210 : 225, 18);
                     const int han = r.yakuman.empty() ? yaku[i].han : 0;
-                    text("han", r.yakuman.empty() ? std::to_string(han) + " 飜" : "役満", columns == 1 ? 414 : x + 238, y,
+                    text("han", r.yakuman.empty() ? std::to_string(han) + " " + han_unit : std::string(TextUtf8(TextKey::limit_yakuman)), columns == 1 ? 414 : x + 238, y,
                          60, 20, 0xffffffff, 0, false);
-                    if (r.yakuman.empty() && han > 99) text("large_han", std::to_string(han) + " 飜",
+                    if (r.yakuman.empty() && han > 99) text("large_han", std::to_string(han) + " " + han_unit,
                                                             columns == 1 ? 414 : x + 238, y, 60, 14);
                     else if (r.yakuman.empty()) {
                         const auto digits = std::to_string(han);
@@ -254,7 +258,7 @@ namespace tenhou {
                     const auto win_size = size(win);
                     const double win_scale = std::min(1.0, double(px(45)) / std::max(1L, win_size.cy));
                     image(win, left + (px(660) - static_cast<int>(win_size.cx * win_scale)) / 2, top + px(123), win_scale);
-                    text("variant_win", r.who == r.from ? "自摸" : "荣和", 260, 130, 140, 24, 0xffffffff, 1, false);
+                    text("variant_win", std::string(TextUtf8(r.who == r.from ? TextKey::caption_tsumo : TextKey::caption_ron)), 260, 130, 140, 24, 0xffffffff, 1, false);
                     // Share the original digit, 飜 and 点 sprites; fit a whole run without stretching it.
                     const auto glyph_run = [&](const std::vector<unsigned> &glyphs, int x, int y, int max_width, bool centered) {
                         int width = 0, height = 1;
@@ -295,16 +299,16 @@ namespace tenhou {
                             scene.pattern_images.push_back({pattern->asset, {left + px(x), top + px(y),
                                 left + px(x) + static_cast<int>(image_size.cx * fit), top + px(y) + static_cast<int>(image_size.cy * fit)}});
                             if (repetitions > 1) text("variant_multiplier", "×" + std::to_string(repetitions), x + width - 35, y, 40, 14);
-                        } else text("variant_pattern", normalized.name + (repetitions > 1 ? "×" + std::to_string(repetitions) : ""), x, y, width, 16);
+                        } else text("variant_pattern", SettlementEntryLabel({normalized.name, entry.value, repetitions}, r.rule), x, y, width, 16);
                         const int value = entry.value > 0 ? entry.value : (pattern ? pattern->value : 0);
                         if (value > 0) {
                             auto glyphs = number(value * repetitions); glyphs.push_back(562);
                             glyph_run(glyphs, x + width + 10, y, 70, false);
-                            text("variant_value", std::to_string(value * repetitions) + " 飜", x + width + 10, y, 70, 14, 0xffffffff, 0, false);
+                            text("variant_value", std::to_string(value * repetitions) + " " + han_unit, x + width + 10, y, 70, 14, 0xffffffff, 0, false);
                         }
                     }
                     if (pages > 1) text("variant_page", std::to_string(page + 1) + " / " + std::to_string(pages), 280, 365, 100, 14, 0xffffffff, 1);
-                    if (!r.flowers.empty()) text("variant_flowers", "花牌 ×" + std::to_string(r.flowers.size()), 35, 132, 200, 14);
+                    if (!r.flowers.empty()) text("variant_flowers", std::string(TextUtf8(TextKey::yaku_guobiao_flower)) + " ×" + std::to_string(r.flowers.size()), 35, 132, 200, 14);
                     if (totals) {
                         auto glyphs = number(r.fan); glyphs.push_back(562);
                         const int payout = r.points > 0 ? r.points : std::max(0, r.delta[r.who]);
@@ -314,7 +318,7 @@ namespace tenhou {
                             glyphs.push_back(564);
                         }
                         glyph_run(glyphs, 330, 395, 590, true);
-                        text("variant_fan", std::to_string(r.fan) + " 飜" + (payout > 0 ? " " + std::to_string(payout) + " 点" : ""),
+                        text("variant_fan", std::to_string(r.fan) + " " + han_unit + (payout > 0 ? " " + std::to_string(payout) + " " + points_unit : ""),
                             35, 395, 590, 22, 0xffffffff, 1, false);
                     }
                 }
@@ -324,13 +328,12 @@ namespace tenhou {
                     int han = 0;
                     for (const auto &y: r.yaku) han += y.han;
                     const unsigned limit = r.has_ten && r.ten[2] >= 1 && r.ten[2] <= 5 ? 434 + r.ten[2] : 0;
-                    const char *labels[]{"", "満貫", "跳満", "倍満", "三倍満", "役満"};
                     std::string value = r.has_ten
                                             ? (r.yakuman.empty()
-                                                   ? std::to_string(r.ten[0]) + " 符  " + std::to_string(han) + " 飜  "
+                                                   ? std::to_string(r.ten[0]) + " " + fu_unit + "  " + std::to_string(han) + " " + han_unit + "  "
                                                    : "") +
-                                              (limit ? std::string(labels[r.ten[2]]) + "  " : "") + std::to_string(
-                                                  r.ten[1]) + " 点"
+                                              (limit ? std::string(TextUtf8(FindTextByOrigin(limit)->key)) + "  " : "") + std::to_string(
+                                                  r.ten[1]) + " " + points_unit
                                             : "Fu / points not supplied";
                     if (r.has_ten && r.ten[2] > 5) value += " (limit " + std::to_string(r.ten[2]) + ")";
                     const int total_y = std::min(414, ura_y + 80);

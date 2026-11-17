@@ -1,5 +1,6 @@
 #pragma once
 #include "original_display.hpp"
+#include "text_catalog.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -34,6 +35,10 @@ namespace tenhou {
         bool AcceptResource(unsigned id, int who, const std::wstring &text = L"") {
             if ((!id && text.empty()) || who < 0 || who > 3) return false;
             ActionCaptionFrame frame; frame.resource = id; frame.who = who; frame.text = text;
+            if (id >= 594) {
+                const auto *definition = FindTextByOrigin(id);
+                if (definition && definition->category == TextCategory::Caption) frame.text = definition->label;
+            }
             items_.push_back(std::move(frame)); return true;
         }
         bool Accept(const ReplayEvent &event) {

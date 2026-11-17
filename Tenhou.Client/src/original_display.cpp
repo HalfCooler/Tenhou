@@ -1,6 +1,7 @@
 #include "original_display.hpp"
 #include "resource_manager.hpp"
 #include "table_scene.hpp"
+#include "text_catalog.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -12,6 +13,19 @@ namespace tenhou {
         if (control == 5173) return hot ? 595 : 599;
         if (control >= 5170 && control <= 5172) return (hot ? 596 : 600) + control - 5170;
         return 0;
+    }
+
+    unsigned ActionButtonSprite(unsigned control, bool hot) {
+        if (const auto variant = VariantActionButtonSprite(control, hot)) return variant;
+        constexpr TextKey normal[]{TextKey::button_normal_chi, TextKey::button_normal_pon,
+            TextKey::button_normal_kan, TextKey::button_normal_riichi, TextKey::button_normal_ron,
+            TextKey::button_normal_tsumo, TextKey::button_normal_abort_draw, TextKey::button_normal_pass};
+        constexpr TextKey hover[]{TextKey::button_hover_chi, TextKey::button_hover_pon,
+            TextKey::button_hover_kan, TextKey::button_hover_riichi, TextKey::button_hover_ron,
+            TextKey::button_hover_tsumo, TextKey::button_hover_abort_draw, TextKey::button_hover_pass};
+        if (control == 5151) return FindText(hot ? TextKey::button_hover_nuki : TextKey::button_normal_nuki)->origin_id;
+        if (control < 5121 || control > 5128) return 0;
+        return FindText(hot ? hover[control - 5121] : normal[control - 5121])->origin_id;
     }
 
     std::vector<unsigned> VariantStatusSprites(const ReplayState &state) {
@@ -341,7 +355,7 @@ namespace tenhou {
                 } else {
                     const int height = Get(570).height;
                     const auto hud = BuildOriginalHud(state, width_);
-                    Caption(g, rule == 704 ? L"赤羽" : L"国标", static_cast<float>(width_ - Get(570).width),
+                    Caption(g, std::wstring(TextLabel(rule == 704 ? TextKey::info_sichuan : TextKey::info_guobiao)), static_cast<float>(width_ - Get(570).width),
                         static_cast<float>(y), 18 * hud.scale, hud, static_cast<float>(Get(570).width));
                     y += height;
                 }

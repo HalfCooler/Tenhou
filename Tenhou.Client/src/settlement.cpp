@@ -1,5 +1,6 @@
 #include "settlement.hpp"
 #include "replay.hpp"
+#include "text_catalog.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -23,8 +24,12 @@ namespace tenhou {
         return entry;
     }
 
-    std::string SettlementEntryLabel(const SettlementEntry &entry) {
-        return entry.name + (entry.count > 1 ? "×" + std::to_string(entry.count) : "");
+    std::string SettlementEntryLabel(const SettlementEntry &entry, const std::string &rule) {
+        const auto normalized = ParseSettlementEntry(entry.name);
+        const auto *pattern = FindTextRulePattern(rule, normalized.name);
+        const auto label = pattern ? std::string(TextUtf8(pattern->text)) : normalized.name;
+        const int count = entry.count > 1 ? entry.count : normalized.count;
+        return label + (count > 1 ? "×" + std::to_string(count) : "");
     }
     namespace {
         using Attributes = std::map<std::string, std::string>;
@@ -245,19 +250,15 @@ namespace tenhou {
     }
 
     std::string SettlementYakuName(int id) {
-        // Original _res.dat image IDs 0x1e1+id, independently inspected and hashed.
-        static const char *names[]{
-            "門前清自摸和", "立直", "一発", "槍槓", "嶺上開花", "海底摸月", "河底撈魚", "平和", "断么九", "一盃口",
-            "自風 東", "自風 南", "自風 西", "自風 北", "場風 東", "場風 南", "場風 西", "場風 北", "役牌 白", "役牌 發", "役牌 中",
-            "両立直", "七対子", "混全帯么九", "一気通貫", "三色同順", "三色同刻", "三槓子", "対々和", "三暗刻", "小三元", "混老頭", "二盃口",
-            "純全帯么九", "混一色", "清一色", "人和", "天和", "地和", "大三元", "四暗刻", "四暗刻単騎", "字一色", "緑一色", "清老頭", "九蓮宝燈",
-            "純正九蓮宝燈", "国士無双", "国士無双１３面", "大四喜", "小四喜", "四槓子", "ドラ", "裏ドラ", "赤ドラ"
+        // Transitional OriginId adapter; fixed display labels have one authority.
+        if (id >= 0 && id < 55) return std::string(TextUtf8(FindTextByOrigin(481 + id)->key));
+        static constexpr std::string_view ancient[]{
+            "燕返", "杠振", "十二落抬", "五门齐", "三连刻", "一色三同顺", "一筒摸月", "九筒摸鱼",
+            TextUtf8(TextKey::yaku_riichi_renhou), TextUtf8(TextKey::yaku_extra_daisharin),
+            "大竹林", "大数邻", "石上三年", "大七星", "拔北宝牌"
         };
-        static const char *ancient[]{
-            "燕返", "杠振", "十二落抬", "五门齐", "三连刻", "一色三同顺", "一筒摸月", "九筒摸鱼", "人和", "大车轮", "大竹林", "大数邻", "石上三年", "大七星", "拔北宝牌"
-        };
-        if (id >= 100 && id <= 114) return ancient[id - 100];
-        return id >= 0 && id < 55 ? names[id] : "Unknown yaku #" + std::to_string(id);
+        if (id >= 100 && id <= 114) return std::string(ancient[id - 100]);
+        return "Unknown yaku #" + std::to_string(id);
     }
 
     std::vector<SettlementYaku> SettlementDisplayYaku(const SettlementReceipt &r) {
@@ -324,7 +325,7 @@ namespace tenhou {
     }
 
     std::string SettlementLabel(const SettlementReceipt &r) {
-        if (r.generic) return r.who < 0 ? "盘末结算" : std::string(r.who == r.from ? "自摸" : "荣和") + " | 座位 " + std::to_string(r.who);
+        if (r.generic) return r.who < 0 ? "盘末结算" : std::string(TextUtf8(r.who == r.from ? TextKey::caption_tsumo : TextKey::caption_ron)) + " | 座位 " + std::to_string(r.who);
         return r.tag == "AGARI"
                    ? (r.who == r.from ? "Tsumo" : "Ron") + std::string(" | Seat ") + std::to_string(r.who)
                    : "Draw" + (r.reason.empty() ? std::string() : " | " + r.reason);
@@ -346,12 +347,15 @@ namespace tenhou {
             out << SettlementLabel(r) << "\r\n";
             if (r.who >= 0) {
                 out << Seat(r.who, names);
-                if (totals) out << "  " << r.fan << " 飜" << (r.points > 0 ? "  " + std::to_string(r.points) + " 点" : "");
+                if (totals) {
+                    out << "  " << r.fan << " " << TextUtf8(TextKey::unit_han);
+                    if (r.points > 0) out << "  " << r.points << " " << TextUtf8(TextKey::unit_points);
+                }
                 out << "\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
                 for (const auto &m: r.public_melds) out << m.kind << " [" << Tiles(m.tiles, false) << "]\r\n";
                 for (const auto &entry: r.entries) {
-                    out << SettlementEntryLabel(entry);
-                    if (entry.value > 0) out << " " << entry.value * entry.count << " 飜";
+                    out << SettlementEntryLabel(entry, r.rule);
+                    if (entry.value > 0) out << " " << entry.value * entry.count << " " << TextUtf8(TextKey::unit_han);
                     out << "\r\n";
                 }
             } else out << r.reason << "\r\n";
