@@ -104,7 +104,8 @@ namespace tenhou {
     }
 
     int Application::Run(HINSTANCE instance, int show) {
-        Check(SetProcessDPIAware() != FALSE, "SetProcessDPIAware");
+        Check(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE,
+              "SetProcessDpiAwarenessContext");
         // Separate identity from the original client. Atomic mutex also covers startup races.
         SetLastError(ERROR_SUCCESS);
         auto canonical = std::filesystem::weakly_canonical(options_.config_directory).wstring();
@@ -165,7 +166,8 @@ namespace tenhou {
         Check(SetMenu(window_, client_menu_) != FALSE, "SetMenu");
         // Keep configured values as client dimensions after adding the new tools menu.
         RECT client_bounds{0, 0, width_, height_};
-        Check(AdjustWindowRect(&client_bounds, kWindowStyle, TRUE) != FALSE, "AdjustWindowRect menu");
+        Check(AdjustWindowRectExForDpi(&client_bounds, kWindowStyle, TRUE, 0, GetDpiForWindow(window_)) != FALSE,
+              "AdjustWindowRectExForDpi menu");
         SetWindowPos(window_, nullptr, 0, 0, client_bounds.right - client_bounds.left,
                      client_bounds.bottom - client_bounds.top,
                      SWP_NOMOVE | SWP_NOZORDER);
@@ -361,13 +363,27 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
             case WM_APP + 1: throw std::runtime_error(reinterpret_cast<const char *>(lparam));
             case WM_SIZE: Layout();
                 return 0;
+            case WM_DPICHANGED: {
+                // The fixed 1440x1080 client is already in physical pixels. Only
+                // the non-client chrome follows monitor DPI; do not scale twice.
+                const auto *suggested = reinterpret_cast<const RECT *>(lparam);
+                RECT frame{0, 0, kDefaultClientWidth, kDefaultClientHeight};
+                Check(AdjustWindowRectExForDpi(&frame, kWindowStyle, GetMenu(window_) != nullptr, 0,
+                                               HIWORD(wparam)) != FALSE, "AdjustWindowRectExForDpi change");
+                Check(SetWindowPos(window_, nullptr, suggested->left, suggested->top,
+                                   frame.right - frame.left, frame.bottom - frame.top,
+                                   SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "SetWindowPos DPI change");
+                Layout();
+                RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+                return 0;
+            }
             case WM_GETMINMAXINFO: {
                 auto *bounds = reinterpret_cast<MINMAXINFO *>(lparam);
                 RECT minimum{0, 0, kDefaultClientWidth, kDefaultClientHeight};
-                Check(AdjustWindowRectEx(&minimum, static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_STYLE)),
+                Check(AdjustWindowRectExForDpi(&minimum, static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_STYLE)),
                                          GetMenu(window_) != nullptr,
-                                         static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_EXSTYLE))) != FALSE,
-                      "AdjustWindowRectEx minimum");
+                                         static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_EXSTYLE)),
+                                         GetDpiForWindow(window_)) != FALSE, "AdjustWindowRectExForDpi minimum");
                 bounds->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
                 bounds->ptMaxTrackSize = bounds->ptMinTrackSize;
                 bounds->ptMaxSize = bounds->ptMinTrackSize;

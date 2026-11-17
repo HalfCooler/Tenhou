@@ -51,6 +51,7 @@ namespace tenhou {
         bool HandleKey(UINT key) { return settlement_view_ && settlement_view_->HandleKey(key); }
 
     private:
+        friend struct TextTableCheck;
         void PresentMatchStart();
 
         static LRESULT CALLBACK ViewProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);

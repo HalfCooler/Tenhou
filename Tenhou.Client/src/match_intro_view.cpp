@@ -198,57 +198,74 @@ namespace tenhou {
         try {
             const int h = width_ * 3 / 4;
             if (background_.bgra.empty()) background_ = BuildBackground(ResourceManager(directory_).Path(AssetId::Background), width_, h);
-            Gdiplus::Graphics g(dc);
-            const float s = r.right / static_cast<float>(width_);
-            g.ScaleTransform(s, s);
-            g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
-            Gdiplus::Bitmap bg(width_, h, width_ * 4, PixelFormat32bppARGB, background_.bgra.data());
-            g.DrawImage(&bg, 0, 0);
-            if (state_.initialized) {
-                const auto hud = BuildOriginalHud(state_, width_);
-                artwork_.Sprite(g, 589, hud.panel[0], hud.panel[1]);
-                const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
-                const float u = hud.scale;
-                artwork_.Sprite(g, 407 + state_.round / 4 % 4, cx - static_cast<int>(30 * u),
-                                cy - static_cast<int>(17 * u));
-                artwork_.Sprite(g, 403 + state_.round % 4, cx - static_cast<int>(10 * u),
-                                cy - static_cast<int>(17 * u));
-                artwork_.Sprite(g, 411, cx + static_cast<int>(10 * u), cy - static_cast<int>(17 * u));
-                if (!state_.variant) {
-                    artwork_.Sprite(g, 401, cx - static_cast<int>(18 * u), cy + static_cast<int>(6 * u), false, true);
-                    artwork_.Sprite(g, 402, cx + static_cast<int>(2 * u), cy + static_cast<int>(6 * u), false, true);
-                    Text(g, std::to_wstring(state_.sticks), cx - 12 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
-                         Gdiplus::Color(255, 0, 0, 0));
-                    Text(g, std::to_wstring(state_.honba), cx + 8 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
-                         Gdiplus::Color(255, 0, 0, 0));
+            FinalScene scene(artwork_.Text(), width_ == 1024, GetDpiForWindow(window_));
+            const float hd = width_ == 1024 ? 1.4f : 1.f;
+            const auto image = [&](std::string key, Gdiplus::RectF bounds, std::function<void(Gdiplus::Graphics &)> draw) {
+                bounds.X *= hd; bounds.Y *= hd; bounds.Width *= hd; bounds.Height *= hd;
+                scene.Image(std::move(key), bounds, [hd, draw](Gdiplus::Graphics &g) { g.ScaleTransform(hd, hd); draw(g); });
+            };
+            {
+                Gdiplus::Graphics g(dc);
+                const float s = r.right / static_cast<float>(width_);
+                g.ScaleTransform(s, s);
+                g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+                Gdiplus::Bitmap bg(width_, h, width_ * 4, PixelFormat32bppARGB, background_.bgra.data());
+                g.DrawImage(&bg, 0, 0);
+                if (state_.initialized) {
+                    const auto hud = BuildOriginalHud(state_, width_);
+                    artwork_.Sprite(g, 589, hud.panel[0], hud.panel[1]);
+                    const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
+                    const float u = hud.scale;
+                    const TextKey winds[]{TextKey::center_east, TextKey::center_south, TextKey::center_west, TextKey::center_north};
+                    const TextKey hands[]{TextKey::center_hand_one, TextKey::center_hand_two, TextKey::center_hand_three, TextKey::center_hand_four};
+                    scene.Text(artwork_.TextRun(winds[state_.round / 4 % 4], cx - 30 * u, cy - 17 * u));
+                    scene.Text(artwork_.TextRun(hands[state_.round % 4], cx - 10 * u, cy - 17 * u));
+                    scene.Text(artwork_.TextRun(TextKey::center_hand_unit, cx + 10 * u, cy - 17 * u));
+                    if (!state_.variant) {
+                        artwork_.Sprite(g, 401, cx - static_cast<int>(18 * u), cy + static_cast<int>(6 * u), false, true);
+                        artwork_.Sprite(g, 402, cx + static_cast<int>(2 * u), cy + static_cast<int>(6 * u), false, true);
+                        Text(g, std::to_wstring(state_.sticks), cx - 12 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
+                             Gdiplus::Color(255, 0, 0, 0));
+                        Text(g, std::to_wstring(state_.honba), cx + 8 * u, cy - 3 * u, 10 * u, 18 * u, 11 * u, L"System",
+                             Gdiplus::Color(255, 0, 0, 0));
+                    }
                 }
+                artwork_.PaintChromeBackground(g);
             }
+            artwork_.AppendChrome(scene, type_, {true, false, false, false}, state_.variant);
+            artwork_.AppendStatus(scene, state_);
             const float u = width_ == 1440 ? 1.4f : 1.0f;
-            artwork_.PaintChrome(g, type_, {true, false, false, false}, -1, state_.variant);
             const float left = width_ / 2.0f - 270 * u, top = h / 2.0f - 200 * u;
-            Gdiplus::SolidBrush shade(Gdiplus::Color(220, 0, 0, 0));
-            g.FillRectangle(&shade, left, top, 540 * u, 400 * u);
-            Gdiplus::Pen border(Gdiplus::Color(180, 180, 180), 1);
-            g.DrawRectangle(&border, left, top, 540 * u, 400 * u);
-            artwork_.Sprite(g, resuming_ ? 464 : 463, static_cast<int>(left + 270 * u),
-                            static_cast<int>(top + 71 * u), true, false);
+            image("intro-panel", {left, top, 540 * u, 400 * u}, [=](Gdiplus::Graphics &g) {
+                Gdiplus::SolidBrush shade(Gdiplus::Color(220, 0, 0, 0));
+                g.FillRectangle(&shade, left, top, 540 * u, 400 * u);
+                Gdiplus::Pen border(Gdiplus::Color(180, 180, 180), 1);
+                g.DrawRectangle(&border, left, top, 540 * u, 400 * u);
+            });
+            scene.Text(artwork_.TextRun(resuming_ ? TextKey::title_resume : TextKey::title_match,
+                left + 270 * u, top + 71 * u, true));
             // Absolute/relative seat 0 stays at the bottom; dealer only changes wind.
             constexpr int xs[]{175, 315, 175, 35}, ys[]{274, 239, 204, 239};
             for (int i: {2, 3, 1, 0}) {
                 if (!SeatPresent(state_.seat_mask, i)) continue;
                 const float x = left + xs[i] * u, y = top + ys[i] * u;
-                Gdiplus::LinearGradientBrush card(Gdiplus::PointF(x, y), Gdiplus::PointF(x, y + 42 * u),
-                                                  Gdiplus::Color(255, 34, 34, 34), Gdiplus::Color(136, 17, 17, 17));
-                g.FillRectangle(&card, x, y, 190 * u, 42 * u);
-                if (state_.initialized)
-                    artwork_.Sprite(g, 412 + SeatWind(state_.seat_mask, state_.dealer, i), static_cast<int>(x + 30 * u),
-                                    static_cast<int>(y + 21 * u), true, true);
-                Text(g, Wide(state_.players[i].name), x + 62 * u, y + 2 * u, 105 * u, 19 * u, (40.0f / 3) * u,
-                     L"System");
-                Text(g, ranks_[i], x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
+                image("intro-seat-" + std::to_string(i), {x, y, 190 * u, 42 * u}, [=](Gdiplus::Graphics &g) {
+                    Gdiplus::LinearGradientBrush card(Gdiplus::PointF(x, y), Gdiplus::PointF(x, y + 42 * u),
+                        Gdiplus::Color(255, 34, 34, 34), Gdiplus::Color(136, 17, 17, 17));
+                    g.FillRectangle(&card, x, y, 190 * u, 42 * u);
+                    Text(g, Wide(state_.players[i].name), x + 62 * u, y + 2 * u, 105 * u, 19 * u, (40.0f / 3) * u, L"System");
+                    Text(g, ranks_[i], x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
+                });
+                constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
+                    TextKey::seat_neutral_west, TextKey::seat_neutral_north};
+                if (state_.initialized) scene.Text(artwork_.TextRun(winds[SeatWind(state_.seat_mask, state_.dealer, i)],
+                    x + 30 * u, y + 21 * u, true, true));
             }
-            if (!resuming_) Text(g, std::to_wstring(seconds_), left + 304 * u, top + 350 * u, 9 * u, 10 * u, 8 * u,
-                                 L"System");
+            if (!resuming_) image("intro-countdown-" + std::to_string(seconds_),
+                {left + 304 * u, top + 350 * u, 9 * u, 10 * u}, [=](Gdiplus::Graphics &g) {
+                    Text(g, std::to_wstring(seconds_), left + 304 * u, top + 350 * u, 9 * u, 10 * u, 8 * u, L"System");
+                });
+            scene.Paint(dc, width_, h, r.right, r.bottom, r);
         } catch (const std::exception &e) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(255, 190, 160));

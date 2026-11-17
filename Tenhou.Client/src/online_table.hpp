@@ -10,6 +10,7 @@
 #include <windows.h>
 
 namespace tenhou {
+    class ActionCaptions;
     struct TableInteraction {
         int hovered = -1;
         std::vector<int> playable;
@@ -66,7 +67,7 @@ namespace tenhou {
 
         void Paint(HDC dc, RECT bounds, const OnlineState &state, bool interactive = false,
                    const OpeningPresentation *opening = nullptr, const TableInteraction *interaction = nullptr,
-                   double now = AnimationNow());
+                   double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0);
 
         int HitTile(RECT bounds, const OnlineState &state, int x, int y);
 

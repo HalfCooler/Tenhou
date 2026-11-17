@@ -115,7 +115,8 @@ namespace tenhou {
                     const std::string &backdrop_key, const std::string &metadata, Backdrop background,
                     Foreground foreground, RECT overlay = {},
                     const std::vector<unsigned> &appearances = {}, const std::vector<RECT> &metadata_regions = {},
-                    const std::vector<RECT> &atomic_layers = {}, const std::vector<Damage> &damage = {}) {
+                    const std::vector<RECT> &atomic_layers = {}, const std::vector<Damage> &damage = {},
+                    const FinalScene *final_scene = nullptr) {
             const int height = width * 3 / 4;
             const bool reference = reference_;
             const bool base_changed = !valid_ || width_ != width || backdrop_key != backdrop_key_;
@@ -177,7 +178,7 @@ namespace tenhou {
                                               if (reference) background(dc);
                                               else backdrop_.CopyTo(dc, region);
                                               foreground(dc, region);
-                                          });
+                                          }, final_scene);
             } catch (...) {
                 Invalidate();
                 throw;

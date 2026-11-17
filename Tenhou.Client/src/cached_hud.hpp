@@ -17,6 +17,23 @@ namespace tenhou {
             key_.clear();
             input_.clear();
             output_.clear();
+            text_key_.clear();
+            text_runs_.clear();
+            text_valid_ = false;
+        }
+
+        // Cache HD layouts/runs, never a native-size text bitmap. The final scene
+        // applies its current viewport/DPI and draws them in this exact position
+        // among image commands. key includes text/style/numeric/animation state.
+        template<class Build>
+        void AppendText(FinalScene &scene, const std::string &key, Build build) {
+            if (!text_valid_ || text_key_ != key) {
+                auto runs = build();
+                text_runs_ = std::move(runs);
+                text_key_ = key;
+                text_valid_ = true;
+            } else ++hits_;
+            for (const auto &run : text_runs_) scene.Text(run);
         }
 
         template<class Draw>
@@ -114,5 +131,8 @@ namespace tenhou {
         RECT region_{};
         int width_ = 0;
         std::size_t hits_ = 0;
+        std::string text_key_;
+        std::vector<SceneTextRun> text_runs_;
+        bool text_valid_ = false;
     };
 } // namespace tenhou

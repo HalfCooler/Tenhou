@@ -140,3 +140,5 @@ foreach(sprite_id RANGE 401 705)
         tenhou_sprite(${sprite_id})
     endif()
 endforeach()
+# Private TrueType source already present in the repository; no system-font copying.
+tenhou_asset(TextFont "fonts/HGSeikaiShotaiPRO.TTF" FILE 0 OPTIONAL -)

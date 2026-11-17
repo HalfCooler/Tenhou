@@ -39,6 +39,7 @@ namespace tenhou {
         void SetSoundPlayer(std::function<void(unsigned)> play) { play_sound_ = std::move(play); }
 
     private:
+        friend struct TextTableCheck;
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
         static LRESULT CALLBACK OkProcedure(HWND, UINT, WPARAM, LPARAM);

@@ -66,6 +66,7 @@ namespace tenhou {
 
     private:
         friend struct LobbyPresentationCheck;
+        friend struct TextTableCheck;
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
         static LRESULT CALLBACK ExitVoteProcedure(HWND, UINT, WPARAM, LPARAM);

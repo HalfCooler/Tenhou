@@ -1,5 +1,13 @@
 # Included by the single native CMake project in Tenhou.Client.
 set(client_checks_directory "${CMAKE_CURRENT_LIST_DIR}/src")
+add_executable(tenhou_text_composition_check "${client_checks_directory}/text_composition_check.cpp")
+target_link_libraries(tenhou_text_composition_check PRIVATE tenhou_table)
+target_compile_options(tenhou_text_composition_check PRIVATE /W4 /WX /utf-8 /EHsc)
+add_dependencies(tenhou_text_composition_check tenhou_assets)
+add_executable(tenhou_text_samples "${client_checks_directory}/text_samples.cpp")
+target_link_libraries(tenhou_text_samples PRIVATE tenhou_text)
+target_compile_options(tenhou_text_samples PRIVATE /W4 /WX /utf-8 /EHsc)
+add_dependencies(tenhou_text_samples tenhou_assets)
 add_executable(tenhou_text_catalog_check "${client_checks_directory}/text_catalog_check.cpp")
 target_link_libraries(tenhou_text_catalog_check PRIVATE tenhou_table tenhou_network)
 add_executable(tenhou_protocol_check "${client_checks_directory}/client_protocol_check.cpp")
@@ -9,7 +17,8 @@ add_executable(tenhou_variant_ui_check "${client_checks_directory}/variant_ui_ch
 target_link_libraries(tenhou_variant_ui_check PRIVATE tenhou_network tenhou_table gdi32)
 add_dependencies(tenhou_variant_ui_check tenhou_assets)
 add_executable(tenhou_variant_check "${client_checks_directory}/variant_check.cpp")
-add_executable(tenhou_presentation_check "${client_checks_directory}/presentation_check.cpp" ${tenhou_lobby_sources}
+add_executable(tenhou_presentation_check "${client_checks_directory}/presentation_check.cpp"
+    "${client_checks_directory}/text_table_check.cpp" src/table_view.cpp ${tenhou_lobby_sources}
     "${asset_generated_directory}/client_assets.rc")
 target_link_libraries(tenhou_presentation_check PRIVATE tenhou_network tenhou_table comctl32 comdlg32 shell32 ole32)
 add_dependencies(tenhou_presentation_check tenhou_assets)
@@ -25,8 +34,10 @@ add_dependencies(tenhou_resource_check tenhou_assets)
 foreach(check tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check)
     target_compile_options(${check} PRIVATE /W4 /WX /utf-8 /EHsc)
 endforeach()
-add_custom_target(tenhou_client_checks DEPENDS tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check)
+add_custom_target(tenhou_client_checks DEPENDS tenhou_text_composition_check tenhou_text_samples tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check)
 enable_testing()
+add_test(NAME client_text_composition COMMAND tenhou_text_composition_check "${TENHOU_OUTPUT_DIRECTORY}/resources"
+    "${CMAKE_BINARY_DIR}/text-p2")
 add_test(NAME client_text_catalog COMMAND tenhou_text_catalog_check)
 add_test(NAME client_variants COMMAND tenhou_variant_check)
 add_test(NAME client_presentation COMMAND tenhou_presentation_check "${TENHOU_OUTPUT_DIRECTORY}/resources")

@@ -16,16 +16,24 @@ namespace tenhou {
     }
 
     unsigned ActionButtonSprite(unsigned control, bool hot) {
-        if (const auto variant = VariantActionButtonSprite(control, hot)) return variant;
+        const auto key = ActionButtonText(control, hot);
+        return key ? FindText(*key)->origin_id : 0;
+    }
+
+    std::optional<TextKey> ActionButtonText(unsigned control, bool hot) {
+        if (control == 5173) return hot ? TextKey::button_hover_exchange : TextKey::button_normal_exchange;
+        constexpr TextKey missing_normal[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
+        constexpr TextKey missing_hover[]{TextKey::button_hover_man, TextKey::button_hover_pin, TextKey::button_hover_sou};
+        if (control >= 5170 && control <= 5172) return hot ? missing_hover[control - 5170] : missing_normal[control - 5170];
         constexpr TextKey normal[]{TextKey::button_normal_chi, TextKey::button_normal_pon,
             TextKey::button_normal_kan, TextKey::button_normal_riichi, TextKey::button_normal_ron,
             TextKey::button_normal_tsumo, TextKey::button_normal_abort_draw, TextKey::button_normal_pass};
         constexpr TextKey hover[]{TextKey::button_hover_chi, TextKey::button_hover_pon,
             TextKey::button_hover_kan, TextKey::button_hover_riichi, TextKey::button_hover_ron,
             TextKey::button_hover_tsumo, TextKey::button_hover_abort_draw, TextKey::button_hover_pass};
-        if (control == 5151) return FindText(hot ? TextKey::button_hover_nuki : TextKey::button_normal_nuki)->origin_id;
-        if (control < 5121 || control > 5128) return 0;
-        return FindText(hot ? hover[control - 5121] : normal[control - 5121])->origin_id;
+        if (control == 5151) return hot ? TextKey::button_hover_nuki : TextKey::button_normal_nuki;
+        if (control < 5121 || control > 5128) return {};
+        return hot ? hover[control - 5121] : normal[control - 5121];
     }
 
     std::vector<unsigned> VariantStatusSprites(const ReplayState &state) {
@@ -155,14 +163,18 @@ namespace tenhou {
         out.sticks[1] = Multiply({.9f, 0, 0, 1, 0, 0}, Multiply(Rotation(-.6f), out.seats[1]));
         out.sticks[3] = Multiply({.9f, 0, 0, 1, 0, 0}, Multiply(Rotation(.6f), out.seats[3]));
         const auto scaled = [&](float n) { return static_cast<int>(n * out.scale); };
-        out.sprites.push_back({407u + static_cast<unsigned>((state.round / 4) % 4), scaled(-30), scaled(-17)});
-        out.sprites.push_back({403u + static_cast<unsigned>(state.round % 4), scaled(-10), scaled(-17)});
-        out.sprites.push_back({411, scaled(10), scaled(-17)});
+        constexpr TextKey winds[]{TextKey::center_east, TextKey::center_south, TextKey::center_west, TextKey::center_north};
+        constexpr TextKey hands[]{TextKey::center_hand_one, TextKey::center_hand_two, TextKey::center_hand_three, TextKey::center_hand_four};
+        out.text.push_back({winds[(state.round / 4) % 4], scaled(-30), scaled(-17)});
+        out.text.push_back({hands[state.round % 4], scaled(-10), scaled(-17)});
+        out.text.push_back({TextKey::center_hand_unit, scaled(10), scaled(-17)});
+        constexpr TextKey active[]{TextKey::seat_self_east, TextKey::seat_self_south, TextKey::seat_self_west, TextKey::seat_self_north};
+        constexpr TextKey inactive[]{TextKey::seat_black_east, TextKey::seat_black_south, TextKey::seat_black_west, TextKey::seat_black_north};
         for (int i = 0; i < 4; ++i) {
             if (!SeatPresent(state.seat_mask, i)) continue;
             const unsigned wind = static_cast<unsigned>(SeatWind(state.seat_mask, state.dealer, i));
-            out.sprites.push_back({
-                (state.turn == i ? 416u : 420u) + wind,
+            out.text.push_back({
+                state.turn == i ? active[wind] : inactive[wind],
                 static_cast<int>(6 - 58 * out.scale), scaled(28), i
             });
             if (state.players[i].reach == 2) out.sprites.push_back({466, 0, scaled(57), i, true});
@@ -180,6 +192,8 @@ namespace tenhou {
     }
 
     void DisplayArtwork::Configure(const std::filesystem::path &directory, int width) {
+        text_renderer_.reset();
+        text_font_.reset();
         variants_.Configure(directory);
         directory_ = directory;
         width_ = width;
@@ -243,7 +257,7 @@ namespace tenhou {
             throw std::runtime_error("Cannot draw original display sprite");
     }
 
-    void DisplayArtwork::PaintHud(Gdiplus::Graphics &g, const ReplayState &state) {
+    void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state) {
         const auto hud = BuildOriginalHud(state, width_);
         const float s = hud.scale;
         const auto saved = g.Save();
@@ -292,95 +306,18 @@ namespace tenhou {
         }
     }
 
-    void DisplayArtwork::PaintChrome(Gdiplus::Graphics &g, unsigned type, const std::array<bool, 4> &automatic,
-                                     int hovered, bool variant) {
+    void DisplayArtwork::PaintChromeBackground(Gdiplus::Graphics &g, int hovered) {
         const auto saved = g.Save();
-        g.ResetTransform();
         try {
-            // FUN_0049c900, normal four-player branches (sanma resources remain distinct).
-            const unsigned level = (type & 0x800) ? 588u : 566 + (((type >> 3 & 0x10) | (type & 0x20)) >> 4);
-            const unsigned rules[]{
-                level, 570 + ((type >> 6) & 1) + ((type >> 2) & 2), 574 + ((type >> 2) & 1), 576 + ((type >> 1) & 1)
-            };
-            int y = 0;
-            for (unsigned id: rules) {
-                if (variant && id != level) break;
-                const auto &im = Get(id);
-                Sprite(g, id, width_ - im.width, y);
-                y += im.height;
-            }
-            // WC_ITEM_CHECK: checked captions 424..427, unchecked 429..432
-            // at 70% alpha, vertical 0 -> 0x22000000 gradient and original border.
+            // Caption styles/opacity are appended separately at final device size.
             for (int i = 0; i < 4; ++i) {
                 const RECT r = OriginalAutoButtonRect(width_, i);
                 Gdiplus::LinearGradientBrush shade(Gdiplus::Point(r.left, r.top), Gdiplus::Point(r.left, r.bottom),
                                                    Gdiplus::Color(0, 0, 0, 0), Gdiplus::Color(0x22, 0, 0, 0));
                 g.FillRectangle(&shade, r.left, r.top, r.right - r.left, r.bottom - r.top);
-                const auto &im = Get((automatic[i] ? 424u : 429u) + i);
-                Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
-                                       const_cast<BYTE *>(im.bgra.data()));
-                Gdiplus::ColorMatrix opacity{
-                    {
-                        {1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0}, {0, 0, 0, automatic[i] ? 1.0f : .7f, 0},
-                        {0, 0, 0, 0, 1}
-                    }
-                };
-                Gdiplus::ImageAttributes attrs;
-                attrs.SetColorMatrix(&opacity);
-                g.DrawImage(&bitmap, Gdiplus::Rect(r.left + (r.right - r.left - im.width) / 2,
-                                                   r.top + (r.bottom - r.top - im.height) / 2, im.width, im.height),
-                            0, 0, im.width, im.height, Gdiplus::UnitPixel, &attrs);
                 Gdiplus::Pen border(Gdiplus::Color(hovered == i ? 0xffff9933u : 0x11000000u), 1);
                 g.DrawRectangle(&border, r.left, r.top, r.right - r.left - 1, r.bottom - r.top - 1);
             }
-            g.Restore(saved);
-        } catch (...) {
-            g.Restore(saved);
-            throw;
-        }
-    }
-
-    void DisplayArtwork::PaintStatus(Gdiplus::Graphics &g, const ReplayState &state) {
-        const auto saved = g.Save();
-        g.ResetTransform();
-        try {
-            if (state.variant) {
-                const auto ids = VariantStatusSprites(state);
-                const unsigned rule = ids.front();
-                // Keep the original second rule-label row, even while its PNG is being authored.
-                int y = Get(566).height;
-                if (const auto *label = FindSprite(rule)) {
-                    Sprite(g, rule, width_ - label->width, y);
-                    y += label->height;
-                } else {
-                    const int height = Get(570).height;
-                    const auto hud = BuildOriginalHud(state, width_);
-                    Caption(g, std::wstring(TextLabel(rule == 704 ? TextKey::info_sichuan : TextKey::info_guobiao)), static_cast<float>(width_ - Get(570).width),
-                        static_cast<float>(y), 18 * hud.scale, hud, static_cast<float>(Get(570).width));
-                    y += height;
-                }
-                if (ids.size() > 1) {
-                    const auto &im = Get(578); Sprite(g, 578, width_ - im.width, y);
-                }
-                g.Restore(saved); return;
-            }
-            // FUN_0049c900: append 578 when round >= the game's last scheduled hand.
-            if (state.initialized && state.round >= static_cast<int>(
-                    ((state.type & 8 | 6) >> 1) - (state.type >> 4 & 1))) {
-                const auto &im = Get(578);
-                int y = 0;
-                const unsigned ids[]{
-                    (state.type & 0x800) ? 588u : 566 + (((state.type >> 3 & 0x10) | (state.type & 0x20)) >> 4),
-                    570 + ((state.type >> 6) & 1) + ((state.type >> 2) & 2), 574 + ((state.type >> 2) & 1),
-                    576 + ((state.type >> 1) & 1)
-                };
-                for (auto id: ids) y += Get(id).height;
-                Sprite(g, 578, width_ - im.width, y);
-            }
-            // 0047d77c..0047d7b3: fa6 at trunc(300 * scale), shared control baseline.
-            if (state.initialized && !state.ended && state.furiten)
-                Sprite(g, 590, static_cast<int>(300 * (width_ == 1440 ? 1.4 : 1.0)),
-                       OriginalAutoButtonRect(width_, 0).top);
             g.Restore(saved);
         } catch (...) {
             g.Restore(saved);
@@ -467,4 +404,98 @@ namespace tenhou {
             throw;
         }
     }
-} // namespace tenhou
+
+    TextRenderer &DisplayArtwork::Text() {
+        if (!text_renderer_) {
+            auto font = std::make_unique<TextFontService>(ResourceManager(directory_));
+            auto renderer = std::make_unique<TextRenderer>(*font);
+            text_font_ = std::move(font);
+            text_renderer_ = std::move(renderer);
+        }
+        return *text_renderer_;
+    }
+
+    SceneTextRun DisplayArtwork::TextRun(TextKey key, float x, float y, bool cx, bool cy) {
+        const float hd = width_ == 1024 ? 1.4f : 1.f;
+        auto layout = Text().Layout(key);
+        const auto &ink = layout.metrics.ink;
+        SceneTextRun run;
+        run.layout = layout;
+        run.anchor = {x * hd, y * hd};
+        run.transform[4] = -ink.X - (cx ? ink.Width / 2 : 0);
+        run.transform[5] = -ink.Y - (cy ? ink.Height / 2 : 0);
+        return run;
+    }
+
+    void DisplayArtwork::AppendHud(FinalScene &scene, const ReplayState &state) {
+        const auto hud = BuildOriginalHud(state, width_);
+        const float hd = width_ == 1024 ? 1.4f : 1.f;
+        for (const auto &item : hud.text) {
+            auto run = TextRun(item.key, static_cast<float>(item.x), static_cast<float>(item.y), item.center_x, item.center_y);
+            const Affine base{1, 0, 0, 1, hud.center[0], hud.center[1]};
+            const auto &t = item.seat < 0 ? base : hud.seats[item.seat];
+            const float x = static_cast<float>(run.anchor.X + run.transform[4]);
+            const float y = static_cast<float>(run.anchor.Y + run.transform[5]);
+            run.anchor = {t[4] * hd, t[5] * hd};
+            run.transform = {t[0], t[1], t[2], t[3], x * t[0] + y * t[2], x * t[1] + y * t[3]};
+            scene.Text(std::move(run));
+        }
+    }
+
+    void DisplayArtwork::AppendChrome(FinalScene &scene, unsigned type, const std::array<bool, 4> &automatic, bool variant) {
+        constexpr TextKey levels[]{TextKey::info_general, TextKey::info_advanced, TextKey::info_expert, TextKey::info_phoenix};
+        constexpr TextKey rules[]{TextKey::info_east, TextKey::info_fast_east, TextKey::info_east_south, TextKey::info_fast_east_south};
+        const TextKey keys[]{(type & 0x800) ? TextKey::info_toutenkou : levels[(((type >> 3 & 0x10) | (type & 0x20)) >> 4)],
+            rules[((type >> 6) & 1) + ((type >> 2) & 2)],
+            (type >> 2 & 1) ? TextKey::info_no_open_tanyao : TextKey::info_open_tanyao,
+            (type >> 1 & 1) ? TextKey::info_no_red : TextKey::info_red};
+        {
+            float y = 0;
+            for (auto key : keys) {
+                auto layout = Text().Layout(key);
+                const float hd = width_ == 1024 ? 1.4f : 1.f;
+                SceneTextRun run; run.layout = layout;
+                run.anchor = {width_ * hd - static_cast<float>(layout.metrics.advance), y};
+                scene.Text(run);
+                y += layout.metrics.effects.GetBottom();
+                if (variant) break;
+            }
+        }
+        constexpr TextKey checked[]{TextKey::option_checked_auto_sort, TextKey::option_checked_no_call,
+            TextKey::option_checked_tsumogiri, TextKey::option_checked_auto_win};
+        constexpr TextKey unchecked[]{TextKey::option_unchecked_auto_sort, TextKey::option_unchecked_no_call,
+            TextKey::option_unchecked_tsumogiri, TextKey::option_unchecked_auto_win};
+        for (int i = 0; i < 4; ++i) {
+            const auto r = OriginalAutoButtonRect(width_, i);
+            auto run = TextRun(automatic[i] ? checked[i] : unchecked[i], (r.left + r.right) / 2.f, (r.top + r.bottom) / 2.f, true, true);
+            run.opacity = automatic[i] ? 1 : .7;
+            scene.Text(run);
+        }
+    }
+
+    void DisplayArtwork::AppendStatus(FinalScene &scene, const ReplayState &state) {
+        const float hd = width_ == 1024 ? 1.4f : 1.f;
+        float y = Text().Layout(TextKey::info_general).metrics.effects.GetBottom();
+        if (state.variant) {
+            const auto key = state.variant_rule.rfind("sichuan", 0) == 0 ? TextKey::info_sichuan : TextKey::info_guobiao;
+            auto layout = Text().Layout(key);
+            SceneTextRun run; run.layout = layout;
+            run.anchor = {width_ * hd - static_cast<float>(layout.metrics.advance), y};
+            scene.Text(run);
+            y += layout.metrics.effects.GetBottom();
+        } else {
+            y = Text().Layout(TextKey::info_general).metrics.effects.GetBottom() * 4;
+        }
+        const int last = state.total_hands > 0 ? state.total_hands - 1 : (state.variant_rule.rfind("sichuan", 0) == 0 ? 7 : 15);
+        const int riichi_last = static_cast<int>(((state.type & 8 | 6) >> 1) - (state.type >> 4 & 1));
+        if (state.initialized && state.round >= (state.variant ? last : riichi_last)) {
+            auto layout = Text().Layout(TextKey::info_all_last);
+            SceneTextRun run; run.layout = layout;
+            run.anchor = {width_ * hd - static_cast<float>(layout.metrics.advance), y};
+            scene.Text(run);
+        }
+        if (state.initialized && !state.ended && state.furiten)
+            scene.Text(TextRun(TextKey::status_furiten, 300 * (width_ == 1440 ? 1.4f : 1.f),
+                               static_cast<float>(OriginalAutoButtonRect(width_, 0).top)));
+    }
+}

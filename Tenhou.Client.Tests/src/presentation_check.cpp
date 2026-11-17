@@ -12,6 +12,7 @@
 
 using namespace tenhou;
 namespace tenhou {
+    void RunTextTableChecks(HWND parent, const std::filesystem::path &resources);
     // Exercise the production receive/display boundary with packet bursts and a stalled UI timer.
     struct LobbyPresentationCheck {
         static void ProtocolOpening(HWND parent, const std::filesystem::path &resources, const std::string &rule) {
@@ -264,8 +265,8 @@ namespace {
             for (int round = 0; round < rounds; ++round) {
                 hud_state.round = round;
                 const auto hud = BuildOriginalHud(hud_state, 1440);
-                Check(hud.sprites[0].id == 407u + round / 4 && hud.sprites[1].id == 403u + round % 4 &&
-                    hud.sprites[2].id == 411, "Variant round title does not reuse riichi wind/number/hand artwork");
+                Check(FindText(hud.text[0].key)->origin_id == 407u + round / 4 && FindText(hud.text[1].key)->origin_id == 403u + round % 4 &&
+                    hud.text[2].key == TextKey::center_hand_unit, "Variant round title does not reuse riichi wind/number/hand artwork");
             }
             ReplayState opening_state; opening_state.variant = opening_state.initialized = true;
             opening_state.wall.InitVariant(rounds == 8 ? 108 : 144, 52, 0, 0);
@@ -426,7 +427,9 @@ int main(int argc, char **argv) {
         Settlement(parent); SettlementPresentationCheck::Run(parent); Guobiao(parent, argv[1]);
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "sichuan-bloodbattle");
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
-        LobbyPresentationCheck::Run(parent, argv[1]); DestroyWindow(parent); parent = nullptr;
+        LobbyPresentationCheck::Run(parent, argv[1]);
+        RunTextTableChecks(parent, argv[1]);
+        DestroyWindow(parent); parent = nullptr;
         Gdiplus::GdiplusShutdown(gdiplus);
         std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation and recovery\n";
         return 0;

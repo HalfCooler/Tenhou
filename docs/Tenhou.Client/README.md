@@ -17,12 +17,13 @@ Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Cli
 | `assets/packs/` | 图片、音效及牌面原始 DAT 资源包 | 复制至 `resources/packs/` |
 | `assets/dialogs/` | 设置页的原始二进制模板 | 内嵌至 EXE 的 RCDATA |
 | `assets/shadows/` | 压缩的牌面阴影数据 | 内嵌至 EXE 的 RCDATA |
+| `assets/fonts/` | P1 私有字体文件，来源与随包条件待发布前落实 | 通过 `TextFont` 登记，复制至 `resources/fonts/` |
 
 清单统一生成 `AssetId`、路径元数据和 Win32 RC，并驱动构建复制与安装。新增资源时，在对应目录放入文件并添加一条 `tenhou_asset(...)`；业务代码通过 `ResourceManager` 的 `Path`、`Read` 或 `Embedded` 访问，格式解码仍由原有图片、音频和资源包模块负责。构建时会检查必需文件及重复 ID；仅修改外置资源后重新构建，也会同步更新输出目录。
 
 自行制作四川、国标素材时，参见[图片制作规范与清单](ASSET-AUTHORING.md)：包含原始按钮、动作浮字、役种图片的透明PNG、精确尺寸、字体信息边界和逐项制作CSV。参考图可通过 `scripts/Export-DisplayReferences.ps1` 重新导出；新增PNG仍需登记资源并接入绘制代码。
 
-表内文字图片迁移见 [TrueType 文字渲染实施计划](TRUETYPE-TEXT-PLAN.md)。P0 已建立 [文字目录与显式导入工具](../../Tenhou.Client/assets/text/README.md)，覆盖 296 Text、7 Image、481 完整样式修正与 Info 继承；当前文案及修正规格见 [核对记录](TRUETYPE-TEXT-P0-REVIEW.md)，代码文字回退已同步目录，普通/悬停按钮按黑边/橙边选择。字体绘制与现有 PNG 入口的迁移将在 P1–P5 实施。
+表内文字图片迁移见 [TrueType 文字渲染实施计划](TRUETYPE-TEXT-PLAN.md)。P0 验证已确认完成，[文字目录与显式导入工具](../../Tenhou.Client/assets/text/README.md) 覆盖 296 Text、7 Image、481 完整样式修正与 Info 继承；代码文字回退已同步目录，普通/悬停按钮按黑边/橙边选择。P1 已经用户人工视觉验证，594 居中与 Info 透明图层两项反馈已修正并完成交付，见 [校准及交付记录](TRUETYPE-TEXT-P1-REVIEW.md)。P2 已接入最终尺寸有序合成与缓存失效，见 [接入记录](TRUETYPE-TEXT-P2-REVIEW.md)。P3 已接入生产牌桌、按钮、四座浮字与开局介绍，见 [P3 接入及验证记录](TRUETYPE-TEXT-P3-REVIEW.md)；结算与资源清理按 P4–P5 继续，实际操作、多 DPI 和跨屏验收按 P6 进行。
 
 `--resources <目录>` 和配置中的 `[REBUILD] ResourceDirectory` 继续指定外置资源根目录。优先查找清单中的分类路径，找不到时兼容旧版平铺文件名，例如 `_res2.dat`。`TENHOU_ASSET_DIRECTORY` 也接受这两种目录布局；内嵌模板始终取自仓库。自定义背景及音频仍按原配置解析。仓库只提供 HD 牌面，清单中的 SD 牌面条目为可选兼容项。
 

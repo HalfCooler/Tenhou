@@ -1,5 +1,7 @@
 # TrueType P0 人工核对表
 
+后续状态：P0 已验证，P1 已完成人工视觉验证并修正两项反馈，见 [P1 交付记录](TRUETYPE-TEXT-P1-REVIEW.md)。下文“留 P1”等表述保留 P0 当时的核对记录。
+
 状态：用户已确认当前文案及下列规格；P1 效果参数仍待样张校准。
 
 来源：`docs/Tenhou.Client/asset-reference/Sprites.xlsx`，工作表 `Sprites705`。

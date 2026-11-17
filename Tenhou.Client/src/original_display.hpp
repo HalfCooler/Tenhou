@@ -2,6 +2,7 @@
 #include "replay.hpp"
 #include "resource_pack.hpp"
 #include "variant_artwork.hpp"
+#include "final_scene.hpp"
 #include <windows.h>
 #include <array>
 #include <map>
@@ -19,6 +20,12 @@ namespace tenhou {
     // Display only. No model mutation, protocol requests or hidden tile inspection.
     struct DisplaySprite {
         unsigned id = 0;
+        int x = 0, y = 0, seat = -1;
+        bool center_x = false, center_y = false;
+    };
+
+    struct DisplayText {
+        TextKey key;
         int x = 0, y = 0, seat = -1;
         bool center_x = false, center_y = false;
     };
@@ -42,6 +49,7 @@ namespace tenhou {
         sticks {
         };
         std::vector<DisplaySprite> sprites;
+        std::vector<DisplayText> text;
     };
 
     OriginalHudLayout BuildOriginalHud(const ReplayState &state, int width);
@@ -51,6 +59,7 @@ namespace tenhou {
     RECT OriginalAutoButtonRect(int width, int index);
     unsigned VariantActionButtonSprite(unsigned control, bool hot);
     unsigned ActionButtonSprite(unsigned control, bool hot);
+    std::optional<TextKey> ActionButtonText(unsigned control, bool hot);
     std::vector<unsigned> VariantStatusSprites(const ReplayState &state);
 
     // 004aa250: n/0/254 maps to the standing-back rectangle, then odd
@@ -88,12 +97,18 @@ namespace tenhou {
 
         static std::array<float, 2> MeasureTextExtent(const std::string &text, float em);
 
-        void PaintHud(Gdiplus::Graphics &graphics, const ReplayState &state);
+        void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state);
 
-        void PaintChrome(Gdiplus::Graphics &graphics, unsigned type,
-                         const std::array<bool, 4> &automatic = {true, false, false, false}, int hovered = -1, bool variant = false);
+        void PaintChromeBackground(Gdiplus::Graphics &graphics, int hovered = -1);
 
-        void PaintStatus(Gdiplus::Graphics &graphics, const ReplayState &state);
+
+        TextRenderer &Text();
+        // Native anchors are converted once to the HD design space used by FinalScene.
+        SceneTextRun TextRun(TextKey key, float x, float y, bool cx = false, bool cy = false);
+        void AppendHud(FinalScene &scene, const ReplayState &state);
+        void AppendChrome(FinalScene &scene, unsigned type,
+                          const std::array<bool, 4> &automatic = {true, false, false, false}, bool variant = false);
+        void AppendStatus(FinalScene &scene, const ReplayState &state);
 
         void PaintNukiCounts(Gdiplus::Graphics &graphics, const ReplayState &state, TableArtwork &tiles);
 
@@ -112,5 +127,7 @@ namespace tenhou {
         ResourcePack pack_;
         VariantArtwork variants_;
         std::map<unsigned, Image> images_;
+        std::unique_ptr<TextFontService> text_font_;
+        std::unique_ptr<TextRenderer> text_renderer_;
     };
 } // namespace tenhou

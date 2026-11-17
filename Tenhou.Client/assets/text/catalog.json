@@ -13,18 +13,19 @@
   "review": {
     "status": "spec_confirmed",
     "calibration_phase": "P1",
+    "calibration_status": "human_confirmed",
     "confirmations": {
       "labels": true,
       "color_spelling": true,
       "button_states": true,
       "yaku_481": true,
       "chi_selection_size": true,
-      "info_gradient": true
+      "info_gradient": true,
+      "p1_visual_review": true,
+      "caption_centering": true,
+      "info_transparent_layers": true
     },
-    "pending": [
-      "Palette RGBA initial values; outline width; shadow offset/blur/alpha",
-      "Info background alpha/padding and baseline advance; 459 secondary offset"
-    ]
+    "pending": []
   },
   "palette": [
     {
@@ -65,7 +66,7 @@
         250,
         255
       ],
-      "calibrated": false
+      "calibrated": true
     },
     {
       "key": "dark_gray",
@@ -75,7 +76,7 @@
         64,
         255
       ],
-      "calibrated": false
+      "calibrated": true
     },
     {
       "key": "brown",
@@ -85,7 +86,7 @@
         0,
         255
       ],
-      "calibrated": false
+      "calibrated": true
     },
     {
       "key": "orange",
@@ -95,7 +96,7 @@
         0,
         255
       ],
-      "calibrated": false
+      "calibrated": true
     },
     {
       "key": "red",
@@ -105,7 +106,7 @@
         0,
         255
       ],
-      "calibrated": false
+      "calibrated": true
     }
   ],
   "styles": [

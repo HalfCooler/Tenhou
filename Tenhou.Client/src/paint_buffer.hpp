@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include "animation_clock.hpp"
+#include "final_scene.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -34,7 +35,7 @@ namespace tenhou {
         // comparison or snapshot copy; the complete cached frame still serves print/exposure.
         template<class Draw>
         void RenderDirtyScaled(HDC target, int width, int height, RECT destination,
-                               const std::vector<RECT> &requested, Draw draw) {
+                               const std::vector<RECT> &requested, Draw draw, const FinalScene *final_scene = nullptr) {
             if (width <= 0 || height <= 0 || IsRectEmpty(&destination)) return;
 
             const bool native_resize = width_ != width || height_ != height || !retained_valid_;
@@ -57,12 +58,14 @@ namespace tenhou {
                     scaled_top_ = destination.top;
                 }
                 if (resize) dirty = {{0, 0, width, height}};
+                std::vector<RECT> device_dirty;
                 for (const auto &rect: dirty) {
                     const RECT clip{
                         std::max(0L, (rect.left - 2) * dw / width - 2), std::max(0L, (rect.top - 2) * dh / height - 2),
                         std::min(LONG(dw), (rect.right + 2) * dw / width + 3),
                         std::min(LONG(dh), (rect.bottom + 2) * dh / height + 3)
                     };
+                    device_dirty.push_back(clip);
                     scaled_->Compose(target, dw, dh, [&](HDC dc) {
                         IntersectClipRect(dc, clip.left, clip.top, clip.right, clip.bottom);
                         SetStretchBltMode(dc, HALFTONE);
@@ -72,14 +75,12 @@ namespace tenhou {
                     });
                 }
                 retained_valid_ = true;
+                PresentFinal(target, width, height, destination, device_dirty, resize, final_scene);
             } catch (...) {
                 retained_valid_ = false;
                 scaled_.reset();
                 throw;
             }
-
-            if (!BitBlt(target, destination.left, destination.top, dw, dh, scaled_->memory_, 0, 0, SRCCOPY))
-                throw std::runtime_error("Cannot present retained frame");
         }
 
         template<class Draw>
@@ -102,7 +103,8 @@ namespace tenhou {
         }
 
         template<class Draw>
-        void RenderScaled(HDC target, int width, int height, RECT destination, Draw draw) {
+        void RenderScaled(HDC target, int width, int height, RECT destination, Draw draw,
+                          const FinalScene *final_scene = nullptr) {
             if (width <= 0 || height <= 0 || destination.right <= destination.left || destination.bottom <= destination.
                 top) return;
 
@@ -137,6 +139,7 @@ namespace tenhou {
                 scaled_left_ = destination.left;
                 scaled_top_ = destination.top;
             }
+            std::vector<RECT> device_dirty;
             if (dirty.right > dirty.left && dirty.bottom > dirty.top) {
                 // Include the resampling footprint on both sides of a changed
                 // pixel. Keep the full source/destination mapping while clipping;
@@ -146,6 +149,7 @@ namespace tenhou {
                     std::min(static_cast<LONG>(dw), (dirty.right + 2) * dw / width + 3),
                     std::min(static_cast<LONG>(dh), (dirty.bottom + 2) * dh / height + 3)
                 };
+                device_dirty.push_back(clip);
                 try {
                     scaled_->Compose(target, dw, dh, [&](HDC scaled) {
                         IntersectClipRect(scaled, clip.left, clip.top, clip.right, clip.bottom);
@@ -160,9 +164,11 @@ namespace tenhou {
                     throw;
                 }
             }
-
-            if (!BitBlt(target, destination.left, destination.top, dw, dh, scaled_->memory_, 0, 0, SRCCOPY))
-                throw std::runtime_error("Cannot present scaled frame");
+            try { PresentFinal(target, width, height, destination, device_dirty, resize, final_scene); }
+            catch (...) {
+                final_composite_.reset(); final_stamps_.clear();
+                throw;
+            }
         }
 
         template<class Draw>
@@ -181,6 +187,58 @@ namespace tenhou {
         }
 
     private:
+        // scaled_ always contains the clean image base. The final buffer is restored
+        // from it before replaying commands, so alpha/effects never accumulate.
+        void PresentFinal(HDC target, int width, int height, RECT destination,
+                          const std::vector<RECT> &base_dirty, bool resize, const FinalScene *scene) {
+            const int dw = destination.right - destination.left, dh = destination.bottom - destination.top;
+            if (!scene && !final_composite_) {
+                if (!BitBlt(target, destination.left, destination.top, dw, dh, scaled_->memory_, 0, 0, SRCCOPY))
+                    throw std::runtime_error("Cannot present scaled frame");
+                return;
+            }
+            auto current = scene ? scene->Snapshot(width, height, dw, dh) : std::vector<FinalSceneStamp>{};
+            RECT dirty{};
+            const auto add = [&](RECT r) {
+                if (IsRectEmpty(&r)) return;
+                if (IsRectEmpty(&dirty)) dirty = r;
+                else { RECT united{}; UnionRect(&united, &dirty, &r); dirty = united; }
+            };
+            for (auto r : base_dirty) add(r);
+            if (resize || !final_composite_) dirty = {0, 0, dw, dh};
+            else for (std::size_t i = 0; i < std::max(current.size(), final_stamps_.size()); ++i) {
+                if (i < current.size() && i < final_stamps_.size() && current[i].key == final_stamps_[i].key &&
+                    current[i].layout == final_stamps_[i].layout && EqualRect(&current[i].bounds, &final_stamps_[i].bounds)) continue;
+                if (i < current.size()) add(current[i].bounds);
+                if (i < final_stamps_.size()) add(final_stamps_[i].bounds);
+            }
+            // Replay intersecting commands as complete atomic groups. In particular,
+            // transformed image filtering must not change at a dirty clip boundary.
+            bool expanded;
+            do {
+                const auto before = dirty;
+                for (const auto &command : current) {
+                    RECT intersection{};
+                    if (IntersectRect(&intersection, &dirty, &command.bounds)) add(command.bounds);
+                }
+                expanded = !EqualRect(&before, &dirty);
+            } while (expanded);
+            try {
+                if (resize || !final_composite_) final_composite_ = std::make_unique<PaintBuffer>();
+                if (!IsRectEmpty(&dirty)) final_composite_->Compose(target, dw, dh, [&](HDC dc) {
+                    IntersectClipRect(dc, dirty.left, dirty.top, dirty.right, dirty.bottom);
+                    scaled_->CopyTo(dc, dirty);
+                    if (scene) scene->Paint(dc, width, height, dw, dh, dirty);
+                });
+                final_stamps_ = std::move(current);
+                if (!BitBlt(target, destination.left, destination.top, dw, dh, final_composite_->memory_, 0, 0, SRCCOPY))
+                    throw std::runtime_error("Cannot present final scene");
+            } catch (...) {
+                final_composite_.reset(); final_stamps_.clear();
+                throw;
+            }
+        }
+
         template<class Draw>
         void Compose(HDC target, int width, int height, Draw draw) {
             Ensure(target, width, height);
@@ -205,6 +263,8 @@ namespace tenhou {
             pixels_ = nullptr;
             previous_pixels_.clear();
             scaled_.reset();
+            final_composite_.reset();
+            final_stamps_.clear();
             width_ = height_ = 0;
             retained_valid_ = false;
         }
@@ -250,6 +310,8 @@ namespace tenhou {
         std::uint32_t *pixels_ = nullptr;
         std::vector<std::uint32_t> previous_pixels_;
         std::unique_ptr<PaintBuffer> scaled_;
+        std::unique_ptr<PaintBuffer> final_composite_;
+        std::vector<FinalSceneStamp> final_stamps_;
         int scaled_width_ = 0, scaled_height_ = 0;
         LONG scaled_left_ = 0, scaled_top_ = 0;
         bool retained_valid_ = false;

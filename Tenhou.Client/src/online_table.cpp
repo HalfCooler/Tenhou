@@ -1,4 +1,5 @@
 #include "online_table.hpp"
+#include "action_captions.hpp"
 #include "tile_shadow.hpp"
 #include "wall_scene.hpp"
 #include "network_protocol.hpp"
@@ -149,7 +150,7 @@ namespace tenhou {
     }
 
     void OnlineTable::Paint(HDC dc, RECT bounds, const OnlineState &online, bool interactive,
-                            const OpeningPresentation *opening, const TableInteraction *interaction, double now) {
+                            const OpeningPresentation *opening, const TableInteraction *interaction, double now, const ActionCaptions *captions, unsigned dpi) {
         if (paused_at_) now = paused_at_;
         if (!artwork_.width() || background_.bgra.empty()) {
             TableArtwork art;
@@ -166,13 +167,6 @@ namespace tenhou {
         const int w = width_, h = w * 3 / 4;
         const double unit = double(w) / 1024;
         raised_ = interaction ? interaction->selected : std::vector<int>{};
-        const auto destination = FitNativeCanvas(bounds, w);
-        // Native window chrome is an overlay, not a tile damage layer. Publishing
-        // the retained table can otherwise erase its alpha glyphs after a silent
-        // restore. Use the same original sprite painter once on the complete
-        // native target; scaled analysis canvases keep their existing path.
-        const bool native_chrome = original_display_ && destination.right - destination.left == w && destination.bottom
-                                   - destination.top == h;
         artwork_.BeginFrame();
         const unsigned placed = opening && opening->Active() ? opening->placed() : static_cast<unsigned>(state.wall.total);
         std::vector<PositionedTile> tiles;
@@ -193,7 +187,7 @@ namespace tenhou {
         const auto shadow_damage = TileShadowDamage(tiles, shadows, artwork_, red);
         std::ostringstream stamp;
         stamp << TableMetadata(state) << ':' << original_display_ << ':' << red << ':' << online.type << ':' << online.
-                complete << ':' << interactive << ':' << native_chrome;
+                complete << ':' << interactive;
         if (interaction) {
             stamp << ':' << interaction->hovered_button;
             for (auto c: interaction->hint) stamp << ':' << int(c);
@@ -243,6 +237,19 @@ namespace tenhou {
                         clock_overlay = united;
                     }
                 }
+        std::optional<FinalScene> final;
+        if (original_display_) {
+            if (!dpi) {
+                const auto window = WindowFromDC(dc);
+                dpi = window ? GetDpiForWindow(window) : 96;
+            }
+            final.emplace(display_artwork_.Text(), w == 1024, dpi);
+            display_artwork_.AppendHud(*final, state);
+            display_artwork_.AppendChrome(*final, online.type,
+                interaction ? interaction->automatic : std::array<bool, 4>{true, false, false, false}, state.variant);
+            display_artwork_.AppendStatus(*final, state);
+            if (captions) captions->Append(*final, w, display_artwork_.Text());
+        }
         native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), tiles, artwork_, red,
                               WallMetadata(state, placed, original_display_, red), stamp.str(), [&](HDC memory) {
                                   Gdiplus::Graphics graphics(memory);
@@ -394,7 +401,7 @@ namespace tenhou {
                                       if (Overlaps(region, atomic_layers.front())) {
                                           const auto draw_hud = [&](HDC target) {
                                               Gdiplus::Graphics g(target);
-                                              display_artwork_.PaintHud(g, state);
+                                              display_artwork_.PaintHudImages(g, state);
                                           };
                                           if (reference_rendering_) draw_hud(memory);
                                           else hud_cache_.Paint(memory, w, atomic_layers.front(), TableMetadata(state),
@@ -402,14 +409,8 @@ namespace tenhou {
                                       }
                                       Gdiplus::Graphics graphics(memory);
                                       ClipGraphics(graphics, region);
-                                      if (!native_chrome) display_artwork_.PaintChrome(
-                                          graphics, online.type,
-                                          interaction ? interaction->automatic : std::array < bool, 4 >
-                                      {
-                                          true, false, false, false
-                                      },
-                                      interaction ? interaction->hovered_button : -1, state.variant);
-                                      display_artwork_.PaintStatus(graphics, state);
+                                      display_artwork_.PaintChromeBackground(graphics,
+                                          interaction ? interaction->hovered_button : -1);
                                       display_artwork_.PaintNukiCounts(graphics, state, artwork_);
                                   } else {
                                       const auto font = CreateFontW(-static_cast<int>(22 * unit), 0, 0, 0, FW_NORMAL,
@@ -462,21 +463,7 @@ namespace tenhou {
                                       SelectObject(memory, old_font);
                                       if (font) DeleteObject(font);
                                   }
-                              }, clock_overlay, appearances, metadata_regions, atomic_layers, shadow_damage);
-        if (native_chrome) {
-            const int saved = SaveDC(dc);
-            OffsetViewportOrgEx(dc, destination.left, destination.top, nullptr);
-            {
-                Gdiplus::Graphics graphics(dc);
-                display_artwork_.PaintChrome(graphics, online.type,
-                                             interaction ? interaction->automatic : std::array < bool, 4 >
-                {
-                    true, false, false, false
-                },
-                interaction ? interaction->hovered_button : -1, state.variant);
-            }
-            RestoreDC(dc, saved);
-        }
+                              }, clock_overlay, appearances, metadata_regions, atomic_layers, shadow_damage, final ? &*final : nullptr);
     }
 
     int OnlineTable::HitTile(RECT bounds, const OnlineState &online, int x, int y) {

@@ -6,21 +6,26 @@
 #include <algorithm>
 
 namespace tenhou {
-    inline unsigned ActionCaptionResource(const ReplayEvent &event) {
+    inline std::optional<TextKey> ActionCaptionText(const ReplayEvent &event) {
         if (event.kind == ReplayEventKind::Reach)
-            return event.attributes.at("step") == "1" ? 478 : 0;
+            return event.attributes.at("step") == "1" ? std::optional<TextKey>(TextKey::caption_riichi) : std::nullopt;
         if (event.kind == ReplayEventKind::Win)
-            return event.attributes.at("who") == event.attributes.at("fromWho") ? 477 : 476;
-        if (event.kind != ReplayEventKind::Meld) return 0;
+            return event.attributes.at("who") == event.attributes.at("fromWho") ? TextKey::caption_tsumo : TextKey::caption_ron;
+        if (event.kind != ReplayEventKind::Meld) return {};
         if (event.tag == "VARIANT") {
             const auto &kind = event.attributes.at("kind");
-            return kind == "chi" ? 475 : kind == "pon" ? 473 : 474;
+            return kind == "chi" ? TextKey::caption_chi : kind == "pon" ? TextKey::caption_pon : TextKey::caption_kan;
         }
         const auto encoded = static_cast<unsigned>(std::stoul(event.attributes.at("m")));
-        if (encoded & 4) return 475;
-        if (encoded & 0x18) return encoded & 8 ? 473 : 474;
-        if (encoded & 0x20) return 480;
-        return 474;
+        if (encoded & 4) return TextKey::caption_chi;
+        if (encoded & 0x18) return encoded & 8 ? TextKey::caption_pon : TextKey::caption_kan;
+        if (encoded & 0x20) return TextKey::caption_kita;
+        return TextKey::caption_kan;
+    }
+
+    inline unsigned ActionCaptionResource(const ReplayEvent &event) {
+        const auto key = ActionCaptionText(event);
+        return key ? FindText(*key)->origin_id : 0;
     }
 
     struct ActionCaptionFrame {
@@ -28,25 +33,30 @@ namespace tenhou {
         int who = 0;
         float scale = 1, alpha = 1;
         std::wstring text;
+        std::optional<TextKey> key;
     };
 
     class ActionCaptions {
     public:
+        bool AcceptText(TextKey key, int who) {
+            const auto *definition = FindText(key);
+            if (!definition || definition->category != TextCategory::Caption || who < 0 || who > 3) return false;
+            ActionCaptionFrame frame; frame.resource = definition->origin_id; frame.who = who;
+            frame.key = key; frame.text = definition->label;
+            items_.push_back(std::move(frame)); return true;
+        }
+        // Transitional OriginId adapter for replay/check callers; rendering never loads an image.
         bool AcceptResource(unsigned id, int who, const std::wstring &text = L"") {
-            if ((!id && text.empty()) || who < 0 || who > 3) return false;
-            ActionCaptionFrame frame; frame.resource = id; frame.who = who; frame.text = text;
-            if (id >= 594) {
-                const auto *definition = FindTextByOrigin(id);
-                if (definition && definition->category == TextCategory::Caption) frame.text = definition->label;
-            }
+            if (const auto *definition = FindTextByOrigin(id)) return AcceptText(definition->key, who);
+            if (id || text.empty() || who < 0 || who > 3) return false;
+            ActionCaptionFrame frame; frame.who = who; frame.text = text;
             items_.push_back(std::move(frame)); return true;
         }
         bool Accept(const ReplayEvent &event) {
             if (event.kind == ReplayEventKind::Init) Clear();
-            const auto id = ActionCaptionResource(event);
+            const auto key = ActionCaptionText(event);
             const int who = event.attributes.count("who") ? std::stoi(event.attributes.at("who")) : event.who;
-            if (!id || who < 0 || who > 3) return false;
-            return AcceptResource(id, who);
+            return key && AcceptText(*key, who);
         }
 
         void Clear() { items_.clear(); }
@@ -68,49 +78,23 @@ namespace tenhou {
             return result;
         }
 
-        void Paint(HDC dc, RECT target, int width, DisplayArtwork &artwork) const {
-            if (!Active()) return;
-            // FUN_00467b20 / FUN_00467b50: literal PE anchors for each pack.
+        void Append(FinalScene &scene, int width, TextRenderer &renderer) const {
+            // Literal original anchors, expressed once in HD design coordinates.
             constexpr int xs[2][4]{{512, 844, 512, 180}, {720, 1190, 720, 250}};
             constexpr int ys[2][4]{{590, 340, 90, 340}, {830, 480, 120, 480}};
-            Gdiplus::Graphics graphics(dc);
-            graphics.SetClip(Gdiplus::Rect(target.left, target.top, target.right - target.left,
-                                           target.bottom - target.top));
-            graphics.TranslateTransform(static_cast<float>(target.left), static_cast<float>(target.top));
-            graphics.ScaleTransform(float(target.right - target.left) / width,
-                                    float(target.bottom - target.top) / (width * 3 / 4));
-            graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor); // native mode 5
-            for (const auto &item: Frames()) {
-                if (item.tick == 100) continue;
-                const auto *custom = item.resource >= 594 ? artwork.FindSprite(item.resource) : nullptr;
-                if (!item.text.empty() && !custom) {
-                    Gdiplus::FontFamily family(L"KaiTi");
-                    Gdiplus::GraphicsPath path;
-                    Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter);
-                    const float size = (width == 1440 ? 42.f : 30.f) * item.scale;
-                    path.AddString(item.text.c_str(), -1, family.IsAvailable() ? &family : Gdiplus::FontFamily::GenericSansSerif(),
-                        Gdiplus::FontStyleRegular, size, Gdiplus::PointF(static_cast<float>(xs[width == 1440][item.who]), ys[width == 1440][item.who] - size / 2), &format);
-                    const auto alpha = static_cast<BYTE>(255 * item.alpha);
-                    Gdiplus::Pen outline(Gdiplus::Color(alpha, 0, 0, 0), 3);
-                    Gdiplus::SolidBrush ink(Gdiplus::Color(alpha, 255, 248, 210));
-                    graphics.DrawPath(&outline, &path); graphics.FillPath(&ink, &path);
-                    continue;
+            const float hd = width == 1024 ? 1.4f : 1.f;
+            for (const auto &item : Frames()) {
+                if (item.alpha <= 0) continue;
+                const Gdiplus::PointF center(xs[width == 1440][item.who] * hd, ys[width == 1440][item.who] * hd);
+                if (item.key) scene.Text(renderer.Caption(*item.key, center, item.scale, item.alpha));
+                else if (!item.text.empty()) {
+                    auto layout = renderer.Layout(item.text, TextStyleKey::action_caption);
+                    const auto &ink = layout.metrics.ink;
+                    SceneTextRun run; run.layout = layout; run.anchor = center; run.opacity = item.alpha;
+                    run.transform = {item.scale, 0, 0, item.scale,
+                        -(ink.X + ink.Width / 2) * item.scale, -(ink.Y + ink.Height / 2) * item.scale};
+                    scene.Text(run);
                 }
-                const auto &image = custom ? *custom : artwork.Get(item.resource);
-                Gdiplus::Bitmap bitmap(image.width, image.height, image.width * 4, PixelFormat32bppARGB,
-                                       const_cast<BYTE *>(image.bgra.data()));
-                const float scale = item.scale;
-                const int w = static_cast<int>(image.width * scale), h = static_cast<int>(image.height * scale);
-                const int x = xs[width == 1440][item.who] - w / 2;
-                const int y = ys[width == 1440][item.who] - h / 2;
-                Gdiplus::ColorMatrix matrix{
-                    {{1, 0, 0, 0, 0}, {0, 1, 0, 0, 0}, {0, 0, 1, 0, 0}, {0, 0, 0, item.alpha, 0}, {0, 0, 0, 0, 1}}
-                };
-                Gdiplus::ImageAttributes attributes;
-                attributes.SetColorMatrix(&matrix);
-                if (graphics.DrawImage(&bitmap, Gdiplus::Rect(x, y, w, h), 0, 0, image.width, image.height,
-                                       Gdiplus::UnitPixel, &attributes) != Gdiplus::Ok)
-                    throw std::runtime_error("Cannot draw original action caption");
             }
         }
 

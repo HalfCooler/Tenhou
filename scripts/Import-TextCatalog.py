@@ -110,6 +110,7 @@ def import_catalog(workbook, catalog):
     if result["source"]["sha256"] != catalog["source"]["sha256"]:
         result["review"]["status"] = "pending_human_review"
         result["review"]["confirmations"] = {}
+        result["review"]["calibration_status"] = "pending_human_review"
     result["texts"], result["images"] = [], []
     labels = {label["key"]: label for label in result["labels"]}
     imported_labels = {}
@@ -156,9 +157,11 @@ def review_report(catalog):
         return str(value).replace("|", "\\|").replace("\n", "<br>")
 
     confirmed = catalog["review"].get("confirmations", {})
+    p1_confirmed = bool(confirmed.get("p1_visual_review"))
     checked = lambda key: "x" if confirmed.get(key) else " "
     lines = ["# TrueType P0 人工核对表", "",
-             "状态：用户已确认当前文案及下列规格；P1 效果参数仍待样张校准。" if confirmed else
+             ("状态：P0 已验证，P1 已完成人工视觉验证及反馈修正；交付参数见 TRUETYPE-TEXT-P1-REVIEW.md。" if p1_confirmed else
+              "状态：用户已确认当前文案及下列规格；P1 效果参数仍待样张校准。") if confirmed else
              "状态：待人工核对。此表由显式导入工具生成；空白核对栏不代表通过。", "",
              f"来源：`{catalog['source']['path']}`，工作表 `{catalog['source']['worksheet']}`。", "",
              f"XLSX SHA-256：`{catalog['source']['sha256']}`。", "",
@@ -172,7 +175,7 @@ def review_report(catalog):
              f"- [{checked('chi_selection_size')}] 459 右下角小字为 12 pt，偏移留 P1 样张。",
              f"- [{checked('info_gradient')}] 566 三段独立渐变已逐像素确认；Alpha、边距和字宽基准留 P1。",
              "- [ ] 核对 101 条规则匹配名、显示文字和缺省分值；规则匹配不使用显示名反推。",
-             "- [ ] P1 样张确定近白、深灰、棕、橙、红的 RGBA，以及描边/阴影参数。", "",
+             f"- [{checked('p1_visual_review')}] P1 样张确定近白、深灰、棕、橙、红的 RGBA，以及描边/阴影参数。", "",
              "## 样式", "",
              "| 样式键 | pt | 字距 pt | 粗体 | 源颜色描述 | 源样式描述 | 核对 |",
              "| --- | ---: | ---: | --- | --- | --- | --- |"]

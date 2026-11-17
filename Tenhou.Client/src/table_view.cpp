@@ -796,6 +796,14 @@ namespace tenhou {
                 const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
                 atomic_layers.push_back({cx - radius, cy - radius, cx + radius, cy + radius});
             }
+            std::optional<FinalScene> final;
+            if (original_display_) {
+                final.emplace(display_artwork_.Text(), w == 1024, GetDpiForWindow(viewport_));
+                display_artwork_.AppendHud(*final, state);
+                display_artwork_.AppendChrome(*final, state.type, {true, false, false, false}, state.variant);
+                display_artwork_.AppendStatus(*final, state);
+                captions_.Append(*final, w, display_artwork_.Text());
+            }
             native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), scene, artwork_, red,
                                   WallMetadata(state, placed_count, original_display_, red),
                                   TableMetadata(state) + std::to_string(original_display_) + std::to_string(red),
@@ -862,7 +870,7 @@ namespace tenhou {
                                           if (Overlaps(region, atomic_layers.front())) {
                                               const auto draw_hud = [&](HDC target) {
                                                   Gdiplus::Graphics g(target);
-                                                  display_artwork_.PaintHud(g, state);
+                                                  display_artwork_.PaintHudImages(g, state);
                                               };
                                               if (RetainedScene::Reference()) draw_hud(memory);
                                               else hud_cache_.Paint(memory, w, atomic_layers.front(),
@@ -870,14 +878,7 @@ namespace tenhou {
                                           }
                                           Gdiplus::Graphics graphics(memory);
                                           ClipGraphics(graphics, region);
-                                          unsigned type = 0;
-                                          for (const auto &event: session_->log().events) if (
-                                              event.tag == "GO" && event.attributes.count("type")) {
-                                              type = static_cast<unsigned>(std::stoul(event.attributes.at("type")));
-                                              break;
-                                          }
-                                          display_artwork_.PaintChrome(graphics, type);
-                                          display_artwork_.PaintStatus(graphics, state);
+                                          display_artwork_.PaintChromeBackground(graphics);
                                           display_artwork_.PaintNukiCounts(graphics, state, artwork_);
                                       } else {
                                           const HFONT label_font = CreateFontW(
@@ -923,8 +924,7 @@ namespace tenhou {
                                           SelectObject(memory, previous);
                                           if (label_font) DeleteObject(label_font);
                                       }
-                                  }, {}, {}, {}, atomic_layers, shadow_damage);
-            if (original_display_) captions_.Paint(dc, FitNativeCanvas(bounds, w), w, display_artwork_);
+                                  }, {}, {}, {}, atomic_layers, shadow_damage, final ? &*final : nullptr);
             artwork_error_.clear();
         } catch (const std::exception &error) {
             if (artwork_error_ != error.what()) log_("REPLAY ARTWORK ERROR " + std::string(error.what()));

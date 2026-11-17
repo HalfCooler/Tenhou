@@ -16,6 +16,9 @@ include(cmake/ClientAssets.cmake)
 include(cmake/TextCatalog.cmake)
 tenhou_generate_text_catalog("${CMAKE_CURRENT_SOURCE_DIR}/assets/text/catalog.json"
     "${asset_generated_directory}/text_catalog.hpp")
+include(cmake/TextRendering.cmake)
+tenhou_generate_text_render_profile("${CMAKE_CURRENT_SOURCE_DIR}/assets/text/rendering.json"
+    "${asset_generated_directory}/text_render_profile.hpp")
 add_library(zlib_inflate STATIC vendor/zlib/adler32.c vendor/zlib/crc32.c vendor/zlib/inffast.c
         vendor/zlib/inflate.c vendor/zlib/inftrees.c vendor/zlib/zutil.c vendor/zlib/uncompr.c)
 target_include_directories(zlib_inflate PUBLIC vendor/zlib)
@@ -25,6 +28,9 @@ target_include_directories(tenhou_resources PUBLIC src "${asset_generated_direct
 target_compile_definitions(tenhou_resources PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_resources PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_resources PUBLIC zlib_inflate bcrypt)
+add_library(tenhou_text STATIC src/text_renderer.cpp src/final_scene.cpp)
+target_link_libraries(tenhou_text PUBLIC tenhou_resources gdiplus gdi32 usp10)
+target_compile_options(tenhou_text PRIVATE /W4 /WX /utf-8 /EHsc)
 add_library(tenhou_replay STATIC src/replay.cpp src/settlement.cpp)
 target_include_directories(tenhou_replay PUBLIC src "${asset_generated_directory}")
 target_compile_definitions(tenhou_replay PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -34,7 +40,7 @@ add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/
         src/wall_scene.cpp src/action_selection_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay winmm msacm32 gdiplus)
+target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text winmm msacm32 gdiplus)
 add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp src/variant_state.cpp)
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)

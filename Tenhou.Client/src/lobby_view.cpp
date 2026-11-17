@@ -1228,12 +1228,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (event.kind != ReplayEventKind::Metadata) presentation = event;
             if (captions_.Accept(event)) SetTimer(window_, 8, 15, nullptr);
             if (cue.kind == "exchange" || cue.kind == "dingque") {
-                captions_.AcceptResource(594, event.who, std::wstring(TextLabel(TextKey::caption_complete))); SetTimer(window_, 8, 15, nullptr);
+                captions_.AcceptText(TextKey::caption_complete, event.who); SetTimer(window_, 8, 15, nullptr);
                 if (event_sound_allowed_) PlaySoundId(106);
             } else if (cue.kind == "flower") {
                 if (!flower_caption[event.who]) {
                     flower_caption[event.who] = true;
-                    captions_.AcceptResource(480, event.who); SetTimer(window_, 8, 15, nullptr);
+                    captions_.AcceptText(TextKey::caption_kita, event.who); SetTimer(window_, 8, 15, nullptr);
                     if (event_sound_allowed_) PlaySoundId(107);
                 }
             }
@@ -1458,10 +1458,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             try {
                 const auto interaction = Interaction(Snapshot());
                 table_.Paint(dc, bounds, Snapshot().game, Snapshot().actions.enabled,
-                             animation_enabled_ ? &opening_ : nullptr, &interaction);
+                             animation_enabled_ ? &opening_ : nullptr, &interaction, AnimationNow(), &captions_, GetDpiForWindow(window_));
                 artwork_error_.clear();
-                if (original_display_) captions_.Paint(dc, FitNativeCanvas(bounds, canvas_width_), canvas_width_,
-                                                       action_artwork_);
                 painted_countdown_ = interaction.countdown;
                 painted_hover_ = interaction.hovered;
                 painted_auto_hover_ = interaction.hovered_button;
@@ -1492,16 +1490,13 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::PaintAction(const DRAWITEMSTRUCT &item) {
         bool rendered = false;
-        if (original_display_) {
+        if (original_display_ && ActionButtonText(item.CtlID, false)) {
             try {
                 POINT point{};
                 GetCursorPos(&point);
                 ScreenToClient(item.hwndItem, &point);
                 const bool hot = IsWindowEnabled(item.hwndItem) && PtInRect(&item.rcItem, point);
-                const bool variant_choice = item.CtlID >= 5170 && item.CtlID <= 5173;
-                const unsigned variant_id = VariantActionButtonSprite(item.CtlID, hot);
-                const unsigned id = variant_choice ? (action_artwork_.FindSprite(variant_id) ? variant_id : 0) :
-                    ActionButtonSprite(item.CtlID, hot);
+                const auto key = ActionButtonText(item.CtlID, hot);
                 Gdiplus::Graphics graphics(item.hDC);
                 const auto paint = [&](unsigned resource) {
                     const auto &im = action_artwork_.Get(resource);
@@ -1515,14 +1510,25 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 };
                 FillRect(item.hDC, &item.rcItem, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
                 paint(440);
-                if (id) paint(id);
-                else {
-                    Gdiplus::Font font(L"KaiTi", static_cast<float>(item.rcItem.bottom * .55), Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-                    Gdiplus::SolidBrush ink(Gdiplus::Color(hot ? 0xffffff99 : 0xffffffff));
-                    Gdiplus::StringFormat format; format.SetAlignment(Gdiplus::StringAlignmentCenter); format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
-                    const auto text = Text(item.hwndItem);
-                    graphics.DrawString(text.c_str(), -1, &font, Gdiplus::RectF(0, 0, static_cast<float>(item.rcItem.right), static_cast<float>(item.rcItem.bottom)), &format, &ink);
-                }
+                if (!key) throw std::runtime_error("Unmapped action button text");
+                auto &renderer = action_artwork_.Text();
+                auto layout = renderer.Layout(*key);
+                const auto &ink = layout.metrics.ink;
+                const double sd = canvas_width_ == 1024 ? 1.0 / 1.4 : 1;
+                const double fit = double(item.rcItem.right - item.rcItem.left) / (canvas_width_ == 1440 ? 140 : 100);
+                TextRenderContext context;
+                context.native_layout_scale = sd;
+                context.viewport_scale_x = context.viewport_scale_y = fit;
+                context.dpi = GetDpiForWindow(item.hwndItem);
+                const float offset = item.itemState & ODS_SELECTED ? 1.f : 0.f;
+                context.origin_x = (item.rcItem.left + item.rcItem.right) / 2.0 + offset;
+                context.origin_y = (item.rcItem.top + item.rcItem.bottom) / 2.0 + offset;
+                context.device_clip = Gdiplus::RectF(static_cast<float>(item.rcItem.left), static_cast<float>(item.rcItem.top),
+                    static_cast<float>(item.rcItem.right - item.rcItem.left), static_cast<float>(item.rcItem.bottom - item.rcItem.top));
+                SceneTextRun run; run.layout = layout;
+                run.transform[4] = -ink.X - ink.Width / 2;
+                run.transform[5] = -ink.Y - ink.Height / 2;
+                renderer.Draw(graphics, context, run);
                 if (item.itemState & ODS_DISABLED) {
                     Gdiplus::SolidBrush dim(Gdiplus::Color(150, 0, 0, 0));
                     graphics.FillRectangle(&dim, 0, 0, item.rcItem.right, item.rcItem.bottom);
@@ -1842,7 +1848,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                             self->log_("ONLINE OPENING DONE");
                             bool flowers = false;
                             for (int seat = 0; seat < 4; ++seat) if (self->opening_flowers_[seat]) {
-                                self->captions_.AcceptResource(480, seat); flowers = true;
+                                self->captions_.AcceptText(TextKey::caption_kita, seat); flowers = true;
                             }
                             self->opening_flowers_ = {};
                             if (flowers) {
