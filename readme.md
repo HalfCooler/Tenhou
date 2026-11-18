@@ -82,7 +82,7 @@ dotnet .\build\Tenhou.Server\Tenhou.Server.dll --config .\Tenhou.Server\server.j
 
 默认监听 `127.0.0.1:10080`。启停脚本默认使用源码项目中的 `server.json`，数据目录相对配置文件解析。分发目录也包含服务配置和启停脚本，可部署整个 `build/Tenhou.Server/`。清理分发目录会同时删除其中的运行数据，需保留的数据应通过配置放在构建目录之外。
 
-好友联机可将服务端配置 `listen` 改为适当的 IPv4 地址，客户端配置中 `[REBUILD] NativeHost` / `NativePort` 指向好友服务器。不同客户端窗口使用不同的 `--config-dir`。
+好友联机可将服务端配置 `listen` 改为适当的 IPv4 地址，再在客户端登录界面选择“第三方服务器”并填写对应的主机和端口。不同客户端窗口使用不同的 `--config-dir`。
 
 ## 验证
 

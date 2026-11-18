@@ -38,9 +38,11 @@ Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Cli
 ./build/Tenhou.Client.Tests/tenhou_resource_check.exe ./build/Tenhou.Client.Tests/resources ./Tenhou.Client/assets
 ```
 
-先启动 `Tenhou.Server`。默认连接 `127.0.0.1:10080`；可通过配置文件 `[REBUILD] NativeHost`、`NativePort` 连接其他 IPv4 服务器。多人窗口使用不同的 `--config-dir`。
+先启动 `Tenhou.Server`，在登录界面选择“第三方服务器”。默认地址为 `localhost:10080`，可以填写其他主机和端口。配置沿用 `[REBUILD] NativeHost`、`NativePort`。多人窗口使用不同的 `--config-dir`。
 
-“快捷练习”的玩法来自服务端队列目录。“好友房间”的规则、配置字段、默认值和选项来自服务端；客户端没有预定义官方规则房。服务器目前提供立直麻将、四川血战到底和国标麻将。
+“天凤官方”入口接受 `IDxxxxxxxx-xxxxxxxx` 格式的 19 位 ID，官方连接和对局大厅留待后续实现。
+
+“人机场”的玩法来自服务端队列目录。“房间场”的规则、配置字段、默认值和选项来自服务端。服务器目前提供立直麻将、四川血战到底和国标麻将。两个场共用 `_bgm0.wav`，新开播时从曲内偏移淡入。
 
 三种玩法共用 GDI 牌桌、语音设置、动作播放队列、发牌及摸打动画。四川和国标的打牌后摸牌、杠后补牌、血战退场后继续摸牌使用独立的公开快照，防止后续动作覆盖动画；中间快照不提供可提交操作。Bot 等待及开局准备沿用立直流程。换三张仅允许服务端授予的同花色合法组合。四川和牌后本手退场，其余玩家继续对局至三家和完或牌墙耗尽，国标自动补花并校验八番起和。
 

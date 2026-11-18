@@ -214,7 +214,8 @@ namespace tenhou {
         }
 
         void BeginTcp(IN_ADDR address) {
-            if ((options.interactive_games || options.recover_games) && (ntohl(address.S_un.S_addr) >> 24) != 127)
+            if (!options.native_service && (options.interactive_games || options.recover_games) &&
+                (ntohl(address.S_un.S_addr) >> 24) != 127)
                 throw std::runtime_error("Interactive DNS resolved outside loopback");
             socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (socket == INVALID_SOCKET) throw SocketError("socket");

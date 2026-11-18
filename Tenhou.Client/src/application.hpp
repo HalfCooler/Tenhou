@@ -43,6 +43,8 @@ namespace tenhou {
 
         void SetView(const std::string &view);
 
+        void Login(bool register_account);
+
         void Paint(HDC dc);
 
         void SaveConfig();

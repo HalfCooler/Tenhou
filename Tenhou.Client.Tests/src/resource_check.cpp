@@ -124,22 +124,26 @@ int main(int argc, char **argv) {
         for (const auto id: {tenhou::AssetId::LobbyMusic, tenhou::AssetId::LobbyMusicAlternate}) {
             if (tenhou::DecodeMusic(resources.Read(id)).pcm.empty()) throw std::runtime_error("Empty lobby BGM");
         }
+        const auto lobby_music = resources.Path(tenhou::AssetId::LobbyMusic);
+        if (tenhou::MusicPath(argv[1], config, L"BGM_LOBBY0") != lobby_music ||
+            tenhou::MusicPath(argv[1], config, L"BGM_LOBBY1") !=
+                resources.Path(tenhou::AssetId::LobbyMusicAlternate))
+            throw std::runtime_error("Default lobby tracks must follow the original keys");
         for (const auto key: {L"BGM_LOBBY0", L"BGM_LOBBY1"}) {
-            if (tenhou::MusicPlaybackPath(argv[1], config, key, 0) != resources.Path(tenhou::AssetId::LobbyMusic) ||
-                tenhou::MusicPlaybackPath(argv[1], config, key, 1) != resources.Path(tenhou::AssetId::LobbyMusicAlternate))
-                throw std::runtime_error("Default live lobby must allow both tracks");
             tenhou::WritePreference(config, L"RESOURCE", key, L"custom.wav");
-            for (unsigned track: {0u, 1u})
-                if (tenhou::MusicPlaybackPath(argv[1], config, key, track) != config.parent_path() / "custom.wav")
-                    throw std::runtime_error("Random selection replaced custom lobby music");
+            if (tenhou::MusicPath(argv[1], config, key) != config.parent_path() / "custom.wav")
+                throw std::runtime_error("Custom lobby BGM path was lost");
+            if (std::wstring_view(key) == L"BGM_LOBBY0" &&
+                tenhou::MusicPath(argv[1], config, key, true) != lobby_music)
+                throw std::runtime_error("Third-party lobby must use the built-in BGM");
             tenhou::WritePreference(config, L"RESOURCE", key, L"none");
-            for (unsigned track: {0u, 1u})
-                if (!tenhou::MusicPlaybackPath(argv[1], config, key, track).empty())
-                    throw std::runtime_error("Random selection replaced lobby mute");
+            if (!tenhou::MusicPath(argv[1], config, key).empty() ||
+                !tenhou::MusicPath(argv[1], config, key, true).empty())
+                throw std::runtime_error("Lobby mute was lost");
             tenhou::WritePreference(config, L"RESOURCE", key, nullptr);
         }
-        if (!tenhou::MusicPlaybackPath(argv[1], config, L"BGM_GAME0", 1).empty())
-            throw std::runtime_error("Lobby random selection leaked into game music");
+        if (!tenhou::MusicPath(argv[1], config, L"BGM_GAME0").empty())
+            throw std::runtime_error("Default game BGM must be silent");
         tenhou::WritePreference(config, L"RESOURCE", L"SE_DA", L"none");
         tenhou::ReplaySoundBank muted;
         muted.Load(argv[1], 1440, config);

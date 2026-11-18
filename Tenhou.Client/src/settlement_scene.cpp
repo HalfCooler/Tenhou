@@ -407,7 +407,7 @@ namespace tenhou {
             const auto measure = [&](const std::string &value) {
                 return layout.text_width
                            ? static_cast<int>(layout.text_width(value, static_cast<float>(14 * scale)))
-                           : px(value.size() * 9);
+                           : px(static_cast<double>(value.size()) * 9);
             };
             for (int seat = 0; seat < 4; ++seat) {
                 if (!SeatPresent(s.seat_mask, seat)) continue;

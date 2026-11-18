@@ -111,7 +111,7 @@ namespace tenhou {
         const auto control = [&](const wchar_t *kind, const wchar_t *text, int id, DWORD style = 0) {
             const auto window = CreateWindowExW(std::wstring(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
                                                 kind, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 1, 1, viewport_,
-                                                reinterpret_cast<HMENU>(id), instance, nullptr);
+                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
             if (!window) throw std::runtime_error("Cannot create offline table control");
             SendMessageW(window, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
             return window;

@@ -11,14 +11,13 @@
 #include <charconv>
 #include <stdexcept>
 #include <commctrl.h>
-#include <random>
 
 namespace tenhou {
     void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
         if (change == PreferenceChange::MusicPreviewBegin || change == PreferenceChange::MusicPreviewEnd) {
             music_preview_ = change == PreferenceChange::MusicPreviewBegin;
-            StopLobbyMusic();
-            if (!music_preview_) UpdateLobbyMusic();
+            if (music_preview_) lobby_music_.Stop();
+            UpdateLobbyMusic();
             return;
         }
         preferences_ = preferences;
@@ -46,8 +45,7 @@ namespace tenhou {
             audio_error_.clear();
             log_("ONLINE AUDIO SETTINGS enabled=" + std::to_string(sound_enabled_) +
                  " master=" + std::to_string(preferences.se_volume));
-            StopLobbyMusic();
-            UpdateLobbyMusic();
+            UpdateLobbyMusic(true);
         }
     }
 
@@ -224,6 +222,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     LobbyView::~LobbyView() {
+        lobby_music_.Stop();
         StopSound();
         variant_.reset();
         matching_.reset();
@@ -239,8 +238,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::Login(const ConnectionOptions &options) {
         if (client_->active()) client_->Disconnect();
+        const bool reconnect = client_->snapshot().reconnect_available && options.recover_games &&
+                               !options.register_account && options.host == login_options_.host &&
+                               options.port == login_options_.port && options.identity == login_options_.identity &&
+                               options.gender == login_options_.gender;
         login_options_ = options;
-        if (client_->snapshot().reconnect_available && options.recover_games) client_->Reconnect(login_options_);
+        if (reconnect) client_->Reconnect(login_options_);
         else client_->Connect(login_options_);
     }
 
@@ -265,7 +268,14 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!visible && exit_vote_) ShowWindow(exit_vote_, SW_HIDE);
         if (!visible && client_->active()) client_->Disconnect();
         ShowWindow(window_, visible ? SW_SHOW : SW_HIDE);
+        UpdateLobbyMusic();
         if (visible) PostMessageW(window_, WM_APP + 18, 0, 0);
+    }
+
+    void LobbyView::SetWelcomeMusic(bool visible, bool official) {
+        welcome_music_ = visible;
+        official_welcome_ = official;
+        UpdateLobbyMusic();
     }
 
     void LobbyView::Disconnect() { if (client_->active() || Snapshot().reconnect_available) client_->Disconnect(); }
@@ -296,6 +306,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         action_artwork_.Configure(directory, width);
         action_artwork_error_.clear();
         resource_directory_ = directory;
+        UpdateLobbyMusic(true);
         canvas_width_ = width;
         lobby_background_ = {};
         table_.Configure(directory, width);
@@ -942,7 +953,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::StopSound(bool preserve_resume) {
-        StopLobbyMusic();
         motion_timer_.Stop();
         if (match_intro_ && !preserve_resume) {
             if (match_intro_->Resuming()) log_("ONLINE RESUME PREPARATION END");
@@ -965,65 +975,48 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
     }
 
-    void LobbyView::StopLobbyMusic() {
-        if (lobby_music_key_.empty()) return;
-        try { lobby_music_.Stop(); } catch (const std::exception &e) {
-            log_(std::string("LOBBY BGM STOP ERROR ") + e.what());
+    void LobbyView::UpdateLobbyMusic(bool refresh) {
+        std::wstring key;
+        bool third_party_lobby = false;
+        if (!music_preview_ && !resource_directory_.empty()) {
+            if (welcome_music_) {
+                key = L"BGM_LOBBY0";
+                third_party_lobby = !official_welcome_;
+            } else if (client_ && IsWindowVisible(window_)) {
+                const auto &s = client_->snapshot();
+                const auto &game = displaying_ ? displayed_.game : s.game;
+                if ((s.phase == LobbyPhase::Game || s.phase == LobbyPhase::MatchComplete) && game.initialized &&
+                    !s.recovering) {
+                    const int last = static_cast<int>(((game.type & 8u) | 6u) >> 1) - ((game.type & 16u) ? 1 : 0);
+                    int index = game.round < last ? (game.round < 4 ? 0 : 1) : game.round == last ? 2 : 3;
+                    const auto reaches = std::count_if(game.players.begin(), game.players.end(),
+                                                       [](const OnlinePlayer &p) { return p.reach != 0; });
+                    if (reaches) index = reaches == 1 ? 4 : 5;
+                    if (settlement_view_->FinalPage()) index = 9;
+                    key = L"BGM_GAME" + std::to_wstring(index);
+                } else if (s.phase == LobbyPhase::Lobby || s.phase == LobbyPhase::Matching ||
+                           s.phase == LobbyPhase::Cancelling || s.phase == LobbyPhase::ChangingLobby) {
+                    third_party_lobby = s.native_service;
+                    const bool custom = !s.lobby.empty() && s.lobby.front() == 'C';
+                    key = custom && !third_party_lobby ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
+                }
+            }
         }
-        lobby_music_key_.clear();
-        log_("LOBBY BGM STOP");
-    }
-
-    void LobbyView::UpdateLobbyMusic() {
-        if (music_preview_) {
-            StopLobbyMusic();
-            return;
-        }
-        if (!client_) return;
-        const auto &s = client_->snapshot();
-        const bool lobby = s.phase == LobbyPhase::Lobby || s.phase == LobbyPhase::Matching ||
-                           s.phase == LobbyPhase::Cancelling || s.phase == LobbyPhase::ChangingLobby;
-        const auto &game = displaying_ ? displayed_.game : s.game;
-        const bool playing = (s.phase == LobbyPhase::Game || s.phase == LobbyPhase::MatchComplete) && game.initialized
-                             && !s.recovering;
-        if (!IsWindowVisible(window_) || (!lobby && !playing) || resource_directory_.empty()) {
-            StopLobbyMusic();
-            return;
-        }
-        const bool custom = !s.lobby.empty() && s.lobby.front() == 'C';
-        std::wstring key = custom ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
-        if (playing) {
-            const int last = static_cast<int>(((game.type & 8u) | 6u) >> 1) - ((game.type & 16u) ? 1 : 0);
-            int index = game.round < last ? (game.round < 4 ? 0 : 1) : game.round == last ? 2 : 3;
-            const auto reaches = std::count_if(game.players.begin(), game.players.end(),
-                                               [](const OnlinePlayer &p) { return p.reach != 0; });
-            if (reaches) index = reaches == 1 ? 4 : 5;
-            if (settlement_view_->FinalPage()) index = 9;
-            key = L"BGM_GAME" + std::to_wstring(index);
-        }
-        const auto option = MusicOption(key);
-        const auto source = PreferenceString(config_, L"RESOURCE", key.c_str(), L"default");
-        const auto identity = NetworkUtf8(key) + ":" + NetworkUtf8(source);
-        if (lobby_music_key_ == identity) return;
-        StopLobbyMusic();
-        lobby_music_key_ = identity;
-        if (_wcsicmp(source.c_str(), L"none") == 0) return;
+        if (!refresh && lobby_music_key_ == key && third_party_music_ == third_party_lobby) return;
+        lobby_music_key_ = key;
+        third_party_music_ = third_party_lobby;
         try {
-            // Choose only when starting playback, never on every snapshot/timer.
-            // Repeats are allowed, as with the original client's independent draw.
-            static std::mt19937 random(std::random_device{}());
-            const auto path = MusicPlaybackPath(resource_directory_, config_, key,
-                                                 std::uniform_int_distribution<unsigned>(0, 1)(random));
-            if (path.empty()) return;
+            if (key.empty()) {
+                lobby_music_.Select(window_);
+                return;
+            }
+            const auto path = MusicPath(resource_directory_, config_, key, third_party_lobby);
             const int master = std::clamp(
                 static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str())), 0, 200);
             const int level = std::clamp(
-                static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", option.c_str(), 60, config_.c_str())), 0, 200);
-            lobby_music_.SetVolumePercent(master);
-            const auto clip = std::make_shared<SoundClip>(DecodeMusic(ReadFile(path)));
-            lobby_music_.Play(0, clip, true, level * .01);
-            log_("LOBBY BGM START file=" + path.filename().string() + " master=" + std::to_string(master) + " level=" +
-                 std::to_string(level) + " loop=1");
+                static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", MusicOption(key).c_str(), 60, config_.c_str())),
+                0, 200);
+            lobby_music_.Select(window_, path, key == L"BGM_LOBBY0", (master * .01) * (level * .01));
         } catch (const std::exception &e) { log_(std::string("LOBBY BGM ERROR ") + e.what()); }
     }
 
@@ -1722,6 +1715,10 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                 if (message == WM_APP + 26) {
                     self->pressed_action_ = static_cast<int>(wparam);
                     self->button_revision_ = self->Snapshot().actions.revision;
+                    return 0;
+                }
+                if (message == MM_WOM_DONE) {
+                    self->lobby_music_.BufferDone();
                     return 0;
                 }
                 if (message == WM_APP + 18) {

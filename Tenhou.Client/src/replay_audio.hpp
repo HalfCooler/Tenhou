@@ -21,6 +21,39 @@ namespace tenhou {
 
     Bytes ScaleSoundPcm(const SoundClip &clip, double gain);
 
+    class BackgroundMusic {
+    public:
+        explicit BackgroundMusic(std::function<void(const std::string &)> log) : log_(std::move(log)) {}
+        ~BackgroundMusic();
+
+        BackgroundMusic(const BackgroundMusic &) = delete;
+        BackgroundMusic &operator=(const BackgroundMusic &) = delete;
+
+        void Select(HWND window, const std::filesystem::path &path = {}, bool seek = false, double gain = 1);
+        void BufferDone();
+        void Stop();
+
+    private:
+        struct Buffer {
+            WAVEHDR header{};
+            Bytes pcm;
+        };
+
+        void Start();
+        void Queue(Buffer &buffer);
+        void Close();
+
+        std::function<void(const std::string &)> log_;
+        HWND window_ = nullptr;
+        HWAVEOUT device_ = nullptr;
+        std::filesystem::path requested_, playing_;
+        bool seek_ = false;
+        double requested_gain_ = 1, gain_ = 1, envelope_ = 1;
+        SoundClip clip_;
+        std::array<Buffer, 4> buffers_;
+        std::size_t cursor_ = 0, next_buffer_ = 0;
+    };
+
     class ReplaySoundBank {
     public:
         void Load(const std::filesystem::path &resources, int canvas_width, const std::filesystem::path &config);

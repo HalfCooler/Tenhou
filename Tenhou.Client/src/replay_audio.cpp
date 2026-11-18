@@ -175,6 +175,131 @@ namespace tenhou {
         return pcm;
     }
 
+    BackgroundMusic::~BackgroundMusic() { Close(); }
+
+    void BackgroundMusic::Select(HWND window, const std::filesystem::path &path, bool seek, double gain) {
+        const bool changed = requested_ != path;
+        if (changed && device_ && playing_ == requested_)
+            log_("LOBBY BGM FADE OUT file=" + playing_.filename().u8string());
+        window_ = window;
+        requested_ = path;
+        seek_ = seek;
+        requested_gain_ = gain;
+        if (device_) {
+            if (playing_ == requested_) gain_ = gain;
+        } else Start();
+    }
+
+    void BackgroundMusic::Start() {
+        if (requested_.empty()) return;
+        try {
+            clip_ = DecodeMusic(ReadFile(requested_));
+            const auto &format = clip_.format;
+            if (!format.nBlockAlign || !format.nSamplesPerSec ||
+                format.nBlockAlign != format.nChannels * (format.wBitsPerSample / 8) ||
+                clip_.pcm.size() % format.nBlockAlign)
+                throw std::runtime_error("Invalid BGM PCM rate or frame alignment");
+            const auto frames = clip_.pcm.size() / format.nBlockAlign;
+            const auto duration_ms = frames * std::uint64_t{1000} / format.nSamplesPerSec;
+            const auto offset_ms = seek_ && duration_ms ? GetTickCount() % duration_ms : 0;
+            cursor_ = static_cast<std::size_t>(offset_ms * format.nSamplesPerSec / 1000) * format.nBlockAlign;
+            playing_ = requested_;
+            gain_ = requested_gain_;
+            envelope_ = seek_ ? 0 : 1;
+            const auto buffer_bytes = (format.nSamplesPerSec / 16) * format.nBlockAlign;
+            if (!buffer_bytes) throw std::runtime_error("Invalid BGM buffer size");
+            for (auto &buffer: buffers_) buffer.pcm.resize(buffer_bytes);
+            AudioCheck(waveOutOpen(&device_, WAVE_MAPPER, &format, reinterpret_cast<DWORD_PTR>(window_),
+                                   0, CALLBACK_WINDOW), "waveOutOpen BGM");
+            for (auto &buffer: buffers_) {
+                buffer.header.lpData = reinterpret_cast<LPSTR>(buffer.pcm.data());
+                buffer.header.dwBufferLength = static_cast<DWORD>(buffer.pcm.size());
+                AudioCheck(waveOutPrepareHeader(device_, &buffer.header, sizeof(WAVEHDR)), "waveOutPrepareHeader BGM");
+                Queue(buffer);
+            }
+            log_("LOBBY BGM START file=" + playing_.filename().u8string() + " offset_ms=" + std::to_string(offset_ms) +
+                 " fade_in=" + std::to_string(seek_) + " loop=1");
+        } catch (...) {
+            Close();
+            throw;
+        }
+    }
+
+    void BackgroundMusic::Queue(Buffer &buffer) {
+        const auto &format = clip_.format;
+        const unsigned sample_bytes = format.wBitsPerSample / 8;
+        // Original 00403f90 applies a 5e-6 step per channel sample at 44.1 kHz stereo.
+        const double step = 5e-6 * 88200.0 / (format.nSamplesPerSec * double(format.nChannels));
+        const bool fading_out = playing_ != requested_;
+        std::size_t written = 0;
+        while (written < buffer.pcm.size() && (!fading_out || envelope_ > 0)) {
+            for (unsigned channel = 0; channel < format.nChannels; ++channel) {
+                const auto *source = clip_.pcm.data() + cursor_;
+                auto *output = buffer.pcm.data() + written;
+                if (sample_bytes == 1) {
+                    const int sample = static_cast<int>(*source) - 128;
+                    *output = static_cast<std::uint8_t>(128 + std::clamp(int(sample * gain_ * envelope_), -128, 127));
+                } else {
+                    const auto sample = static_cast<std::int16_t>(source[0] | (unsigned(source[1]) << 8));
+                    const auto scaled = static_cast<std::uint16_t>(std::clamp(int(sample * gain_ * envelope_),
+                                                                           -32768, 32767));
+                    output[0] = static_cast<std::uint8_t>(scaled);
+                    output[1] = static_cast<std::uint8_t>(scaled >> 8);
+                }
+                written += sample_bytes;
+                cursor_ += sample_bytes;
+                envelope_ = fading_out ? std::max(0.0, envelope_ - step) : std::min(1.0, envelope_ + step);
+            }
+            if (cursor_ == clip_.pcm.size()) cursor_ = 0;
+        }
+        buffer.header.dwBufferLength = static_cast<DWORD>(written);
+        AudioCheck(waveOutWrite(device_, &buffer.header, sizeof(WAVEHDR)), "waveOutWrite BGM");
+    }
+
+    void BackgroundMusic::BufferDone() {
+        if (!device_) return;
+        try {
+            // Refill in queue order, including when multiple buffers complete before dispatch.
+            while (!(buffers_[next_buffer_].header.dwFlags & WHDR_INQUEUE)) {
+                if (playing_ != requested_ && envelope_ == 0) {
+                    if (std::any_of(buffers_.begin(), buffers_.end(), [](const Buffer &buffer) {
+                        return (buffer.header.dwFlags & WHDR_INQUEUE) != 0;
+                    })) return;
+                    log_("LOBBY BGM STOP file=" + playing_.filename().u8string());
+                    Close();
+                    Start();
+                    return;
+                }
+                Queue(buffers_[next_buffer_]);
+                next_buffer_ = (next_buffer_ + 1) % buffers_.size();
+            }
+        } catch (const std::exception &error) {
+            Close();
+            log_(std::string("LOBBY BGM ERROR ") + error.what());
+        }
+    }
+
+    void BackgroundMusic::Stop() {
+        requested_.clear();
+        Close();
+    }
+
+    void BackgroundMusic::Close() {
+        if (device_) {
+            waveOutReset(device_);
+            for (auto &buffer: buffers_) {
+                if (buffer.header.dwFlags & WHDR_PREPARED)
+                    waveOutUnprepareHeader(device_, &buffer.header, sizeof(WAVEHDR));
+                buffer.header = {};
+            }
+            waveOutClose(device_);
+            device_ = nullptr;
+        }
+        clip_ = {};
+        playing_.clear();
+        next_buffer_ = 0;
+    }
+
     void ReplayAudio::SetVolumePercent(int percent) { volume_percent_ = std::clamp(percent, 0, 200); }
 
     ReplayAudio::~ReplayAudio() {

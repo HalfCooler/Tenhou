@@ -50,8 +50,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
             if (!edit) SetWindowSubclass(control, Hover, 1, 0);
         };
-        add(5200, L"快捷练习", 30, 95, 145, 25);
-        add(5201, L"好友房间", 175, 95, 145, 25);
+        add(5200, L"人机场", 30, 95, 145, 25);
+        add(5201, L"房间场", 175, 95, 145, 25);
         controls_[5250] = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
             50, 175, 240, 220, window_, reinterpret_cast<HMENU>(5250), instance, nullptr);
         SendMessageW(controls_[5250], WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);

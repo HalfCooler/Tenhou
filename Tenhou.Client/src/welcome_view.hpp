@@ -8,7 +8,7 @@
 namespace tenhou {
     class WelcomeView {
     public:
-        enum class Action { Settings, Exit, Lobby, Register };
+        enum class Action { Settings, Exit, Lobby, Register, ServerChanged };
 
         WelcomeView(HWND parent, std::function<void(Action)> action,
                     std::function<void(const std::string &)> log);
@@ -36,6 +36,14 @@ namespace tenhou {
         std::wstring Password() const;
 
         std::wstring Nickname() const;
+
+        std::wstring Host() const;
+
+        unsigned Port() const;
+
+        bool OfficialServer() const { return official_server_; }
+
+        bool HasOfficialId() const;
 
         void ClearPassword();
 
@@ -67,10 +75,13 @@ namespace tenhou {
 
         void SetGender(char gender);
 
+        void SetServer(bool official);
+
         HWND parent_ = nullptr, viewport_ = nullptr, panel_ = nullptr, edit_ = nullptr;
         HWND password_ = nullptr, nickname_ = nullptr;
+        HWND server_ = nullptr, host_ = nullptr, port_ = nullptr, official_id_ = nullptr;
         HFONT font_ = nullptr;
-        bool connecting_ = false;
+        bool connecting_ = false, official_server_ = false;
         std::wstring login_status_;
         std::vector<std::unique_ptr<Control> > controls_;
         Image banner_, background_;

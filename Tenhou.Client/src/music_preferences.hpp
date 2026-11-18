@@ -15,15 +15,16 @@ namespace tenhou {
     inline std::wstring MusicOption(const std::wstring &key) { return key + L"OPT"; }
 
     inline std::filesystem::path MusicPath(const std::filesystem::path &resources, const std::filesystem::path &config,
-                                           const std::wstring &key) {
+                                           const std::wstring &key, bool third_party_lobby = false) {
         auto source = PreferenceString(config, L"RESOURCE", key.c_str(), L"default");
+        if (_wcsicmp(source.c_str(), L"none") == 0) return {};
+        if (third_party_lobby && key == L"BGM_LOBBY0") return ResourceManager(resources).Path(AssetId::LobbyMusic);
         if (source.empty() || _wcsicmp(source.c_str(), L"default") == 0) {
             if (key == L"BGM_LOBBY0") return ResourceManager(resources).Path(AssetId::LobbyMusic);
             if (key == L"BGM_LOBBY1") return ResourceManager(resources).Path(AssetId::LobbyMusicAlternate);
             if (key != L"BGM_GAME0") return MusicPath(resources, config, L"BGM_GAME0");
             return {};
         }
-        if (_wcsicmp(source.c_str(), L"none") == 0) return {};
         std::filesystem::path path(source);
         if (path.is_relative()) path = config.parent_path() / path;
         // Older settings saved the absolute flat path when selecting a built-in BGM.
@@ -38,17 +39,4 @@ namespace tenhou {
         return path;
     }
 
-    // Settings previews retain their explicit track. Default live lobby playback
-    // samples both built-ins, while room-specific overrides and game BGM keep
-    // their configured meaning.
-    inline std::filesystem::path MusicPlaybackPath(const std::filesystem::path &resources,
-                                                   const std::filesystem::path &config,
-                                                   const std::wstring &key, unsigned lobby_track) {
-        if (key == L"BGM_LOBBY0" || key == L"BGM_LOBBY1") {
-            const auto source = PreferenceString(config, L"RESOURCE", key.c_str(), L"default");
-            if (source.empty() || _wcsicmp(source.c_str(), L"default") == 0)
-                return ResourceManager(resources).Path(lobby_track % 2 ? AssetId::LobbyMusicAlternate : AssetId::LobbyMusic);
-        }
-        return MusicPath(resources, config, key);
-    }
 }

@@ -172,49 +172,16 @@ namespace tenhou {
                      client_bounds.bottom - client_bounds.top,
                      SWP_NOMOVE | SWP_NOZORDER);
         welcome_ = std::make_unique<WelcomeView>(window_, [this](WelcomeView::Action action) {
-                                                     if (action == WelcomeView::Action::Exit) PostMessageA(
-                                                         window_, WM_CLOSE, 0, 0);
-                                                     else if (action == WelcomeView::Action::Lobby || action ==
-                                                              WelcomeView::Action::Register) {
-                                                         if (welcome_->Connecting()) {
-                                                             lobby_->Disconnect();
-                                                             welcome_->SetLoginState(false, L"已取消连接");
-                                                             return;
-                                                         }
-                                                         if (lobby_->LoggedIn()) {
-                                                             SetView("lobby");
-                                                             return;
-                                                         }
-                                                         ConnectionOptions connection;
-                                                         connection.identity = NetworkUtf8(welcome_->Identity());
-                                                         connection.gender = welcome_->Gender();
-                                                         connection.password = NetworkUtf8(welcome_->Password());
-                                                         connection.nickname = NetworkUtf8(welcome_->Nickname());
-                                                         connection.register_account =
-                                                                 action == WelcomeView::Action::Register;
-                                                         connection.config_file = config_path_;
-                                                         connection.native_service = true;
-                                                         connection.interactive_games = true;
-                                                         connection.match_games = true;
-                                                         connection.recover_games = true;
-                                                         connection.presentation = true;
-                                                         connection.host = NetworkUtf8(
-                                                             PreferenceString(
-                                                                 config_path_, L"REBUILD", L"NativeHost",
-                                                                 L"127.0.0.1"));
-                                                         connection.port = GetPrivateProfileIntW(
-                                                             L"REBUILD", L"NativePort", 10080, config_path_.c_str());
-                                                         const auto session_key = connection.host + ":" + connection.identity;
-                                                         const auto account_key = Sha256(Bytes(session_key.begin(), session_key.end())).substr(0, 16);
-                                                         connection.session_file =
-                                                                 config_path_.parent_path() / (
-                                                                     L"platform-session-" +
-                                                                     std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) +
-                                                                     L".txt");
-                                                         welcome_->SetLoginState(true, L"正在连接麻将平台...");
-                                                         lobby_->Login(connection);
-                                                     } else settings_->Open();
-                                                 }, [this](const std::string &message) { Log(message); });
+            switch (action) {
+                case WelcomeView::Action::Exit: PostMessageA(window_, WM_CLOSE, 0, 0); break;
+                case WelcomeView::Action::Settings: settings_->Open(); break;
+                case WelcomeView::Action::Lobby: Login(false); break;
+                case WelcomeView::Action::Register: Login(true); break;
+                case WelcomeView::Action::ServerChanged:
+                    lobby_->SetWelcomeMusic(view_ == "welcome", welcome_->OfficialServer());
+                    break;
+            }
+        }, [this](const std::string &message) { Log(message); });
         welcome_->LoadPreferences(config_path_);
         table_ = std::make_unique<TableView>(window_, [this](const std::string &message) { Log(message); },
                                              config_path_);
@@ -293,11 +260,56 @@ namespace tenhou {
         welcome_->Show(view_ == "welcome");
         table_->Show(view_ == "replay");
         lobby_->Show(view_ == "lobby");
+        lobby_->SetWelcomeMusic(view_ == "welcome", welcome_->OfficialServer());
         EnableMenuItem(client_menu_, kReplay, MF_BYCOMMAND | (view_ == "lobby" ? MF_GRAYED : MF_ENABLED));
         EnableMenuItem(client_menu_, kWelcome, MF_BYCOMMAND | (view_ == "replay" ? MF_ENABLED : MF_GRAYED));
         Layout();
         LoadResources();
         Log("VIEW " + view_);
+    }
+
+    void Application::Login(bool register_account) {
+        if (welcome_->OfficialServer()) {
+            welcome_->SetLoginState(false, welcome_->HasOfficialId()
+                ? L"官方 ID 格式有效，连接尚未开放"
+                : L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）");
+            return;
+        }
+        if (welcome_->Connecting()) {
+            lobby_->Disconnect();
+            welcome_->SetLoginState(false, L"已取消连接");
+            return;
+        }
+        if (lobby_->LoggedIn()) {
+            SetView("lobby");
+            return;
+        }
+        ConnectionOptions connection;
+        connection.host = NetworkUtf8(welcome_->Host());
+        connection.port = welcome_->Port();
+        if (connection.host.empty() || !connection.port) {
+            welcome_->SetLoginState(false, L"请输入服务器主机和 1～65535 之间的端口");
+            return;
+        }
+        connection.identity = NetworkUtf8(welcome_->Identity());
+        connection.gender = welcome_->Gender();
+        connection.password = NetworkUtf8(welcome_->Password());
+        connection.nickname = NetworkUtf8(welcome_->Nickname());
+        connection.register_account = register_account;
+        connection.config_file = config_path_;
+        connection.native_service = true;
+        connection.interactive_games = true;
+        connection.match_games = true;
+        connection.recover_games = true;
+        connection.presentation = true;
+        // The earlier numeric default and localhost identify the same local service.
+        const auto session_host = connection.host == "localhost" ? "127.0.0.1" : connection.host;
+        const auto session_key = session_host + ":" + connection.identity;
+        const auto account_key = Sha256(Bytes(session_key.begin(), session_key.end())).substr(0, 16);
+        connection.session_file = config_path_.parent_path() / (
+            L"platform-session-" + std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) + L".txt");
+        welcome_->SetLoginState(true, L"正在连接第三方服务器...");
+        lobby_->Login(connection);
     }
 
     void Application::Paint(HDC dc) {

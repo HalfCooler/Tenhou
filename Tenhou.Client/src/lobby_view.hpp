@@ -36,6 +36,8 @@ namespace tenhou {
 
         void Show(bool visible);
 
+        void SetWelcomeMusic(bool visible, bool official);
+
         void Resize(int width, int height);
 
         void Capture(HDC dc);
@@ -165,9 +167,7 @@ namespace tenhou {
 
         bool SuppressCallPrompt() const;
 
-        void UpdateLobbyMusic();
-
-        void StopLobbyMusic();
+        void UpdateLobbyMusic(bool refresh = false);
 
         void UpdateAutomaticTimer();
 
@@ -186,9 +186,9 @@ namespace tenhou {
         std::filesystem::path config_;
         std::function<void(const std::string &)> log_;
         ReplayAudio audio_;
-        ReplayAudio lobby_music_;
-        std::string lobby_music_key_;
-        bool music_preview_ = false;
+        BackgroundMusic lobby_music_;
+        std::wstring lobby_music_key_;
+        bool music_preview_ = false, welcome_music_ = false, official_welcome_ = false, third_party_music_ = false;
         ReplaySoundBank sounds_;
         bool sound_enabled_ = true, sound_loaded_ = false;
         bool animation_enabled_ = true;
