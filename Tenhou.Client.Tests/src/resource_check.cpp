@@ -2,13 +2,58 @@
 #include "object_pack.hpp"
 #include "background.hpp"
 #include "music_preferences.hpp"
+#include "original_display.hpp"
 #include "replay_effects.hpp"
+#include "sprite_assets.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
+
+namespace {
+    void CheckDisplayImages(const std::filesystem::path &directory, const tenhou::ResourcePack &pack) {
+        using namespace tenhou;
+        const ResourceManager resources(directory);
+        DisplayArtwork bundled;
+        bundled.Configure(directory, 1440);
+        for (unsigned id = 401; id <= 705; ++id) {
+            if (FindTextImageByOrigin(id) || id == 593) continue;
+            auto path = directory / "images" / "sprites" / (std::to_string(id) + ".png");
+            if (std::filesystem::is_regular_file(path))
+                throw std::runtime_error("Retired sprite still staged: " + path.u8string());
+        }
+
+        const auto fixture = std::filesystem::temp_directory_path() /
+            (L"tenhou-display-images-" + std::to_wstring(GetCurrentProcessId()));
+        if (!std::filesystem::create_directory(fixture)) throw std::runtime_error("Display fixture directory already exists");
+        struct Cleanup {
+            std::filesystem::path path;
+            ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+        } cleanup{fixture};
+        const auto png = resources.Read(AssetId::FlowerMei);
+        VariantArtwork overrides; overrides.Configure(fixture);
+        DisplayArtwork hd, sd; hd.Configure(fixture, 1440); sd.Configure(fixture, 1024);
+        for (const auto &sprite : kSpriteAssets) {
+            const auto entry = std::find_if(pack.entries.begin(), pack.entries.end(),
+                [&](const Resource &resource) { return resource.id == sprite.id; });
+            if (entry == pack.entries.end()) throw std::runtime_error("Missing bundled display image " + std::to_string(sprite.id));
+            const auto original = DecodeImage(*entry);
+            if (!std::filesystem::is_regular_file(resources.Path(sprite.asset)) && bundled.Get(sprite.id).bgra != original.bgra)
+                throw std::runtime_error("DAT display fallback differs for image " + std::to_string(sprite.id));
+
+            const auto path = fixture / ResourceManager::Info(sprite.asset).path;
+            std::filesystem::create_directories(path.parent_path());
+            WriteFile(path, png);
+            const auto *custom = overrides.GetSprite(sprite.id);
+            const auto &full = hd.Get(sprite.id), &scaled = sd.Get(sprite.id);
+            if (!custom || full.bgra != custom->bgra || scaled.width != std::max(1, static_cast<int>(full.width / 1.4)) ||
+                scaled.height != std::max(1, static_cast<int>(full.height / 1.4)))
+                throw std::runtime_error("HD override or SD scaling failed for image " + std::to_string(sprite.id));
+        }
+    }
+}
 
 int main(int argc, char **argv) {
     if (argc != 3 && !(argc == 4 && std::string(argv[3]) == "--play-audio")) {
@@ -33,7 +78,7 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("Background decode failed");
         }
         const auto display = tenhou::LoadResourcePack(resources.Path(tenhou::AssetId::DisplayPack));
-        if (display.entries.empty()) throw std::runtime_error("Empty display resource pack");
+        CheckDisplayImages(argv[1], display);
         const auto table = tenhou::LoadObjectPack(resources.Path(tenhou::AssetId::TablePack));
         const auto companion = tenhou::LoadObjectPack(resources.Path(tenhou::AssetId::TableCompanionPack));
         if (table.entries.empty() || companion.entries.empty()) throw std::runtime_error("Empty table resource pack");
@@ -114,7 +159,7 @@ int main(int argc, char **argv) {
             }
         }
         Gdiplus::GdiplusShutdown(token);
-        std::cout << "PASS client asset bytes, embedded resources, background/pack decoding, legacy paths, "
+        std::cout << "PASS client asset bytes, embedded resources, display images and PNG overrides, legacy paths, "
                      "sound aliases/PCM, both BGM tracks, playback selection and overrides\n";
         return 0;
     } catch (const std::exception &error) {

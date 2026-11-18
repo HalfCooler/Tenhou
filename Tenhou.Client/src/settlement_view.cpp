@@ -326,17 +326,9 @@ namespace tenhou {
         layout.honba = honba_;
         layout.sticks = sticks_;
         layout.pattern_page = pattern_page_;
-        layout.variant_image_size = [this](AssetId id) {
-            const auto *image = display_artwork_.GetVariant(id);
-            return image ? SIZE{image->width, image->height} : SIZE{};
-        };
         layout.tile_bounds = [this](const TableTile &tile) {
             const auto &item = artwork_.Get(tile, red_);
             return RECT{item.x, item.y, item.x + item.image.width, item.y + item.image.height};
-        };
-        layout.image_size = [this](unsigned id) {
-            const auto &im = display_artwork_.Get(id);
-            return SIZE{im.width, im.height};
         };
         layout.text_width = DisplayArtwork::MeasureText;
         layout.text_extent = DisplayArtwork::MeasureTextExtent;
@@ -547,27 +539,17 @@ namespace tenhou {
                 graphics.Restore(saved);
                 if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement tile");
             }
-            const double resource_scale = 1;
             for (const auto &item: scene.images) {
                 const auto &im = display_artwork_.Get(item.id);
                 Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
                                        const_cast<BYTE *>(im.bgra.data()));
                 if (graphics.DrawImage(&bitmap, item.x, item.y,
-                                       static_cast<int>(im.width * item.scale / resource_scale),
-                                       static_cast<int>(im.height * item.scale / resource_scale)) != Gdiplus::Ok)
-                    throw std::runtime_error("Cannot paint settlement label");
-            }
-            for (const auto &item: scene.pattern_images) {
-                const auto *im = display_artwork_.GetVariant(item.asset);
-                if (!im) continue;
-                Gdiplus::Bitmap bitmap(im->width, im->height, im->width * 4, PixelFormat32bppARGB,
-                    const_cast<BYTE *>(im->bgra.data()));
-                if (graphics.DrawImage(&bitmap, item.rect.left, item.rect.top,
-                    item.rect.right - item.rect.left, item.rect.bottom - item.rect.top) != Gdiplus::Ok)
-                    throw std::runtime_error("Cannot paint variant pattern");
+                                       static_cast<int>(im.width * item.scale),
+                                       static_cast<int>(im.height * item.scale)) != Gdiplus::Ok)
+                    throw std::runtime_error("Cannot paint settlement image");
             }
             for (const auto &item: scene.text) {
-                if (!item.visible) continue;
+                if (!item.visible || !item.spans.empty()) continue;
                 Gdiplus::FontFamily family(item.role == "unknown_yaku" || item.role.rfind("variant_", 0) == 0
                                                ? L"KaiTi"
                                                : item.original_font
@@ -603,11 +585,22 @@ namespace tenhou {
                 } else status = graphics.DrawString(value.c_str(), -1, &font, rect, &format, &ink);
                 if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement text");
             }
+            graphics.ResetTransform();
+            graphics.SetPageUnit(Gdiplus::UnitPixel);
+            const bool sd = scene.width == 1024;
+            const auto context = TextRenderContext::Viewport(scene.width, scene.height,
+                Gdiplus::RectF(static_cast<float>(target.left), static_cast<float>(target.top),
+                               static_cast<float>(target.right - target.left), static_cast<float>(target.bottom - target.top)),
+                sd, GetDpiForWindow(window_));
+            for (const auto &item: scene.text) {
+                if (!item.visible || item.spans.empty()) continue;
+                auto &renderer = display_artwork_.Text();
+                for (const auto &run: LayoutSettlementText(renderer, item, sd)) renderer.Draw(graphics, context, run);
+            }
             if (confirm_deadline_ &&confirm_seconds_>0)
             {
                 // Draw with the parent frame so repeated paints cannot accumulate
                 // ClearType edges from a transparent child window.
-                graphics.ResetTransform();
                 RECT button{};
                 GetWindowRect(ok_, &button);
                 MapWindowPoints(nullptr, window_, reinterpret_cast<POINT *>(&button), 2);

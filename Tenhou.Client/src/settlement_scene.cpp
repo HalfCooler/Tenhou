@@ -1,6 +1,5 @@
 #include "settlement_scene.hpp"
 #include "network_protocol.hpp"
-#include "text_catalog.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <iomanip>
@@ -18,13 +17,28 @@ namespace tenhou {
             return s.str();
         }
 
+        void CatalogText(SettlementScene &scene, std::string role, RECT rect,
+                         std::vector<SettlementTextSpan> spans, int align = 0) {
+            SettlementTextItem item;
+            item.role = std::move(role);
+            item.rect = rect;
+            item.align = align;
+            for (const auto &span: spans) {
+                if (span.key == TextKey::Count) item.text += span.text;
+                else item.text += TextUtf8(span.key);
+            }
+            item.spans = std::move(spans);
+            scene.text.push_back(std::move(item));
+        }
+
+        std::string WithUnit(long long value, TextKey unit) {
+            return std::to_string(value) + " " + std::string(TextUtf8(unit));
+        }
+
         SettlementScene BuildRoundSettlement(const SettlementReceipt &r, const std::array<std::string, 4> &names,
                                              std::size_t shown_yaku, bool ura, bool totals,
                                              const SettlementLayout &layout) {
             SettlementScene scene;
-            const auto han_unit = std::string(TextUtf8(TextKey::unit_han));
-            const auto fu_unit = std::string(TextUtf8(TextKey::unit_fu));
-            const auto points_unit = std::string(TextUtf8(TextKey::unit_points));
             scene.width = layout.width;
             scene.height = layout.width * 3 / 4;
             const double scale = layout.width == 1440 ? 1.4 : 1.0;
@@ -32,9 +46,10 @@ namespace tenhou {
             const int left = (scene.width - px(660)) / 2, top = (scene.height - px(640)) / 2;
             scene.panel = {left, top, left + px(660), top + px(640)};
             scene.confirm = {left + px(307), top + px(591), left + px(363), top + px(612)};
-            const auto size = [&](unsigned id) -> SIZE {
-                if (layout.image_size) return layout.image_size(id);
-                return {px(id >= 552 ? 22 : id >= 481 ? 180 : 66), px(id >= 552 ? 24 : id >= 481 ? 24 : 28)};
+            const auto catalog = [&](std::string role, int x, int y, int w, int h,
+                                     std::vector<SettlementTextSpan> spans, int align = 0) {
+                CatalogText(scene, std::move(role), {left + px(x), top + px(y), left + px(x + w), top + px(y + h)},
+                            std::move(spans), align);
             };
             const auto text = [&](const std::string &role, const std::string &value, int x, int y, int w,
                                   int em = 14, unsigned color = 0xffffffff, int align = 0, bool visible = true) {
@@ -64,16 +79,14 @@ namespace tenhou {
                 if (r.who >= 0) text("variant_name", names[r.who], 24, 12, 580, 16);
             }
             if (r.who < 0) {
-                // FUN_004af580 chooses these exact reason image IDs from type.
-                unsigned title = 461;
-                if (r.reason == "yao9") title = 467;
-                else if (r.reason == "reach4") title = 468;
-                else if (r.reason == "ron3") title = 469;
-                else if (r.reason == "kan4") title = 470;
-                else if (r.reason == "kaze4") title = 471;
-                else if (r.reason == "nm") title = 472;
-                image(title, scene.width / 2 - size(title).cx / 2, top + px(30));
-                text("reason", std::string(TextUtf8(FindTextByOrigin(title)->key)), 80, 30, 500, 24, 0xffffffff, 1, false);
+                auto title = TextKey::title_draw;
+                if (r.reason == "yao9") title = TextKey::draw_nine_terminals;
+                else if (r.reason == "reach4") title = TextKey::draw_four_riichi;
+                else if (r.reason == "ron3") title = TextKey::draw_triple_ron;
+                else if (r.reason == "kan4") title = TextKey::draw_four_kans;
+                else if (r.reason == "kaze4") title = TextKey::draw_four_winds;
+                else if (r.reason == "nm") title = TextKey::draw_nagashi_mangan;
+                catalog("reason", 80, 27, 500, 45, {{{}, title}}, 1);
             }
             if (r.who >= 0) {
                 // Original tehai capture: t/i -> n/(17-i), translated -6; machi -4.
@@ -226,57 +239,27 @@ namespace tenhou {
                 };
                 if (!r.generic) indicators(r.dora, 110, "dora", true);
                 if (!r.ura.empty()) indicators(r.ura, ura_y, "ura", ura);
-                for (std::size_t i = 0; i < std::min<std::size_t>({count, shown_yaku, 14}); ++i) {
+                for (std::size_t i = 0; !r.generic && i < std::min({count, shown_yaku, kSettlementPatternsPerPage}); ++i) {
                     const int column = static_cast<int>(i) / std::max(1, rows), row =
                             static_cast<int>(i) % std::max(1, rows);
                     const int id = r.yakuman.empty() ? yaku[i].id : r.yakuman[i];
                     const int x = columns == 1 ? 190 : 34 + column * 310, y = 194 + row * pitch;
-                    const double glyph_scale = rows > 6 ? .8 : 1;
-                    if (id >= 0 && id < 55) image(481 + id, left + px(x), top + px(y), glyph_scale);
-                    else text("unknown_yaku", SettlementYakuName(id), x, y, columns == 1 ? 210 : 225, 18);
-                    const int han = r.yakuman.empty() ? yaku[i].han : 0;
-                    text("han", r.yakuman.empty() ? std::to_string(han) + " " + han_unit : std::string(TextUtf8(TextKey::limit_yakuman)), columns == 1 ? 414 : x + 238, y,
-                         60, 20, 0xffffffff, 0, false);
-                    if (r.yakuman.empty() && han > 99) text("large_han", std::to_string(han) + " " + han_unit,
-                                                            columns == 1 ? 414 : x + 238, y, 60, 14);
-                    else if (r.yakuman.empty()) {
-                        const auto digits = std::to_string(han);
-                        int cursor = left + px(columns == 1 ? 414 : x + 238);
-                        for (char digit: digits) {
-                            const unsigned key = 552 + digit - '0';
-                            image(key, cursor, top + px(y), glyph_scale);
-                            cursor += static_cast<int>(size(key).cx * glyph_scale);
-                        }
-                        image(562, cursor, top + px(y), glyph_scale);
+                    const int name_width = columns == 1 ? 216 : 228;
+                    const int height = pitch - 2;
+                    if (const auto key = SettlementYakuKey(id))
+                        catalog("yaku", x, y, name_width, height, {{{}, *key}});
+                    else text("unknown_yaku", SettlementYakuName(id), x, y, name_width, 18);
+                    if (r.yakuman.empty()) {
+                        const int value_x = columns == 1 ? 414 : x + 238;
+                        catalog("han", value_x, y, columns == 1 ? 140 : 66, height,
+                                {{WithUnit(yaku[i].han, TextKey::unit_han)}});
                     }
                 }
                 if (count > 14) text("overflow", "More yaku: F2 / Text details", 210, 170, 350, 14);
                 if (!r.generic && !r.has_yaku && !r.has_yakuman) text("missing_yaku", "Yaku not supplied", 190, 194, 400, 18);
                 if (r.generic) {
-                    const unsigned win = r.who == r.from ? 477 : 476;
-                    const auto win_size = size(win);
-                    const double win_scale = std::min(1.0, double(px(45)) / std::max(1L, win_size.cy));
-                    image(win, left + (px(660) - static_cast<int>(win_size.cx * win_scale)) / 2, top + px(123), win_scale);
-                    text("variant_win", std::string(TextUtf8(r.who == r.from ? TextKey::caption_tsumo : TextKey::caption_ron)), 260, 130, 140, 24, 0xffffffff, 1, false);
-                    // Share the original digit, 飜 and 点 sprites; fit a whole run without stretching it.
-                    const auto glyph_run = [&](const std::vector<unsigned> &glyphs, int x, int y, int max_width, bool centered) {
-                        int width = 0, height = 1;
-                        for (unsigned id: glyphs) {
-                            width += id ? size(id).cx : px(14);
-                            if (id) height = std::max(height, static_cast<int>(size(id).cy));
-                        }
-                        const double fit = std::min({1.0, double(px(max_width)) / std::max(1, width), double(px(22)) / height});
-                        int cursor = left + px(x) - (centered ? static_cast<int>(width * fit) / 2 : 0);
-                        for (unsigned id: glyphs) {
-                            if (id) image(id, cursor, top + px(y), fit);
-                            cursor += static_cast<int>((id ? size(id).cx : px(14)) * fit);
-                        }
-                    };
-                    const auto number = [](int value) {
-                        std::vector<unsigned> glyphs;
-                        for (char c: std::to_string(value)) glyphs.push_back(552 + c - '0');
-                        return glyphs;
-                    };
+                    catalog("variant_win", 245, 116, 170, 58,
+                            {{{}, r.who == r.from ? TextKey::caption_tsumo : TextKey::caption_ron}}, 1);
                     const auto visible = std::min(shown_yaku, r.entries.size());
                     const auto pages = SettlementPatternPages(r), page = std::min(layout.pattern_page, pages - 1);
                     const auto begin = page * kSettlementPatternsPerPage;
@@ -284,85 +267,63 @@ namespace tenhou {
                     const bool pattern_columns = end - begin > 6;
                     for (std::size_t i = begin; i < std::min(visible, end); ++i) {
                         const auto &entry = r.entries[i];
-                        const auto normalized = ParseSettlementEntry(entry.name);
-                        const auto pattern = FindPatternArtwork(r.rule, normalized.name);
-                        const int repetitions = entry.count > 1 ? entry.count : normalized.count;
+                        const auto display = ResolveSettlementEntry(entry, r.rule);
                         const int j = static_cast<int>(i - begin);
                         const int x = pattern_columns ? 35 + j / 7 * 310 : 150;
                         const int y = 194 + (pattern_columns ? j % 7 : j) * 24;
                         const int width = pattern_columns ? 225 : 300;
-                        const int name_width = width - (repetitions > 1 ? 40 : 0);
-                        const auto image_size = pattern && layout.variant_image_size ? layout.variant_image_size(pattern->asset) : SIZE{};
-                        if (image_size.cx > 0 && image_size.cy > 0) {
-                            const double fit = std::min(double(px(name_width)) / image_size.cx, double(px(22)) / image_size.cy);
-                            scene.pattern_images.push_back({pattern->asset, {left + px(x), top + px(y),
-                                left + px(x) + static_cast<int>(image_size.cx * fit), top + px(y) + static_cast<int>(image_size.cy * fit)}});
-                            if (repetitions > 1) text("variant_multiplier", "×" + std::to_string(repetitions), x + width - 35, y, 40, 14);
-                        } else text("variant_pattern", SettlementEntryLabel({normalized.name, entry.value, repetitions}, r.rule), x, y, width, 16);
-                        const int value = entry.value > 0 ? entry.value : (pattern ? pattern->value : 0);
-                        if (value > 0) {
-                            auto glyphs = number(value * repetitions); glyphs.push_back(562);
-                            glyph_run(glyphs, x + width + 10, y, 70, false);
-                            text("variant_value", std::to_string(value * repetitions) + " " + han_unit, x + width + 10, y, 70, 14, 0xffffffff, 0, false);
+                        const auto multiplier = display.count > 1 ? "×" + std::to_string(display.count) : "";
+                        if (display.pattern) {
+                            std::vector<SettlementTextSpan> spans{{{}, display.pattern->text}};
+                            if (!multiplier.empty()) spans.push_back({multiplier});
+                            catalog("variant_pattern", x, y, width, 22, std::move(spans));
+                        } else {
+                            // Arbitrary server labels may require glyphs outside the private font.
+                            const int multiplier_width = multiplier.empty() ? 0 : 64;
+                            text("variant_pattern", display.name, x, y, width - multiplier_width, 16);
+                            if (!multiplier.empty())
+                                catalog("variant_multiplier", x + width - multiplier_width, y, multiplier_width, 22,
+                                        {{multiplier}});
                         }
+                        if (display.total_value > 0)
+                            catalog("variant_value", x + width + 8, y, pattern_columns ? 70 : 110, 22,
+                                    {{WithUnit(display.total_value, TextKey::unit_han)}});
                     }
                     if (pages > 1) text("variant_page", std::to_string(page + 1) + " / " + std::to_string(pages), 280, 365, 100, 14, 0xffffffff, 1);
-                    if (!r.flowers.empty()) text("variant_flowers", std::string(TextUtf8(TextKey::yaku_guobiao_flower)) + " ×" + std::to_string(r.flowers.size()), 35, 132, 200, 14);
+                    if (!r.flowers.empty())
+                        catalog("variant_flowers", 35, 130, 200, 25,
+                                {{{}, TextKey::yaku_guobiao_flower}, {" ×" + std::to_string(r.flowers.size())}});
                     if (totals) {
-                        auto glyphs = number(r.fan); glyphs.push_back(562);
                         const int payout = r.points > 0 ? r.points : std::max(0, r.delta[r.who]);
-                        if (payout > 0) {
-                            glyphs.push_back(0);
-                            const auto points = number(payout); glyphs.insert(glyphs.end(), points.begin(), points.end());
-                            glyphs.push_back(564);
-                        }
-                        glyph_run(glyphs, 330, 395, 590, true);
-                        text("variant_fan", std::to_string(r.fan) + " " + han_unit + (payout > 0 ? " " + std::to_string(payout) + " " + points_unit : ""),
-                            35, 395, 590, 22, 0xffffffff, 1, false);
+                        auto value = WithUnit(r.fan, TextKey::unit_han);
+                        if (payout > 0) value += " " + WithUnit(payout, TextKey::unit_points);
+                        catalog("variant_fan", 35, 390, 590, 34, {{std::move(value)}}, 1);
                     }
                 }
             }
             if (totals) {
                 if (r.who >= 0 && !r.generic) {
-                    int han = 0;
-                    for (const auto &y: r.yaku) han += y.han;
-                    const unsigned limit = r.has_ten && r.ten[2] >= 1 && r.ten[2] <= 5 ? 434 + r.ten[2] : 0;
-                    std::string value = r.has_ten
-                                            ? (r.yakuman.empty()
-                                                   ? std::to_string(r.ten[0]) + " " + fu_unit + "  " + std::to_string(han) + " " + han_unit + "  "
-                                                   : "") +
-                                              (limit ? std::string(TextUtf8(FindTextByOrigin(limit)->key)) + "  " : "") + std::to_string(
-                                                  r.ten[1]) + " " + points_unit
-                                            : "Fu / points not supplied";
-                    if (r.has_ten && r.ten[2] > 5) value += " (limit " + std::to_string(r.ten[2]) + ")";
                     const int total_y = std::min(414, ura_y + 80);
-                    text("total", value, 35, total_y, 590, 22, 0xffffffff, 1, !r.has_ten || r.ten[2] > 5);
-                    if (r.has_ten && r.ten[2] <= 5) {
-                        std::vector<unsigned> glyphs;
-                        const auto number = [&](int n) {
-                            for (char c: std::to_string(n)) glyphs.push_back(552 + c - '0');
-                        };
+                    if (r.has_ten) {
+                        std::vector<SettlementTextSpan> spans;
                         if (r.yakuman.empty()) {
-                            number(r.ten[0]);
-                            glyphs.push_back(563);
-                            number(han);
-                            glyphs.push_back(562);
-                            glyphs.push_back(0);
+                            long long han = 0;
+                            for (const auto &y: r.yaku) han += y.han;
+                            spans.push_back({WithUnit(r.ten[0], TextKey::unit_fu) + "  " +
+                                             WithUnit(han, TextKey::unit_han) + "  "});
                         }
-                        if (limit) {
-                            glyphs.push_back(limit);
-                            glyphs.push_back(0);
+                        constexpr TextKey limits[]{TextKey::limit_mangan, TextKey::limit_haneman, TextKey::limit_baiman,
+                                                   TextKey::limit_sanbaiman, TextKey::limit_yakuman};
+                        const int limit = r.ten[2];
+                        if (limit >= 1 && limit <= static_cast<int>(std::size(limits))) {
+                            spans.push_back({{}, limits[limit - 1]});
+                            spans.push_back({"  "});
                         }
-                        number(r.ten[1]);
-                        glyphs.push_back(564);
-                        int width = 0;
-                        for (unsigned id: glyphs) width += id ? size(id).cx : px(18);
-                        int cursor = left + (px(660) - width) / 2;
-                        for (unsigned id: glyphs) {
-                            if (id)image(id, cursor, top + px(total_y));
-                            cursor += id ? size(id).cx : px(18);
-                        }
-                    }
+                        auto points = WithUnit(r.ten[1], TextKey::unit_points);
+                        if (limit > static_cast<int>(std::size(limits))) points += " (limit " + std::to_string(limit) + ")";
+                        spans.push_back({std::move(points)});
+                        catalog("total", 35, total_y, 590, 30, std::move(spans), 1);
+                    } else text("total", "Fu / points not supplied", 35, total_y, 590, 22, 0xffffffff, 1);
                 }
                 // Native screen positions are relative to the viewer: 0 below, 1
                 // right, 2 above, 3 left. Seat wind depends on the current dealer.
@@ -371,7 +332,9 @@ namespace tenhou {
                     if (!SeatPresent(r.seat_mask, seat)) continue;
                     const int x = xs[seat], y = ys[seat], wind = SeatWind(r.seat_mask, layout.dealer, seat);
                     scene.score_panels.push_back({left + px(x), top + px(y), left + px(x + 190), top + px(y + 41)});
-                    image(412 + wind, left + px(x + 15), top + px(y + 7));
+                    constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
+                                              TextKey::seat_neutral_west, TextKey::seat_neutral_north};
+                    catalog("score_wind", x + 12, y + 4, 33, 31, {{{}, winds[wind]}}, 1);
                     text("score_name", names[seat].empty() ? "Seat " + std::to_string(seat) : names[seat], x + 55,
                          y + 2, 112, 14, 0xffffffff, 1);
                     text("base", std::to_string(r.base[seat]), x + 48, y + 17, 62, 14, 0xffffffff, 2);
@@ -402,8 +365,7 @@ namespace tenhou {
                     if (item.role == "reason") OffsetRect(&item.rect, 0, compact_top - top);
                     else OffsetRect(&item.rect, 0, shift);
                 }
-                for (auto &item: scene.images)
-                    item.y += item.id >= 461 && item.id <= 472 ? compact_top - top : shift;
+                for (auto &item: scene.images) item.y += shift;
             }
             return scene;
         }
@@ -432,8 +394,8 @@ namespace tenhou {
             const int left = (scene.width - px(450)) / 2, top = (scene.height - px(480)) / 2, center = scene.width / 2;
             scene.panel = {left, top, left + px(450), top + px(480)};
             scene.confirm = {center - px(28), top + px(430), center + px(28), top + px(451)};
-            const auto title = layout.image_size ? layout.image_size(462) : SIZE{px(100), px(30)};
-            scene.images.push_back({462, center - title.cx / 2, top + px(75)});
+            CatalogText(scene, "final_title", {left, top + px(69), left + px(450), top + px(120)},
+                        {{{}, TextKey::title_game_end}}, 1);
             std::vector<int> order;
             for (int i = 0; i < 4; ++i) if (SeatPresent(s.seat_mask, i)) order.push_back(i);
             // Original compares the supplied ranking points, retaining seat order on ties.
@@ -477,6 +439,47 @@ namespace tenhou {
         }
         text("missing", "No settlement received", 40, 80, 900);
         return scene;
+    }
+
+    std::vector<SceneTextRun> LayoutSettlementText(TextRenderer &renderer, const SettlementTextItem &item, bool sd) {
+        std::vector<SceneTextRun> runs;
+        double cursor = 0, left = 0, right = 0, height = 0;
+        for (const auto &span: item.spans) {
+            TextLayout layout;
+            if (span.key != TextKey::Count) layout = renderer.Layout(span.key);
+            else {
+                const int size = MultiByteToWideChar(CP_UTF8, 0, span.text.data(), static_cast<int>(span.text.size()), nullptr, 0);
+                std::wstring wide(size, L' ');
+                if (size) MultiByteToWideChar(CP_UTF8, 0, span.text.data(), static_cast<int>(span.text.size()), wide.data(), size);
+                layout = renderer.Layout(wide, span.style);
+            }
+            const auto &effects = layout.metrics.effects;
+            if (!effects.IsEmptyArea()) {
+                left = runs.empty() ? cursor + effects.X : std::min(left, cursor + effects.X);
+                right = std::max(right, cursor + effects.GetRight());
+                height = std::max(height, static_cast<double>(effects.Height));
+                SceneTextRun run;
+                run.layout = layout;
+                run.transform[4] = cursor;
+                runs.push_back(std::move(run));
+            }
+            cursor += layout.metrics.advance;
+        }
+        if (runs.empty()) return runs;
+        const double to_hd = sd ? 1.4 : 1;
+        const double width = (item.rect.right - item.rect.left) * to_hd;
+        const double row_height = (item.rect.bottom - item.rect.top) * to_hd;
+        const double fit = std::min({1.0, width / (right - left), row_height / height});
+        const double indent = item.align == 1 ? (width - (right - left) * fit) / 2 :
+                              item.align == 2 ? width - (right - left) * fit : 0;
+        for (auto &run: runs) {
+            const auto &effects = run.layout.metrics.effects;
+            run.anchor = {static_cast<float>(item.rect.left * to_hd + indent),
+                          static_cast<float>(item.rect.top * to_hd + row_height / 2)};
+            run.transform = {fit, 0, 0, fit, (run.transform[4] - left) * fit,
+                             -(effects.Y + effects.Height / 2) * fit};
+        }
+        return runs;
     }
 
     std::vector<std::size_t> SettlementPaintOrder(const SettlementScene &scene) {
@@ -524,13 +527,6 @@ namespace tenhou {
             if (i)out << ',';
             const auto &im = s.images[i];
             out << "{\"id\":" << im.id << ",\"x\":" << im.x << ",\"y\":" << im.y << ",\"scale\":" << im.scale << '}';
-        }
-        out << "],\"pattern_images\":[";
-        for (std::size_t i = 0; i < s.pattern_images.size(); ++i) {
-            if (i) out << ',';
-            const auto &item = s.pattern_images[i];
-            out << "{\"asset\":" << NetworkJson(ResourceManager::Info(item.asset).name) << ",\"x\":" << item.rect.left <<
-                ",\"y\":" << item.rect.top << ",\"right\":" << item.rect.right << ",\"bottom\":" << item.rect.bottom << '}';
         }
         out << "]}";
         return out.str();

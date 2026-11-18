@@ -83,19 +83,13 @@ namespace tenhou {
             throw std::runtime_error("Cannot write output: " + path.string());
     }
 
-    ResourcePack LoadResourcePack(const std::filesystem::path &path) {
-        const auto raw = ReadFile(path);
-        // The cached .dat files retain their own gzip layer after download.
-        return ParseResourcePack(Inflate(raw, MAX_WBITS + 16, kMaxBytes));
-    }
-
     Bytes InflateZlib(const Bytes &input, std::size_t limit) {
         if (input.size() > kMaxBytes || limit > kMaxBytes)
             throw std::runtime_error("Compressed resource exceeds 64 MiB limit");
         return Inflate(input, MAX_WBITS, limit);
     }
 
-    ResourcePack ParseResourcePack(Bytes decoded) {
+    static ResourcePack ParseResourcePack(const Bytes &decoded, ResourceFilter include) {
         if (decoded.size() < 4 || decoded.size() > kMaxBytes)
             throw std::runtime_error("Invalid resource container size");
         ResourcePack pack;
@@ -116,13 +110,20 @@ namespace tenhou {
                 throw std::runtime_error("Resource payload exceeds container");
             if (!ids.insert(entry.id).second)
                 throw std::runtime_error("Duplicate resource ID");
-            entry.payload.assign(decoded.begin() + offset, decoded.begin() + offset + size);
-            pack.entries.push_back(std::move(entry));
+            if (!include || include(entry.id, entry.metadata)) {
+                entry.payload.assign(decoded.begin() + offset, decoded.begin() + offset + size);
+                pack.entries.push_back(std::move(entry));
+            }
             offset += size;
         }
-        if (pack.entries.empty()) throw std::runtime_error("Empty resource container");
-        pack.decoded = std::move(decoded);
+        if (ids.empty()) throw std::runtime_error("Empty resource container");
         return pack;
+    }
+
+    ResourcePack LoadResourcePack(const std::filesystem::path &path, ResourceFilter include) {
+        const auto raw = ReadFile(path);
+        // The cached .dat files retain their own gzip layer after download.
+        return ParseResourcePack(Inflate(raw, MAX_WBITS + 16, kMaxBytes), include);
     }
 
     Image DecodeImage(const Resource &resource) {

@@ -30,12 +30,18 @@ namespace tenhou {
         return entry;
     }
 
-    std::string SettlementEntryLabel(const SettlementEntry &entry, const std::string &rule) {
+    SettlementDisplayEntry ResolveSettlementEntry(const SettlementEntry &entry, std::string_view rule) {
         const auto normalized = ParseSettlementEntry(entry.name);
         const auto *pattern = FindTextRulePattern(rule, normalized.name);
-        const auto label = pattern ? std::string(TextUtf8(pattern->text)) : normalized.name;
         const int count = entry.count > 1 ? entry.count : normalized.count;
-        return label + (count > 1 ? "×" + std::to_string(count) : "");
+        const int value = entry.value > 0 ? entry.value : pattern ? pattern->default_value : 0;
+        return {pattern ? std::string(TextUtf8(pattern->text)) : normalized.name, pattern, count,
+                static_cast<long long>(value) * count};
+    }
+
+    std::string SettlementEntryLabel(const SettlementEntry &entry, const std::string &rule) {
+        const auto display = ResolveSettlementEntry(entry, rule);
+        return display.name + (display.count > 1 ? "×" + std::to_string(display.count) : "");
     }
     namespace {
         using Attributes = std::map<std::string, std::string>;
@@ -255,9 +261,15 @@ namespace tenhou {
         state = std::move(next);
     }
 
+    std::optional<TextKey> SettlementYakuKey(int id) {
+        // The protocol's contiguous IDs have the same order as the original table.
+        if (id >= 0 && id < 55)
+            if (const auto *text = FindTextByOrigin(481 + id)) return text->key;
+        return std::nullopt;
+    }
+
     std::string SettlementYakuName(int id) {
-        // Transitional OriginId adapter; fixed display labels have one authority.
-        if (id >= 0 && id < 55) return std::string(TextUtf8(FindTextByOrigin(481 + id)->key));
+        if (const auto key = SettlementYakuKey(id)) return std::string(TextUtf8(*key));
         static constexpr std::string_view ancient[]{
             "燕返", "杠振", "十二落抬", "五门齐", "三连刻", "一色三同顺", "一筒摸月", "九筒摸鱼",
             TextUtf8(TextKey::yaku_riichi_renhou), TextUtf8(TextKey::yaku_extra_daisharin),
@@ -360,8 +372,10 @@ namespace tenhou {
                 out << "\r\n和牌张：" << Tiles({r.winning_tile}, false) << "\r\n手牌：" << Tiles(r.hand, false) << "\r\n";
                 for (const auto &m: r.public_melds) out << m.kind << " [" << Tiles(m.tiles, false) << "]\r\n";
                 for (const auto &entry: r.entries) {
-                    out << SettlementEntryLabel(entry, r.rule);
-                    if (entry.value > 0) out << " " << entry.value * entry.count << " " << TextUtf8(TextKey::unit_han);
+                    const auto display = ResolveSettlementEntry(entry, r.rule);
+                    out << display.name;
+                    if (display.count > 1) out << "×" << display.count;
+                    if (display.total_value > 0) out << " " << display.total_value << " " << TextUtf8(TextKey::unit_han);
                     out << "\r\n";
                 }
             } else out << r.reason << "\r\n";

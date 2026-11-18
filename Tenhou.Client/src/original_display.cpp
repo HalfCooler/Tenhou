@@ -9,17 +9,6 @@
 #include <stdexcept>
 
 namespace tenhou {
-    unsigned VariantActionButtonSprite(unsigned control, bool hot) {
-        if (control == 5173) return hot ? 595 : 599;
-        if (control >= 5170 && control <= 5172) return (hot ? 596 : 600) + control - 5170;
-        return 0;
-    }
-
-    unsigned ActionButtonSprite(unsigned control, bool hot) {
-        const auto key = ActionButtonText(control, hot);
-        return key ? FindText(*key)->origin_id : 0;
-    }
-
     std::optional<TextKey> ActionButtonText(unsigned control, bool hot) {
         if (control == 5173) return hot ? TextKey::button_hover_exchange : TextKey::button_normal_exchange;
         constexpr TextKey missing_normal[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
@@ -36,14 +25,6 @@ namespace tenhou {
         return hot ? hover[control - 5121] : normal[control - 5121];
     }
 
-    std::vector<unsigned> VariantStatusSprites(const ReplayState &state) {
-        if (!state.variant) return {};
-        const unsigned rule = state.variant_rule.rfind("sichuan", 0) == 0 ? 704 : 705;
-        std::vector<unsigned> ids{rule};
-        const int last = state.total_hands > 0 ? state.total_hands - 1 : (rule == 704 ? 7 : 15);
-        if (state.initialized && state.round >= last) ids.push_back(578);
-        return ids;
-    }
     bool HudInteraction::Handle(HWND window, RECT board, int width, UINT message, LPARAM point) {
         if (message == WM_TIMER) {
             KillTimer(window, 9);
@@ -203,7 +184,6 @@ namespace tenhou {
     }
 
     const Image *DisplayArtwork::FindSprite(unsigned id) {
-        if (const auto cached = images_.find(id); cached != images_.end()) return &cached->second;
         const auto *source = variants_.GetSprite(id);
         if (!source) return nullptr;
         if (width_ == 1440) return &images_.emplace(id, *source).first->second;
@@ -220,11 +200,13 @@ namespace tenhou {
     }
 
     const Image &DisplayArtwork::Get(unsigned id) {
-        if (const auto *custom = FindSprite(id)) return *custom;
-        auto cached = images_.find(id);
+        if (!FindTextImageByOrigin(id)) throw std::runtime_error("Unsupported display image ID " + std::to_string(id));
+        const auto cached = images_.find(id);
         if (cached != images_.end()) return cached->second;
-        if (pack_.entries.empty()) {
-            pack_ = LoadResourcePack(ResourceManager(directory_).Path(AssetId::DisplayPack));
+        if (const auto *custom = FindSprite(id)) return *custom;
+        if (pack_.signature.empty()) {
+            pack_ = LoadResourcePack(ResourceManager(directory_).Path(AssetId::DisplayPack),
+                [](unsigned id, unsigned metadata) { return metadata && FindTextImageByOrigin(id); });
             if (pack_.signature != (width_ == 1440 ? "res2" : "res0")) {
                 pack_ = {};
                 throw std::runtime_error("Original display pack has the wrong canvas signature");
@@ -232,7 +214,7 @@ namespace tenhou {
         }
         const auto found = std::find_if(pack_.entries.begin(), pack_.entries.end(),
                                         [&](const Resource &r) { return r.id == id; });
-        if (found == pack_.entries.end() || !found->metadata) throw std::runtime_error(
+        if (found == pack_.entries.end()) throw std::runtime_error(
             "Missing original display sprite " + std::to_string(id));
         return images_.emplace(id, DecodeImage(*found)).first->second;
     }

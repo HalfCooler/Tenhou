@@ -1,4 +1,5 @@
 #pragma once
+#include "text_catalog.hpp"
 #include <array>
 #include <map>
 #include <string>
@@ -15,6 +16,13 @@ namespace tenhou {
         int value = 0, count = 1;
     };
     SettlementEntry ParseSettlementEntry(const std::string &text);
+    struct SettlementDisplayEntry {
+        std::string name;
+        const RulePatternDefinition *pattern;
+        int count;
+        long long total_value;
+    };
+    SettlementDisplayEntry ResolveSettlementEntry(const SettlementEntry &entry, std::string_view rule);
     std::string SettlementEntryLabel(const SettlementEntry &entry, const std::string &rule = {});
     struct SettlementMeld {
         std::string kind;
@@ -66,6 +74,7 @@ namespace tenhou {
     std::string SettlementLabel(const SettlementReceipt &receipt);
 
     std::string SettlementYakuName(int id);
+    std::optional<TextKey> SettlementYakuKey(int id);
 
     // Presentation order and the zero-hit ura row never alter the receipt or score.
     std::vector<SettlementYaku> SettlementDisplayYaku(const SettlementReceipt &receipt);

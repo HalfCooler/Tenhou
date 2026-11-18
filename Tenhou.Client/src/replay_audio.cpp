@@ -119,11 +119,11 @@ namespace tenhou {
     void ReplaySoundBank::Load(const std::filesystem::path &resources, int canvas_width,
                                const std::filesystem::path &config) {
         (void) canvas_width; // Audio shares the sole HD resource pack.
-        const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack));
+        const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack),
+            [](unsigned id, unsigned metadata) { return id > 100 && id < 172 && !metadata; });
         std::map<unsigned, std::shared_ptr<const SoundClip> > original, candidate;
         for (const auto &entry: pack.entries)
-            if (entry.id > 100 && entry.id < 172 && !entry.metadata)
-                original[entry.id] = std::make_shared<SoundClip>(DecodeSound(entry.payload));
+            original[entry.id] = std::make_shared<SoundClip>(DecodeSound(entry.payload));
         for (const auto &key: SoundKeys()) {
             const auto source = original.find(DefaultSoundResource(key.first));
             if (source != original.end()) candidate[key.first] = source->second;

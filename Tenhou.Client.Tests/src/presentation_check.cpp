@@ -3,7 +3,6 @@
 #include "lobby_view.hpp"
 #include "tile_shadow.hpp"
 #include "wall_scene.hpp"
-#include "variant_patterns.hpp"
 #include <commctrl.h>
 #include <algorithm>
 #include <iostream>
@@ -268,22 +267,6 @@ namespace {
     }
 
     void Guobiao(HWND parent, const std::filesystem::path &resources) {
-        Check(VariantActionButtonSprite(5173, true) == 595 && VariantActionButtonSprite(5173, false) == 599,
-            "Exchange confirmation PNGs disagree with Sprites705.csv");
-        for (unsigned i = 0; i < 3; ++i)
-            Check(VariantActionButtonSprite(5170 + i, true) == 596 + i && VariantActionButtonSprite(5170 + i, false) == 600 + i,
-                "Missing-suit button PNGs disagree with Sprites705.csv");
-        ReplayState status; status.variant = status.initialized = true; status.variant_rule = "sichuan-bloodbattle";
-        status.round = 6;
-        Check(VariantStatusSprites(status) == std::vector<unsigned>({704}), "Early Sichuan All Last");
-        status.round = 7;
-        Check(VariantStatusSprites(status) == std::vector<unsigned>({704,578}), "Missing eighth-hand All Last");
-        status.variant_rule = "guobiao"; status.round = 14;
-        Check(VariantStatusSprites(status) == std::vector<unsigned>({705}), "Early Guobiao All Last");
-        status.round = 15;
-        Check(VariantStatusSprites(status) == std::vector<unsigned>({705,578}), "Missing north-four All Last");
-        status.total_hands = 8; status.round = 7;
-        Check(VariantStatusSprites(status) == std::vector<unsigned>({705,578}), "Configured short Guobiao match ignores its final hand");
         TableArtwork art; art.Load(resources, 1440);
         for (const auto &rule: {"sichuan-bloodbattle", "guobiao"}) {
             const int rounds = std::string(rule) == "guobiao" ? 16 : 8;
@@ -380,26 +363,10 @@ namespace {
         Check(moving != transition.tiles.end() && moving->from_x == expected.first && moving->from_y == expected.second,
             "Consecutive flowers draw the replacement from the first tail flower instead of the final tile");
         std::size_t patterns = 0;
-        for (const auto &pattern: kVariantPatterns) if (std::string(pattern.rule) == "guobiao") {
-            ++patterns; Check(FindPatternArtwork("guobiao", pattern.name).has_value(), "Unmapped guobiao fan");
+        for (const auto &pattern: kTextRulePatterns) if (pattern.rule == "guobiao") {
+            ++patterns; Check(FindTextRulePattern("guobiao", pattern.server_name) == &pattern, "Unmapped guobiao fan");
         }
-        Check(patterns == 82 && !FindPatternArtwork("guobiao", "../secret"), "Pattern catalogue is incomplete or accepts paths");
-        const auto test_directory = std::filesystem::temp_directory_path() / (L"tenhou-variant-art-" + std::to_wstring(GetCurrentProcessId()));
-        struct Cleanup { std::filesystem::path directory; ~Cleanup() { std::error_code error; std::filesystem::remove_all(directory, error); } } cleanup{test_directory};
-        // Exercise authored PNG overrides independently of which user artwork is installed.
-        for (const auto id: {AssetId::Sprite594, AssetId::GuobiaoFan00, AssetId::Sprite599}) {
-            const auto path = test_directory / ResourceManager::Info(id).path;
-            std::filesystem::create_directories(path.parent_path());
-            std::filesystem::copy_file(ResourceManager(resources).Path(AssetId::FlowerMei), path, std::filesystem::copy_options::overwrite_existing);
-        }
-        VariantArtwork custom; custom.Configure(test_directory);
-        Check(custom.GetSprite(594) && custom.Get(AssetId::GuobiaoFan00) && !custom.Get(AssetId::GuobiaoFan01),
-            "Authored PNG lookup, Unicode paths or optional fallback failed");
-        DisplayArtwork display; display.Configure(test_directory, 1440);
-        Check(display.Get(594).bgra == custom.GetSprite(594)->bgra && display.Get(622).bgra == custom.Get(AssetId::GuobiaoFan00)->bgra,
-            "Display sprites and fan names use different numbered PNGs");
-        DisplayArtwork sd; sd.Configure(test_directory, 1024);
-        Check(sd.Get(594).width == static_cast<int>(display.Get(594).width / 1.4), "HD PNG was not scaled for the SD canvas");
+        Check(patterns == 82 && !FindTextRulePattern("guobiao", "../secret"), "Pattern catalogue is incomplete or accepts paths");
         SettlementState state; SettlementReceipt receipt;
         receipt.generic = true; receipt.rule = "guobiao"; receipt.who = receipt.from = 0; receipt.fan = 24;
         for (int i = 0; i < 30; ++i) receipt.entries.push_back(ParseSettlementEntry("花牌×2"));
@@ -412,11 +379,6 @@ namespace {
             Check(std::any_of(scene.text.begin(), scene.text.end(), [](const SettlementTextItem &text) {
                 return text.role == "variant_fan" && text.text == "24 飜"; }), "Guobiao uses the wrong fan unit");
         }
-        SettlementLayout images; images.variant_image_size = [](AssetId) { return SIZE{225,34}; };
-        const auto image_scene = BuildSettlementScene(state, 0, {}, static_cast<std::size_t>(-1), 0, true, true, images);
-        Check(image_scene.pattern_images.size() == 14, "Numeric pattern PNGs are not connected");
-        for (const auto &item: image_scene.pattern_images)
-            Check(item.rect.left >= image_scene.panel.left && item.rect.right <= image_scene.panel.right, "Long pattern escaped the settlement panel");
         SettlementReceipt sichuan; sichuan.generic = true; sichuan.rule = "sichuan-bloodbattle";
         sichuan.who = sichuan.from = 0; sichuan.fan = 2; sichuan.points = 2000;
         sichuan.entries = {{"底和", 1, 1}, {"根", 1, 1}};
@@ -427,7 +389,8 @@ namespace {
             return t.role == "variant_fan" && t.text == "2 飜 2000 点"; }), "Sichuan total lost the displayed payment");
         sichuan.who = sichuan.from = -1; sichuan.entries.clear(); sichuan.reason = "查花猪、查大叫、退税";
         const auto drawn = BuildSettlementScene(SettlementState{{}, 15, {sichuan}}, 0, {});
-        Check(std::count_if(drawn.images.begin(), drawn.images.end(), [](const SettlementImageItem &im) { return im.id == 461; }) == 1 &&
+        Check(std::count_if(drawn.text.begin(), drawn.text.end(), [](const SettlementTextItem &item) {
+            return item.role == "reason" && item.text == "流局" && !item.spans.empty(); }) == 1 &&
             drawn.score_panels.size() == 4, "Variant draw does not share the riichi title and four payment panels");
         auto riichi_draw = sichuan; riichi_draw.generic = false; riichi_draw.reason.clear();
         const auto compact = BuildSettlementScene(SettlementState{{}, 15, {riichi_draw}}, 0, {});

@@ -17,7 +17,6 @@ namespace tenhou {
 
     struct ResourcePack {
         std::string signature;
-        Bytes decoded;
         std::vector<Resource> entries;
     };
 
@@ -38,9 +37,9 @@ namespace tenhou {
 
     Bytes InflateZlib(const Bytes &input, std::size_t limit);
 
-    ResourcePack LoadResourcePack(const std::filesystem::path &path);
-
-    ResourcePack ParseResourcePack(Bytes decoded);
+    // Select records by ID and metadata before copying their payloads.
+    using ResourceFilter = bool (*)(std::uint32_t id, std::uint32_t metadata);
+    ResourcePack LoadResourcePack(const std::filesystem::path &path, ResourceFilter include = nullptr);
 
     Image DecodeImage(const Resource &resource);
 

@@ -29,9 +29,15 @@ function Remove-TenhouBuildOutput {
 }
 
 function Copy-TenhouBuildOutput {
-    param([string]$ProjectDirectory, [string]$SourceDirectory)
+    param([string]$ProjectDirectory, [string]$SourceDirectory, [string]$ResourceCleanupScript, [string]$CMake)
     $destination = Join-Path $PSScriptRoot ('../build/' + (Split-Path $ProjectDirectory -Leaf))
     New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    if ($ResourceCleanupScript) {
+        $CMake = Resolve-TenhouExecutable $CMake 'cmake'
+        $resourceDirectory = [IO.Path]::GetFullPath((Join-Path $destination 'resources'))
+        & $CMake "-DTENHOU_STAGED_RESOURCES=$resourceDirectory" -P $ResourceCleanupScript
+        if ($LASTEXITCODE) { throw 'Failed to clean retired sprites from the build output.' }
+    }
     Get-ChildItem -LiteralPath $SourceDirectory -Force | Copy-Item -Destination $destination -Recurse -Force
     Write-Host "Output: $([IO.Path]::GetFullPath($destination))"
 }

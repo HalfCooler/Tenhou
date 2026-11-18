@@ -114,6 +114,23 @@ namespace tenhou {
                 const auto after = artwork.Text().CacheStats();
                 Require(stats.layout_builds == after.layout_builds && stats.raster_builds == after.raster_builds,
                     "P3 static HUD rebuilds text layouts/rasters");
+
+                for (int hands : {0, 8}) for (bool sichuan : {true, false}) {
+                    ReplayState status; status.variant = status.initialized = true;
+                    status.variant_rule = sichuan ? "sichuan-bloodbattle" : "guobiao";
+                    status.total_hands = hands;
+                    const int last = (hands ? hands : sichuan ? 8 : 16) - 1;
+                    const auto label = artwork.Text().Layout(sichuan ? TextKey::info_sichuan : TextKey::info_guobiao).data;
+                    const auto all_last = artwork.Text().Layout(TextKey::info_all_last).data;
+                    for (int round : {last - 1, last}) {
+                        status.round = round;
+                        FinalScene status_scene(artwork.Text(), native == 1024);
+                        artwork.AppendStatus(status_scene, status);
+                        const auto runs = status_scene.Snapshot(native, native * 3 / 4, surface.width, surface.height);
+                        Require(runs.size() == (round == last ? 2u : 1u) && runs.front().layout == label &&
+                            (round < last || runs.back().layout == all_last), "Variant rule label or All Last text is incorrect");
+                    }
+                }
             }
         }
         void SettlementScores(const std::filesystem::path &resources, const std::filesystem::path &output) {
@@ -192,9 +209,129 @@ namespace tenhou {
             view.PaintTable(surface.dc, {0, 0, surface.width, surface.height});
             Require(view.artwork_error_.empty(), "P3 replay table renderer failed");
         }
+        static SettlementState SettlementFixture(int rule) {
+            SettlementState state;
+            SettlementReceipt receipt;
+            receipt.who = 0; receipt.from = 1;
+            receipt.has_hand = true; receipt.winning_tile = 53;
+            receipt.hand = {0,4,8,12,16,20,24,28,32,36,40,52,53,56};
+            receipt.base = {25000,25000,25000,25000}; receipt.delta = {12000,-12000,0,0};
+            if (rule == 0) {
+                receipt.tag = "AGARI";
+                receipt.has_yaku = receipt.has_ten = true;
+                receipt.dora = {60}; receipt.ura = {64};
+                receipt.yaku = {{0,1}, {1,1}, {2,1}, {7,1}, {8,1}, {9,1}, {10,1}, {11,1},
+                    {13,1}, {20,1}, {52,123456789}, {48,1}, {999,1}};
+                receipt.ten = {30,12000,3};
+                receipt.ba = {2, 1};
+            } else if (rule == 1) {
+                receipt.generic = true; receipt.rule = "sichuan-bloodbattle"; receipt.from = 0;
+                receipt.entries = {{"龙七对", 3}, {"根×2", 1}, {"自定义番型", 4, 2}};
+                receipt.fan = 5; receipt.points = 1234567890;
+            } else {
+                receipt.generic = true; receipt.rule = "guobiao"; receipt.fan = 144;
+                receipt.flowers = {136, 137};
+                receipt.entries = {{"一色四步高"}, {"花牌×2", 2, 3}, {"大四喜"},
+                    {"清一色"}, {"明暗杠"}, {"花牌", 2147483647, 2147483647}};
+                receipt.entries.resize(14, {"花牌"});
+                receipt.entries.push_back({"一个未登记的很长的国标番型名称", 18, 2});
+            }
+            state.receipts.push_back(std::move(receipt));
+            SettlementReceipt draw; draw.tag = "RYUUKYOKU"; draw.reason = "kaze4";
+            state.receipts.push_back(draw);
+            state.has_final = true;
+            state.final_scores = {37000,13000,25000,25000}; state.final_points = {32,-28,-2,-2};
+            return state;
+        }
+        static void SettlementTextLayout(const std::filesystem::path &resources) {
+            TextFontService font{ResourceManager(resources)};
+            TextRenderer renderer(font);
+            const auto find = [](const SettlementScene &scene, const std::string &role, const std::string &value) {
+                return std::any_of(scene.text.begin(), scene.text.end(), [&](const SettlementTextItem &item) {
+                    return item.role == role && item.text == value && item.visible;
+                });
+            };
+            for (int canvas : {1024, 1440}) for (int rule = 0; rule < 3; ++rule) {
+                const auto state = SettlementFixture(rule);
+                SettlementLayout layout; layout.width = canvas;
+                const auto all = static_cast<std::size_t>(-1);
+                const auto hidden = BuildSettlementScene(state, 0, {}, 1, all, false, false, layout);
+                const auto scene = BuildSettlementScene(state, 0, {}, all, all, true, true, layout);
+                const auto name_role = rule ? "variant_pattern" : "yaku";
+                const auto total_role = rule ? "variant_fan" : "total";
+                const auto count = [&](const SettlementScene &s) {
+                    return std::count_if(s.text.begin(), s.text.end(), [&](const SettlementTextItem &item) {
+                        return item.role == name_role || item.role == "unknown_yaku";
+                    });
+                };
+                Require(count(hidden) == 1 && count(scene) == (rule == 1 ? 3 : 14) &&
+                    std::none_of(hidden.text.begin(), hidden.text.end(), [&](const SettlementTextItem &item) {
+                        return item.role == total_role || item.role == "score_wind";
+                    }), "P4 reveal stages changed");
+                Require(std::all_of(scene.images.begin(), scene.images.end(), [](const SettlementImageItem &item) {
+                    return item.id == 401 || item.id == 402;
+                }), "P4 settlement requested a text image");
+                if (rule == 0) {
+                    Require(find(scene, "yaku", "国士無双13面") && find(scene, "unknown_yaku", "Unknown yaku #999") &&
+                        find(scene, "han", "123456789 飜") && find(scene, "total", "30 符  123456801 飜  倍満  12000 点"),
+                        "P4 riichi labels, large han or mixed-style total");
+                } else if (rule == 1) {
+                    Require(find(scene, name_role, "竜七対") && find(scene, name_role, "根×2") &&
+                        find(scene, "variant_value", "2 飜") && find(scene, "variant_fan", "5 飜 1234567890 点"),
+                        "P4 Sichuan labels, counts or supplied payout");
+                } else {
+                    Require(find(scene, name_role, "一色四歩高") && find(scene, name_role, "花牌×3") &&
+                        find(scene, "variant_value", "32 飜") && find(scene, "variant_value", "6 飜") &&
+                        find(scene, "variant_value", "4611686014132420609 飜") &&
+                        find(scene, "variant_fan", "144 飜 12000 点"), "P4 Guobiao defaults, numeric range or payout fallback");
+                    layout.pattern_page = 1;
+                    const auto page = BuildSettlementScene(state, 0, {}, all, all, true, true, layout);
+                    Require(count(page) == 1 && find(page, name_role, "一个未登记的很长的国标番型名称") &&
+                        find(page, "variant_multiplier", "×2") && find(page, "variant_value", "36 飜") &&
+                        find(page, "variant_page", "2 / 2"), "P4 fifteenth pattern or unknown name lost on page two");
+                }
+                for (const auto &item: scene.text) if (!item.spans.empty()) {
+                    const auto context = TextRenderContext::Viewport(scene.width, scene.height, {0,0,1196,897}, canvas == 1024);
+                    const auto runs = LayoutSettlementText(renderer, item, canvas == 1024);
+                    Require(!runs.empty(), "P4 missing measured run");
+                    for (const auto &run: runs) {
+                        const auto bounds = TextRenderer::Bounds(context, run);
+                        const float guard = 15; // Includes the renderer's device-pixel raster padding.
+                        Require(!bounds.IsEmptyArea() && bounds.X >= item.rect.left * context.viewport_scale_x - guard &&
+                            bounds.GetRight() <= item.rect.right * context.viewport_scale_x + guard &&
+                            bounds.Y >= item.rect.top * context.viewport_scale_y - guard &&
+                            bounds.GetBottom() <= item.rect.bottom * context.viewport_scale_y + guard,
+                            "P4 measured text escaped its row");
+                    }
+                }
+                if (rule == 0) {
+                    const auto draw = BuildSettlementScene(state, 1, {}, all, all, true, true, layout);
+                    const auto final = BuildSettlementScene(state, 2, {}, all, all, true, true, layout);
+                    Require(find(draw, "reason", "四風連打") && find(final, "final_title", "終局"), "P4 titles lost on receipt switch");
+                }
+            }
+        }
+        static void SettlementFrame(HWND parent, const std::filesystem::path &resources, Surface &surface,
+                                    int rule, int receipt, bool next_page) {
+            SettlementView view(parent); view.Configure(resources, 1440);
+            view.SetAnimationEnabled(false);
+            view.Move({0,0,surface.width,surface.height});
+            view.Set(SettlementFixture(rule), {"Player 1","Player 2","Player 3","Player 4"}, false);
+            view.Show(true);
+            const auto window = GetDlgItem(parent, 5400);
+            const auto choices = GetDlgItem(window, 5401);
+            SendMessageW(choices, CB_SETCURSEL, receipt, 0);
+            SendMessageW(window, WM_COMMAND, MAKEWPARAM(5401, CBN_SELCHANGE), reinterpret_cast<LPARAM>(choices));
+            if (next_page) Require(view.HandleKey(VK_NEXT), "P4 result window did not accept PageDown");
+            view.Capture(surface.dc);
+            Require(!IsWindowVisible(GetDlgItem(window, 5402)), "P4 production result fell back to resource-error details");
+        }
         static void Run(HWND parent, const std::filesystem::path &resources) {
             const auto output = resources.parent_path() / "text-p3";
             std::filesystem::create_directories(output);
+            const auto settlement_output = resources.parent_path() / "text-p4";
+            std::filesystem::create_directories(settlement_output);
+            SettlementTextLayout(resources);
             TextLayers(resources); Online(resources, output); SettlementScores(resources, output);
             {
                 Surface surface(1197,897); auto game = State(1);
@@ -217,32 +354,52 @@ namespace tenhou {
             std::filesystem::copy(resources, isolated, std::filesystem::copy_options::recursive);
             const auto text_path = [&](unsigned id) { return isolated / "images" / "sprites" / (std::to_string(id) + ".png"); };
             for (const auto &text : kTextDefinitions) std::filesystem::remove(text_path(text.origin_id));
-            // The missing and corrupt PNG variants each use fresh production renderers.
-            for (int pass = 0; pass < 2; ++pass) {
-                if (pass) for (const auto &text : kTextDefinitions) {
-                    const auto path = text_path(text.origin_id); std::filesystem::create_directories(path.parent_path());
-                    std::ofstream(path, std::ios::binary) << "deliberately invalid old text PNG";
+            // Exercise absent, valid and corrupt legacy overrides with fresh production renderers.
+            std::filesystem::create_directories(text_path(440).parent_path());
+            const auto valid_png = ResourceManager(resources).Read(AssetId::FlowerMei);
+            const Bytes invalid_png{'P', '5'};
+            for (const auto *legacy_png : {static_cast<const Bytes *>(nullptr), &valid_png, &invalid_png}) {
+                if (legacy_png) for (const auto &text : kTextDefinitions)
+                    WriteFile(text_path(text.origin_id), *legacy_png);
+                DisplayArtwork display; display.Configure(isolated, 1440);
+                VariantArtwork overrides; overrides.Configure(isolated);
+                for (const auto &text : kTextDefinitions) {
+                    Require(!overrides.GetSprite(text.origin_id), "Text OriginId still resolves to a PNG");
+                    bool rejected = false;
+                    try { display.Get(text.origin_id); } catch (const std::runtime_error &error) {
+                        rejected = error.what() == "Unsupported display image ID " + std::to_string(text.origin_id);
+                    }
+                    Require(rejected, "Text OriginId remains accessible through the display pack");
                 }
                 Surface original(480, 13 * 56), changed(original.width, original.height);
                 Buttons(parent, resources, original); Buttons(parent, isolated, changed); Equal(original, changed, "P3 text PNG independence: buttons");
-                if (pass) original.Save(output / "buttons.png");
+                if (!legacy_png) original.Save(output / "buttons.png");
                 for (bool resume : {false, true}) {
                     Surface source(1197, 897), copy(source.width, source.height);
                     Intro(parent, resources, source, resume); Intro(parent, isolated, copy, resume); Equal(source, copy, "P3 text PNG independence: intro");
-                    if (pass) source.Save(output / (resume ? "intro-resume.png" : "intro-match.png"));
+                    if (!legacy_png) source.Save(output / (resume ? "intro-resume.png" : "intro-match.png"));
                 }
                 Surface source(1197, 897), copy(source.width, source.height);
                 Replay(parent, resources, source); Replay(parent, isolated, copy); Equal(source, copy, "P3 text PNG independence: replay");
-                if (pass) source.Save(output / "replay.png");
+                if (!legacy_png) source.Save(output / "replay.png");
                 for (int rule = 0; rule < 3; ++rule) {
                     OnlineTable normal, altered; normal.Configure(resources, 1440); altered.Configure(isolated, 1440);
                     source.Clear(); copy.Clear(); auto state = State(rule);
                     normal.Paint(source.dc, {0, 0, 1197, 897}, state); altered.Paint(copy.dc, {0, 0, 1197, 897}, state);
                     Equal(source, copy, "P3 text PNG independence: online");
                 }
+                struct ResultCase { int rule, receipt; bool next_page; const char *file; };
+                for (const auto &sample : {ResultCase{0, 0, false, "riichi.png"}, {1, 0, false, "sichuan.png"},
+                    {2, 0, false, "guobiao-1.png"}, {2, 0, true, "guobiao-2.png"}, {0, 1, false, "draw.png"},
+                    {0, 2, false, "final.png"}}) {
+                    source.Clear(); copy.Clear();
+                    SettlementFrame(parent, resources, source, sample.rule, sample.receipt, sample.next_page);
+                    SettlementFrame(parent, isolated, copy, sample.rule, sample.receipt, sample.next_page);
+                    Equal(source, copy, "P4 text PNG independence: " + std::string(sample.file));
+                    if (!legacy_png) source.Save(settlement_output / sample.file);
+                }
             }
             // A real image still reaches the original resource error path.
-            std::filesystem::create_directories(text_path(440).parent_path());
             std::ofstream(text_path(440), std::ios::binary) << "invalid real image";
             DisplayArtwork broken; broken.Configure(isolated, 1440); bool rejected = false;
             try { broken.Get(440); } catch (const std::exception &) { rejected = true; }

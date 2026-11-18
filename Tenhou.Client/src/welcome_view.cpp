@@ -126,7 +126,8 @@ namespace tenhou {
         banner_ = {};
         background_ = {};
         try {
-            const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack));
+            const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack),
+                [](unsigned id, unsigned metadata) { return id == 591 && metadata != 0; });
             const auto found = std::find_if(pack.entries.begin(), pack.entries.end(),
                                             [](const Resource &entry) { return entry.id == 591; });
             if (found == pack.entries.end()) throw std::runtime_error("Original welcome frame resource 591 is missing");

@@ -1,6 +1,6 @@
 # TrueType 文字渲染实施计划
 
-状态：P0 验证已完成；P1 经用户人工视觉验证，594 居中与 Info 透明图层两项反馈已修正，见 [P1 记录](TRUETYPE-TEXT-P1-REVIEW.md)。P2 已接入最终尺寸有序合成、缓存与失效检查，见 [P2 记录](TRUETYPE-TEXT-P2-REVIEW.md)。P3 已接入生产牌桌、按钮、浮字与开局介绍，自动检查及三玩法协议烟测见 [P3 记录](TRUETYPE-TEXT-P3-REVIEW.md)。下一阶段为 P4 结算；P6 的实际操作、多 DPI 与跨屏人工验收仍待完成，尚未宣称全部生产场景字体迁移完成。P0 交付见 [目录说明](../../Tenhou.Client/assets/text/README.md) 和 [核对记录](TRUETYPE-TEXT-P0-REVIEW.md)。
+P0 目录已经核对，见 [P0 记录](TRUETYPE-TEXT-P0-REVIEW.md)。P1 经用户人工视觉验证后修正了 594 居中和 Info 透明图层，见 [P1 记录](TRUETYPE-TEXT-P1-REVIEW.md)。P2 接入最终尺寸有序合成、缓存与失效检查，见 [P2 记录](TRUETYPE-TEXT-P2-REVIEW.md)。P3 生产牌桌、按钮、浮字、开局介绍及三玩法协议烟测见 [P3 记录](TRUETYPE-TEXT-P3-REVIEW.md)。P4 已完成三玩法结算接入，见 [P4 记录](TRUETYPE-TEXT-P4-REVIEW.md)。P5 已清理旧文字的资源和发布入口，见 [P5 记录](TRUETYPE-TEXT-P5-REVIEW.md)。实际操作、多 DPI 与跨屏人工验收安排在 P6。
 
 依据：2026-11-17 更新的 [Sprites.xlsx](asset-reference/Sprites.xlsx)，工作表 `Sprites705`，以及本次确认的字体与 481 号字号修正。目标是将表内文字资源的引用、测量、排版和绘制迁移到 TrueType，并在实际窗口尺寸下保持清晰。
 
@@ -110,7 +110,7 @@
 | P2 最终合成与缓存 | 接入 `PaintBuffer`、`RetainedScene`、`CachedHud` 的目标尺寸文字层 | 1024 / 1440 和非整数缩放下重新栅格化；局部重绘与完整重绘一致；无重影 | 1–1.5 |
 | P3 牌桌、按钮与开局 | 迁移 `original_display`、`lobby_view`、`action_captions`、`match_intro_view`，接入在线与回放牌桌 | 三玩法 HUD、换牌/定缺、吃碰杠等按钮、振听、Info 和四座浮字均由文字目录绘制 | 1–1.5 |
 | P4 结算 | 迁移 `settlement_scene/view`、番型目录与数字单位；使用共用文字测量 | 立直、四川、国标结算；长番型、两列、分页、乘数和总计正确，无图片尺寸依赖 | 1.5–2 |
-| P5 资源与文档清理 | 精简 `catalog.cmake` / `ClientAssets.cmake`，移除文字 PNG 覆盖和番型 PNG AssetId 生成；更新相关说明 | 296 文字编号不能再被 PNG 或旧 DAT 文字覆盖；7 图像及八花正常；文档入口指向新规范 | 0.5–1 |
+| P5 资源与文档清理 | 精简 `catalog.cmake` / `ClientAssets.cmake`，移除文字 PNG 覆盖与复制规则，更新相关说明 | 296 文字编号不能再被 PNG 或旧 DAT 文字覆盖；7 图像及八花正常；文档入口指向新规范 | 0.5–1 |
 | P6 回归与交付 | 更新现有 checks，补充有意义的字体、布局和合成检查，完成离屏与实际窗口验收 | 下节矩阵通过，记录字体来源、截图、性能比较和剩余限制 | 1–1.5 |
 
 **总计约 7–10 人日**，按一名熟悉现有客户端的开发者估算。时间包含样张校准与回归。若要求逐像素复刻 Word 的光晕、模糊或 3D 浮雕，需在 P1 单独评估其范围；当前目标以 Excel 列出的效果为准。

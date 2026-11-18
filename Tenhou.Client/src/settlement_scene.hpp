@@ -1,11 +1,18 @@
 #pragma once
 #include "settlement.hpp"
 #include "table_scene.hpp"
+#include "text_renderer.hpp"
 #include <windows.h>
 #include <limits>
 #include <functional>
 
 namespace tenhou {
+    struct SettlementTextSpan {
+        std::string text;
+        TextKey key = TextKey::Count;
+        TextStyleKey style = TextStyleKey::yaku;
+    };
+
     struct SettlementTextItem {
         std::string role, text;
         RECT rect{};
@@ -14,6 +21,7 @@ namespace tenhou {
         bool visible = true;
         int align = 0;
         bool original_font = false;
+        std::vector<SettlementTextSpan> spans{};
     };
 
     struct SettlementTileItem {
@@ -28,26 +36,17 @@ namespace tenhou {
         int x = 0, y = 0;
         double scale = 1;
     };
-    struct SettlementPatternImage {
-        AssetId asset;
-        RECT rect{};
-    };
     inline constexpr std::size_t kSettlementPatternsPerPage = 14;
     std::size_t SettlementPatternPages(const SettlementReceipt &receipt);
 
     struct SettlementLayout {
         int width = 1024, dealer = 0, honba = -1, sticks = -1;
         std::size_t pattern_page = 0;
-        std::function<SIZE(AssetId)> variant_image_size;
         // Resource geometry is read by the view/probe, without exposing live hands.
         std::function<RECT(const TableTile &)> tile_bounds;
-        std::function<SIZE(unsigned)> image_size;
         std::function<float(const std::string &, float)> text_width;
 
-        std::function<std::array < float, 2>(const std::string &, float)
-
-        >
-        text_extent;
+        std::function<std::array<float, 2>(const std::string &, float)> text_extent;
     };
 
     struct SettlementScene {
@@ -57,10 +56,9 @@ namespace tenhou {
         std::vector<SettlementTextItem> text;
         std::vector<SettlementTileItem> tiles;
         std::vector<SettlementImageItem> images;
-        std::vector<SettlementPatternImage> pattern_images;
     };
 
-    // Native 1024/1440 canvas; original sprites stay unscaled at native resolution.
+    // Native 1024/1440 canvas. Text spans are laid out in HD design pixels.
     SettlementScene BuildSettlementScene(const SettlementState &state, std::size_t selected,
                                          const std::array<std::string, 4> &names,
                                          std::size_t shown_yaku = std::numeric_limits<std::size_t>::max(),
@@ -69,6 +67,7 @@ namespace tenhou {
                                          const SettlementLayout &layout = {});
 
     std::string SettlementSceneJson(const SettlementScene &scene);
+    std::vector<SceneTextRun> LayoutSettlementText(TextRenderer &renderer, const SettlementTextItem &item, bool sd);
 
     // Perspective sprites overlap. Paint the outside edges before the center.
     std::vector<std::size_t> SettlementPaintOrder(const SettlementScene &scene);

@@ -57,10 +57,7 @@ namespace tenhou {
     RECT FitNativeCanvas(RECT bounds, int width);
 
     RECT OriginalAutoButtonRect(int width, int index);
-    unsigned VariantActionButtonSprite(unsigned control, bool hot);
-    unsigned ActionButtonSprite(unsigned control, bool hot);
     std::optional<TextKey> ActionButtonText(unsigned control, bool hot);
-    std::vector<unsigned> VariantStatusSprites(const ReplayState &state);
 
     // 004aa250: n/0/254 maps to the standing-back rectangle, then odd
     // directions swap measured text extents before the count window is placed.
@@ -89,9 +86,6 @@ namespace tenhou {
         void Configure(const std::filesystem::path &directory, int width);
 
         const Image &Get(unsigned id);
-        // Authored numeric PNG only; absent images retain the caller's existing fallback.
-        const Image *FindSprite(unsigned id);
-        const Image *GetVariant(AssetId id) { return variants_.Get(id); }
 
         static float MeasureText(const std::string &text, float em);
 
@@ -116,6 +110,8 @@ namespace tenhou {
 
     private:
         bool panel_enabled_ = true;
+
+        const Image *FindSprite(unsigned id);
 
         void Caption(Gdiplus::Graphics &graphics, const std::wstring &text, float x, float y,
                      float em, const OriginalHudLayout &hud, float width = 0);

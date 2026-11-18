@@ -4,13 +4,6 @@
 #include <optional>
 
 namespace tenhou {
-    struct PatternArtwork {
-        AssetId asset;
-        int value = 0;
-    };
-
-    // Only catalogued names can select a file. Server text never becomes a path.
-    std::optional<PatternArtwork> FindPatternArtwork(const std::string &rule, const std::string &name);
     AssetId FlowerArtwork(int entity);
 
     class VariantArtwork {

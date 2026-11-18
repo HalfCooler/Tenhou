@@ -1,5 +1,5 @@
 #include "variant_artwork.hpp"
-#include "variant_patterns.hpp"
+#include "sprite_assets.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -11,13 +11,6 @@ namespace tenhou {
         for (const auto &sprite: kSpriteAssets) if (sprite.id == id) return Get(sprite.asset);
         return nullptr;
     }
-    std::optional<PatternArtwork> FindPatternArtwork(const std::string &rule, const std::string &name) {
-        const auto family = rule.rfind("sichuan", 0) == 0 ? "sichuan" : rule;
-        for (const auto &pattern: kVariantPatterns)
-            if (family == pattern.rule && name == pattern.name) return PatternArtwork{pattern.asset, pattern.value};
-        return std::nullopt;
-    }
-
     AssetId FlowerArtwork(int entity) {
         static constexpr AssetId ids[]{AssetId::FlowerMei, AssetId::FlowerLan, AssetId::FlowerZhu, AssetId::FlowerJu,
             AssetId::FlowerChun, AssetId::FlowerXia, AssetId::FlowerQiu, AssetId::FlowerDong};
