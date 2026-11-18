@@ -3,6 +3,8 @@
 #include "replay.hpp"
 #include "variant_artwork.hpp"
 #include <map>
+#include <optional>
+#include <tuple>
 
 namespace tenhou {
     // Native resource commands; the toolbar and score captions are a rebuild UI.
@@ -17,18 +19,37 @@ namespace tenhou {
         bool river_waiting = false;
         int wall_extra = 0; // Additional stacks translated from measured native resource anchors.
         int wall_stack = -1, wall_stacks = 0; // Logical identity, independent of the reused sprite slot.
+        bool native_draw_offset = false;
+    };
+
+    struct TileOffset {
+        int x = 0, y = 0;
+        bool operator==(const TileOffset &other) const { return x == other.x && y == other.y; }
+    };
+
+    struct TileFlightImage {
+        TableTile sprite;
+        std::array<TileOffset, 4> offsets{};
+        unsigned count = 0;
+        float opacity = 1.f;
+        int landing_x = 0, landing_y = 0;
+        bool cover_landing = false;
+
+        bool operator==(const TileFlightImage &other) const {
+            return sprite.family == other.sprite.family && sprite.slot == other.sprite.slot &&
+                   sprite.tile == other.sprite.tile && sprite.direction == other.sprite.direction &&
+                   offsets == other.offsets && count == other.count && opacity == other.opacity &&
+                   landing_x == other.landing_x && landing_y == other.landing_y && cover_landing == other.cover_landing;
+        }
     };
 
     struct PositionedTile {
         TableTile tile;
         int x = 0, y = 0;
+        std::optional<TileFlightImage> flight{};
     };
 
     int TileVariant(int tile, bool red = true);
-
-    struct TileOffset {
-        int x = 0, y = 0;
-    };
 
     TileOffset TableTileOffset(const TableTile &tile, int width);
 
@@ -42,6 +63,7 @@ namespace tenhou {
             if (rgb_ != rgb) {
                 rgb_ = rgb;
                 cache_.clear();
+                flight_cache_.clear();
                 cached_bytes_ = 0;
             }
         }
@@ -49,6 +71,7 @@ namespace tenhou {
         void Load(const std::filesystem::path &directory, int width);
 
         const ObjectImage &Get(const TableTile &tile, bool red = true);
+        const ObjectImage &GetFlight(const TileFlightImage &flight, bool red);
 
         TileOffset Offset(const TableTile &tile);
 
@@ -61,6 +84,7 @@ namespace tenhou {
         int width() const { return width_; }
 
     private:
+        std::uint32_t ImageKey(const TableTile &tile, bool red) const;
         std::vector<int> red_tiles_{16, 52, 88};
         std::array<float, 3> rgb_{0, 0, 38.0f / 255.0f};
         ObjectPack even_, odd_;
@@ -73,6 +97,8 @@ namespace tenhou {
         };
 
         std::map<std::uint32_t, Cached> cache_;
+        using FlightKey = std::tuple<std::uint32_t, unsigned, float, std::array<int, 8>>;
+        std::map<FlightKey, ObjectImage> flight_cache_;
         std::uint64_t frame_ = 1;
         std::size_t cached_bytes_ = 0;
         std::size_t cache_budget_ = 32 * 1024 * 1024, evictions_ = 0;

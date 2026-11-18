@@ -18,14 +18,15 @@ namespace tenhou {
 
         ~MotionTimer() { Stop(); }
 
-        void Start(HWND window, UINT_PTR id) {
-            if (window_ == window && id_ == id) return;
+        void Start(HWND window, UINT_PTR id, double fixed_period = 0) {
+            if (window_ == window && id_ == id && fixed_period_ == fixed_period) return;
             Stop();
             timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0x2, TIMER_ALL_ACCESS);
             if (!timer_) timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
             if (!timer_) throw std::runtime_error("Cannot create motion waitable timer");
             window_ = window;
             id_ = id;
+            fixed_period_ = fixed_period;
             try {
                 registry_.push_back(this);
                 RefreshRate();
@@ -46,6 +47,7 @@ namespace tenhou {
             timer_ = nullptr;
             window_ = nullptr;
             id_ = 0;
+            suspended_ = false;
         }
 
         // Same filtering/dispatch contract as GetMessage, plus animation wakeups.
@@ -120,6 +122,11 @@ namespace tenhou {
         }
 
         void RefreshRate() {
+            if (fixed_period_) {
+                period_ = fixed_period_;
+                refresh_at_ = AnimationNow() + 500;
+                return;
+            }
             MONITORINFOEXW info{};
             info.cbSize = sizeof(info);
             DEVMODEW mode{};
@@ -170,7 +177,7 @@ namespace tenhou {
         UINT_PTR id_ = 0;
         HANDLE timer_ = nullptr;
         bool suspended_ = false;
-        double period_ = 1000.0 / 60, next_ = 0, refresh_at_ = 0;
+        double period_ = 1000.0 / 60, next_ = 0, refresh_at_ = 0, fixed_period_ = 0;
         inline static std::vector<MotionTimer *> registry_;
         inline static bool scheduled_last_ = false;
         inline static double next_paint_ = 0;

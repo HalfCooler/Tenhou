@@ -5,18 +5,35 @@
 #include <optional>
 
 namespace tenhou {
+    constexpr unsigned kTableTickMs = 15;
+
+    // 0048f650 and 004900a0, including the separate frame at the landing point.
+    struct TileFlight {
+        TileFlight() = default;
+        TileFlight(const TableTile &sprite, int x, int y, int from_x, int from_y, float speed,
+                   unsigned copies, float opacity, bool cover_landing);
+
+        void Place(PositionedTile &tile, unsigned tick) const;
+        unsigned ticks = 0;
+
+    private:
+        TileFlightImage image_;
+        float step_x_ = 0, step_y_ = 0, residual_x_ = 0, residual_y_ = 0;
+    };
+
     // Presentation only: the ReplaySession remains at the applied event's final state.
     struct AnimatedTile {
         TableTile tile;
         int from_x = 0, from_y = 0, to_x = 0, to_y = 0;
         unsigned delay = 0;
-        std::optional<TableTile> before_flip;
+        std::optional<TableTile> before_flip{};
+        TileFlight flight{};
+        bool compact_hand = false;
     };
 
     struct ReplayTransition {
         unsigned duration = 0;
         bool manual = false;
-        bool nuki = false; // Native 40-pixel steps on the existing 60 Hz display clock.
         std::vector<AnimatedTile> tiles;
 
         std::vector<PositionedTile> Frame(double elapsed) const;
@@ -26,14 +43,16 @@ namespace tenhou {
 
     ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
                                            const ReplayEvent &event, unsigned duration, int canvas_width,
-                                           const TileOrigin &origin, bool sort_self = true);
+                                           const TileOrigin &origin, bool sort_self = true,
+                                           TableArtwork *artwork = nullptr, bool red = true);
 
     // A single presentation slot: a new accepted event replaces the old movement.
     // Caller-owned authoritative states and clocks are never advanced by this class.
     class TablePresentation {
     public:
         void Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
-                   unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self = true);
+                   unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self = true,
+                   TableArtwork *artwork = nullptr, bool red = true, unsigned playback_limit = 0);
 
         void BeginManual(const ReplayState &before, const ReplayState &after, int width, const TileOrigin &origin,
                          double now);
@@ -51,18 +70,21 @@ namespace tenhou {
     private:
         ReplayTransition transition_;
         double started_ = 0;
+        double playback_scale_ = 1;
     };
 
     // Unknown gender keeps the original neutral resource; never infer it from names.
     std::vector<unsigned> ReplaySounds(const ReplayEvent &event, char gender = '?', bool effects_only = false,
                                        bool individual_voices = false);
 
-    // Prepare all sides together, then deal in seat order starting at the dealer.
+    // Prepare the wall in display order, then deal starting at the dealer.
     class OpeningPresentation {
     public:
-        void Begin(const ReplayState &state, bool wall, TableArtwork *artwork = nullptr);
+        void Begin(const ReplayState &state, bool wall, TableArtwork *artwork = nullptr, bool red = true);
 
         bool Tick(unsigned steps = 1);
+        bool Advance(double now);
+        void ResumeClock(double now) { next_step_ = now + kTableTickMs; }
 
         bool Active() const { return active_; }
         void Cancel() { active_ = false; }
@@ -74,18 +96,19 @@ namespace tenhou {
         void SlideWall(std::vector<PositionedTile> &scene) const;
 
         unsigned wall_tiles() const { return wall_tiles_; }
-        unsigned placed() const { return std::min(progress_, wall_tiles_ / 4) * 4; }
+        unsigned placed() const { return std::min(progress_ * 2, wall_tiles_); }
 
         unsigned dealt() const;
 
         unsigned steps() const { return progress_; }
-        static constexpr unsigned interval() { return 15; }
         unsigned sound() const { return sound_; }
 
     private:
         ReplayState initial_;
         bool active_ = false;
         unsigned wall_tiles_ = 0, progress_ = 0, sound_ = 0;
+        double next_step_ = 0;
+        unsigned wall_setup_ticks_ = 0;
         std::vector<std::array<unsigned, 4> > hands_;
         std::vector<unsigned> sounds_;
 
@@ -94,8 +117,10 @@ namespace tenhou {
         };
 
         std::vector<DealPacket> packets_;
+        std::array<std::array<TileFlight, 14>, 4> deal_flights_{};
+        std::array<std::array<unsigned, 14>, 4> deal_starts_{};
         std::vector<AnimatedTile> sort_tiles_;
-        unsigned deal_steps_ = 0, sort_steps_ = 0;
+        unsigned sort_start_ = 0;
     };
 
     // Original push-node discard wait and opponent draw wait, on the 15ms clock.

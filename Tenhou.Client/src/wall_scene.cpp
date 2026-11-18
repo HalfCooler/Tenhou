@@ -4,6 +4,15 @@
 #include <stdexcept>
 
 namespace tenhou {
+    unsigned WallStackOrder(const WallState &wall, int seat, int stack) {
+        unsigned index = 0;
+        for (int side = 0; side < 4; ++side) {
+            const int stacks = wall.SideTiles(side) / 2;
+            index += std::min(stacks, stack + (side < seat ? 1 : 0));
+        }
+        return index;
+    }
+
     TableTile WallTile(const WallState &wall, int seat, int stack, bool stacked) {
         const int stacks = wall.SideTiles(seat) / 2;
         const int resource = std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0);
@@ -18,10 +27,11 @@ namespace tenhou {
         if (!state.initialized || !wall.known) return scene;
         std::array < std::array < bool, 36 >, 4 > alive{};
         for (int seat = 0; seat < 4; ++seat)
-            for (int slot = 0; slot < wall.SideTiles(seat); ++slot)
-                // Preparation builds the four sides simultaneously, one tile per side.
-                alive[seat][slot] = !wall.dead_wall && placed >= static_cast<unsigned>(wall.total)
-                    ? true : static_cast<unsigned>((slot ^ 1) * 4 + seat) < placed;
+            for (int stack = 0; stack < wall.SideTiles(seat) / 2; ++stack) {
+                const unsigned order = WallStackOrder(wall, seat, stack) * 2;
+                alive[seat][stack * 2] = order + 1 < placed;
+                alive[seat][stack * 2 + 1] = order < placed;
+            }
         const auto remove = [&](int index) {
             const auto p = wall.Position(index);
             alive[p.first][p.second] = false;

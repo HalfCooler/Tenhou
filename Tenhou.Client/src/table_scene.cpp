@@ -11,6 +11,11 @@ namespace tenhou {
         // FUN_004902f0 stores literal native-pixel wall offsets from the PE table.
         if (tile.family == 'y') return {tile.dx, tile.dy};
         TileOffset offset{static_cast<int>(tile.dx * width / 1024.0), static_cast<int>(tile.dy * width / 1024.0)};
+        if (tile.native_draw_offset) {
+            constexpr int x[]{4, -1, -3, -1}, y[]{0, -3, 0, 3}; // PE 004e6098 / 004e60a8.
+            offset.x += x[tile.direction];
+            offset.y += y[tile.direction];
+        }
         if (tile.river_waiting) {
             // FUN_00491fe0 discard: original signed-short placeholder offsets,
             // PE 004e61b0 (x) and 004e61a0 (y), literal pixels at either canvas.
@@ -93,7 +98,8 @@ namespace tenhou {
             if (hand.size() > 14) throw std::runtime_error("Table hand exceeds fourteen tiles");
             for (std::size_t i = 0; i < hand.size(); ++i) {
                 const bool winning = player.retired && i + 1 == hand.size() && player.winning_tile >= 0;
-                const bool drawn = winning || (hand[i] >= 0 && hand[i] == player.drawn_tile);
+                const bool drawn = winning || (hand[i] >= 0 && hand[i] == player.drawn_tile) ||
+                                   (player.hidden_draw && i + 1 == hand.size() && hand[i] < 0);
                 // FUN_00486e80: revealed opponent t/i/d becomes n/(17-i)/d.
                 TableTile command{
                     seat ? 'n' : 't', seat ? 17 - static_cast<int>(i) : static_cast<int>(i), hand[i], seat
@@ -122,7 +128,8 @@ namespace tenhou {
                     continue;
                 }
                 command.drawn = drawn;
-                if (drawn) {
+                command.native_draw_offset = drawn && !winning && !state.variant;
+                if (drawn && !command.native_draw_offset) {
                     constexpr int x[]{12, 0, -12, 0}, y[]{0, 10, 0, -10};
                     command.dx = x[seat];
                     command.dy = y[seat];
@@ -232,12 +239,14 @@ namespace tenhou {
         width_ = width;
         variants_.Configure(directory);
         cache_.clear();
+        flight_cache_.clear();
         cached_bytes_ = 0;
         frame_ = 1;
         evictions_ = 0;
     }
 
     void TableArtwork::BeginFrame() {
+        if (flight_cache_.size() > 192) flight_cache_.clear();
         while (cached_bytes_ > cache_budget_) {
             auto victim = cache_.end();
             for (auto it = cache_.begin(); it != cache_.end(); ++it)
@@ -251,15 +260,21 @@ namespace tenhou {
         ++frame_;
     }
 
-    const ObjectImage &TableArtwork::Get(const TableTile &tile, bool red) {
+    std::uint32_t TableArtwork::ImageKey(const TableTile &tile, bool red) const {
         if (!width_) throw std::runtime_error("Table artwork is not loaded");
         if (tile.slot < 0 || tile.slot > 255 || tile.direction < 0 || tile.direction > 3)
             throw std::runtime_error("Invalid table resource command");
         const bool aka = std::string(tile.role) == "missing_suit" || (red && std::find(red_tiles_.begin(), red_tiles_.end(), tile.tile) != red_tiles_.end());
         const bool flower = tile.tile >= 136 && tile.tile < 144;
         const unsigned variant = static_cast<unsigned>(flower ? 40 + tile.tile - 136 : aka ? tile.tile / 36 * 10 : TileVariant(tile.tile, false));
-        const std::uint32_t key = static_cast<unsigned char>(tile.family) | (unsigned(tile.slot) << 8) |
-                                  (variant << 16) | (unsigned(tile.direction) << 24);
+        return static_cast<unsigned char>(tile.family) | (unsigned(tile.slot) << 8) |
+               (variant << 16) | (unsigned(tile.direction) << 24);
+    }
+
+    const ObjectImage &TableArtwork::Get(const TableTile &tile, bool red) {
+        const auto key = ImageKey(tile, red);
+        const unsigned variant = (key >> 16) & 0xff;
+        const bool flower = variant >= 40;
         const auto found = cache_.find(key);
         if (found != cache_.end()) {
             found->second.used = frame_;
@@ -298,6 +313,43 @@ namespace tenhou {
         }
         cached_bytes_ += decoded.image.bgra.size();
         return cache_.emplace(key, Cached{std::move(decoded), frame_}).first->second.image;
+    }
+
+    const ObjectImage &TableArtwork::GetFlight(const TileFlightImage &flight, bool red) {
+        std::array<int, 8> offsets{};
+        int left = 0, top = 0, right = 0, bottom = 0;
+        for (unsigned i = 0; i < flight.count; ++i) {
+            const auto &offset = flight.offsets[i];
+            offsets[i * 2] = offset.x;
+            offsets[i * 2 + 1] = offset.y;
+            left = std::min(left, offset.x);
+            top = std::min(top, offset.y);
+            right = std::max(right, offset.x);
+            bottom = std::max(bottom, offset.y);
+        }
+        const FlightKey key{ImageKey(flight.sprite, red), flight.count, flight.opacity, offsets};
+        const auto cached = flight_cache_.find(key);
+        if (cached != flight_cache_.end()) return cached->second;
+
+        const auto &source = Get(flight.sprite, red).image;
+        const int width = source.width + right - left, height = source.height + bottom - top;
+        ObjectImage combined{left, top, {width, height, Bytes(std::size_t(width) * height * 4)}};
+        Gdiplus::Bitmap surface(width, height, width * 4, PixelFormat32bppARGB, combined.image.bgra.data());
+        Gdiplus::Bitmap sprite(source.width, source.height, source.width * 4, PixelFormat32bppARGB,
+                                const_cast<BYTE *>(source.bgra.data()));
+        Gdiplus::Graphics graphics(&surface);
+        Gdiplus::ColorMatrix matrix{{{1,0,0,0,0}, {0,1,0,0,0}, {0,0,1,0,0},
+                                     {0,0,0,flight.opacity,0}, {0,0,0,0,1}}};
+        Gdiplus::ImageAttributes attributes;
+        attributes.SetColorMatrix(&matrix);
+        for (unsigned i = 0; i < flight.count; ++i) {
+            const auto &offset = flight.offsets[i];
+            const Gdiplus::Rect target(offset.x - left, offset.y - top, source.width, source.height);
+            if (graphics.DrawImage(&sprite, target, 0, 0, source.width, source.height, Gdiplus::UnitPixel,
+                                   &attributes) != Gdiplus::Ok) throw std::runtime_error("Cannot compose tile flight");
+        }
+        graphics.Flush(Gdiplus::FlushIntentionSync);
+        return flight_cache_.emplace(key, std::move(combined)).first->second;
     }
 
     TileOffset TableArtwork::Offset(const TableTile &tile) {
@@ -356,10 +408,12 @@ namespace tenhou {
             const auto &image = artwork.Get(tile, red);
             const int x = image.x, y = image.y, height = image.image.height, width = image.image.width;
             const auto &face = artwork.Get(placed.tile, red);
+            const int placed_x = placed.flight ? placed.flight->landing_x : placed.x;
+            const int placed_y = placed.flight ? placed.flight->landing_y : placed.y;
             ordered.push_back({
                 placed, {
-                    placed.y + y - face.y + height,
-                    -std::abs(2 * (placed.x + x - face.x) + width - artwork.width())
+                    placed_y + y - face.y + height,
+                    -std::abs(2 * (placed_x + x - face.x) + width - artwork.width())
                 }
             });
         }

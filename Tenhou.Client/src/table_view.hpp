@@ -77,6 +77,7 @@ namespace tenhou {
         void Advance();
 
         void EffectsTick();
+        void OpeningTick();
 
         void CancelEffects();
 
@@ -101,7 +102,7 @@ namespace tenhou {
         RetainedScene native_buffer_;
         CachedHud hud_cache_;
         TileShadowLayer shadow_layer_;
-        MotionTimer motion_timer_;
+        MotionTimer motion_timer_, opening_timer_;
         std::function<void(const std::string &)> log_;
         ReplayAudio audio_;
         ReplaySoundBank sounds_;
@@ -113,7 +114,6 @@ namespace tenhou {
         bool individual_voices_ = false;
         ClientPreferences preferences_;
         OpeningPresentation opening_;
-        ULONGLONG opening_start_ = 0;
         bool start_sound_pending_ = false;
         bool result_pending_ = false;
         unsigned draw_end_ticks_ = 0;

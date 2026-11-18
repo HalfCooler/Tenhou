@@ -72,12 +72,12 @@ namespace tenhou {
         if (!animate || !before.initialized || event.kind == ReplayEventKind::Init) return;
         if (!artwork_.width()) artwork_.Load(directory_, width_);
         const bool red = (online.type & 2) == 0;
-        presentation_.Begin(before, after, event, event.kind == ReplayEventKind::Meld ? 360 : 240, width_,
+        presentation_.Begin(before, after, event, 240, width_,
                             [&](const TableTile &t) {
                                 const auto &im = artwork_.Get(t, red);
                                 const auto offset = artwork_.Offset(t);
                                 return std::make_pair(im.x + offset.x, im.y + offset.y);
-                            }, now, auto_sort_);
+                            }, now, auto_sort_, &artwork_, red);
     }
 
     ReplayState OnlineTable::Project(const OnlineState &online) {
@@ -261,8 +261,7 @@ namespace tenhou {
             display_artwork_.AppendStatus(*final, state);
             if (captions) captions->Append(*final, w, display_artwork_.Text());
         }
-        native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), tiles, artwork_, red,
-                              WallMetadata(state, placed, original_display_, red), stamp.str(), [&](HDC memory) {
+        native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), tiles, artwork_, red, {}, stamp.str(), [&](HDC memory) {
                                   Gdiplus::Graphics graphics(memory);
                                   Gdiplus::Bitmap bg(w, h, w * 4, PixelFormat32bppARGB, background_.bgra.data());
                                   if (graphics.DrawImage(&bg, 0, 0) != Gdiplus::Ok) throw std::runtime_error(
@@ -273,6 +272,7 @@ namespace tenhou {
                                       ClipGraphics(graphics, region);
                                       shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow);
                                       for (const auto &tile: tiles) {
+                                          if (tile.flight) continue;
                                           const bool missing = std::string(tile.tile.role) == "missing_suit";
                                           const auto &item = artwork_.Get(tile.tile, missing || red);
                                           if (!Overlaps(region, TileBounds(tile, item.image.width, item.image.height)))
@@ -340,6 +340,7 @@ namespace tenhou {
                                               graphics.FillRectangle(&overlay, tile.x, tile.y, item.image.width, item.image.height);
                                           }
                                       }
+                                      PaintTableFlights(graphics, region, tiles, artwork_, red);
                                       for (std::size_t i = 0; i < state.dora_indicators.size(); ++i) {
                                           if (original_display_ &&state.wall.known) break;
                                           const auto &item = artwork_.Get({'k', 0, state.dora_indicators[i], 0}, red);
@@ -358,7 +359,7 @@ namespace tenhou {
                                   }
                                   const HBRUSH gold = CreateSolidBrush(RGB(235, 185, 74));
                                   for (const auto &tile: tiles)
-                                      if (!original_display_ && (tile.tile.drawn || tile.tile.riichi)) {
+                                      if (!tile.flight && !original_display_ && (tile.tile.drawn || tile.tile.riichi)) {
                                           const auto &image = artwork_.Get(tile.tile, red).image;
                                           RECT r{tile.x, tile.y, tile.x + image.width, tile.y + image.height};
                                           FrameRect(memory, &r, gold);
@@ -499,7 +500,7 @@ namespace tenhou {
                 }
         SortTableScene(scene, artwork_, red);
         for (const auto &placed: scene) {
-            if (placed.tile.direction != 0 || std::string(placed.tile.role) != "hand") continue;
+            if (placed.flight || placed.tile.direction != 0 || std::string(placed.tile.role) != "hand") continue;
             const auto &image = artwork_.Get(placed.tile, red).image;
             const int x0 = px - placed.x, y0 = py - placed.y;
             if (x0 >= 0 && y0 >= 0 && x0 < image.width && y0 < image.height &&

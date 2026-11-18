@@ -13,6 +13,8 @@
 #include <commctrl.h>
 
 namespace tenhou {
+    namespace { constexpr UINT_PTR kOpeningTimer = 12; }
+
     void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
         if (change == PreferenceChange::MusicPreviewBegin || change == PreferenceChange::MusicPreviewEnd) {
             music_preview_ = change == PreferenceChange::MusicPreviewBegin;
@@ -180,7 +182,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                     Submit(index);
             }, [this] { CancelSelection(); });
         match_intro_ = std::make_unique<MatchIntroView>(window_, [this] {
-            opening_start_ = GetTickCount64();
+            opening_.ResumeClock(AnimationNow());
             if (start_barrier_) client_->ConfirmMatchStart();
             else if (start_sound_pending_) {
                 start_sound_pending_ = false;
@@ -841,6 +843,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         const bool paused = client_->snapshot().table_paused;
         if (paused && !paused_at_) {
             paused_at_ = GetTickCount64();
+            opening_.ResumeClock(AnimationNow());
             CancelHandDrag();
             CancelSelection();
         } else if (!paused && paused_at_) {
@@ -853,6 +856,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (result_deadline_) SetTimer(window_, 5, remaining(result_deadline_), nullptr);
             if (automatic_discard_at_) SetTimer(window_, 10, remaining(automatic_discard_at_), nullptr);
             paused_at_ = 0;
+            opening_.ResumeClock(AnimationNow());
         }
         table_.SetPaused(paused);
         settlement_view_->SetPaused(paused);
@@ -963,6 +967,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (match_intro_->Resuming()) log_("ONLINE RESUME PREPARATION END");
             match_intro_->Cancel();
         }
+        opening_timer_.Stop();
         opening_.Cancel();
         opening_flowers_ = {};
         deferred_sounds_.clear();
@@ -1214,12 +1219,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 if (!state.Sichuan() && !state.events.empty() && state.events.back().kind == "start")
                     for (int seat = 0; seat < 4; ++seat)
                         opening_flowers_[state.Relative(seat)] = !state.players[seat].flowers.empty();
-                opening_start_ = GetTickCount64();
+                opening_.ResumeClock(AnimationNow());
                 if (state.hand_number == 1) {
                     if (start_barrier_) start_sound_pending_ = true;
                     else if (event_sound_allowed_) PlaySoundId(112);
                 }
-                SetTimer(window_, 2, opening_.interval(), nullptr);
+                opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
             }
             if (new_hand && live && !snapshot.game.ended && match_intro_pending_) {
                 match_intro_pending_ = false;
@@ -1259,7 +1264,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (draw_end) presentation.kind = ReplayEventKind::DrawEnd;
         try {
             table_.Accept(snapshot.game, presentation, animation_enabled_ && !text_details_ && !draw_end && !state.Preparing());
-            if (table_.Animating()) motion_timer_.Start(window_, 6);
+            if (table_.Animating()) motion_timer_.Start(window_, 6, kTableTickMs);
         } catch (const std::exception &error) {
             table_.CancelAnimation(); motion_timer_.Stop();
             log_(std::string("VARIANT ANIMATION FALLBACK ") + error.what());
@@ -1304,7 +1309,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
         if (message.tag == "START") {
             start_barrier_ = false;
-            opening_start_ = GetTickCount64();
+            opening_.ResumeClock(AnimationNow());
             if (start_sound_pending_) {
                 start_sound_pending_ = false;
                 PlaySoundId(112);
@@ -1360,7 +1365,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                           animation_enabled_ && !text_details_ && !show_results_ && !opening_.Active());
             if (table_.Animating()) {
                 log_("ONLINE ANIMATION BEGIN tag=" + event.tag + " replaced=" + std::to_string(replaced));
-                motion_timer_.Start(window_, 6);
+                motion_timer_.Start(window_, 6, kTableTickMs);
             } else motion_timer_.Stop();
         } catch (const std::exception &e) {
             log_(std::string("ONLINE ANIMATION FALLBACK ") + e.what());
@@ -1382,6 +1387,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         result_pending_ = result;
         if (result) {
             if (opening_.Active() || snapshot.game.settlement.receipts.size() == 1) StopAudio();
+            opening_timer_.Stop();
             opening_.Cancel();
             deferred_sounds_.clear();
             settlement_view_->CancelPresentation();
@@ -1406,11 +1412,10 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             start_sound_pending_ = !ReplaySounds(event).empty();
         else if (event_sound_allowed_) PlayEventSound(event, snapshot);
         if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
-            opening_start_ = GetTickCount64();
             table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
-            if (!intro && !start_barrier_ && opening_.Tick() && opening_.sound()) PlaySoundId(opening_.sound());
+            opening_.ResumeClock(AnimationNow());
+            opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
             log_("ONLINE OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()));
-            SetTimer(window_, 2, opening_.Active() ? opening_.interval() : (draw_end_ticks_ ? 15 : 25), nullptr);
         }
         if (event.kind == ReplayEventKind::Init && match_intro_pending_) {
             match_intro_pending_ = false;
@@ -1431,6 +1436,34 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         // immediately. Keep the opening frozen until the authority sends START.
         if (event.kind == ReplayEventKind::Init && start_barrier_ && !match_intro_->Active() && !snapshot.recovering)
             client_->ConfirmMatchStart();
+    }
+
+    void LobbyView::OpeningTick(double now) {
+        if (match_intro_->Active() || start_barrier_ || client_->snapshot().table_paused) {
+            opening_.ResumeClock(now);
+            return;
+        }
+        if (opening_.Advance(now)) {
+            if (opening_.sound()) PlaySoundId(opening_.sound());
+            if (!opening_.Active()) {
+                log_("ONLINE OPENING DONE tick=" + std::to_string(GetTickCount64()));
+                bool flowers = false;
+                for (int seat = 0; seat < 4; ++seat) if (opening_flowers_[seat]) {
+                    captions_.AcceptText(TextKey::caption_kita, seat);
+                    flowers = true;
+                }
+                opening_flowers_ = {};
+                if (flowers) {
+                    SetTimer(window_, 8, 15, nullptr);
+                    if (event_sound_allowed_) PlaySoundId(107);
+                }
+                if (!deferred_sounds_.empty()) SetTimer(window_, 2, 25, nullptr);
+                UpdateActions();
+                Arrange();
+            }
+            InvalidateRect(window_, nullptr, FALSE);
+        }
+        if (!opening_.Active()) opening_timer_.Stop();
     }
 
     void LobbyView::PlayEventSound(const ReplayEvent &event, const LobbySnapshot &snapshot) {
@@ -1852,30 +1885,13 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     }
                     return 0;
                 }
+                if (message == WM_TIMER && wparam == kOpeningTimer) {
+                    self->OpeningTick(AnimationNow());
+                    return 0;
+                }
                 if (message == WM_TIMER && wparam == 2) {
-                    if (self->match_intro_->Active() || self->start_barrier_) {
-                        self->audio_.Poll();
-                        return 0;
-                    }
-                    if (self->opening_.Active()) {
-                        if (self->opening_.Tick() && self->opening_.sound()) self->PlaySoundId(self->opening_.sound());
-                        SetTimer(window, 2, self->opening_.interval(), nullptr);
-                        if (!self->opening_.Active()) {
-                            self->log_("ONLINE OPENING DONE");
-                            bool flowers = false;
-                            for (int seat = 0; seat < 4; ++seat) if (self->opening_flowers_[seat]) {
-                                self->captions_.AcceptText(TextKey::caption_kita, seat); flowers = true;
-                            }
-                            self->opening_flowers_ = {};
-                            if (flowers) {
-                                SetTimer(window, 8, 15, nullptr);
-                                if (self->event_sound_allowed_) self->PlaySoundId(107);
-                            }
-                            self->UpdateActions();
-                            self->Arrange();
-                        }
-                        InvalidateRect(window, nullptr, FALSE);
-                    } else if (!self->deferred_sounds_.empty()) {
+                    if (!self->opening_.Active() && !self->match_intro_->Active() && !self->start_barrier_ &&
+                        !self->deferred_sounds_.empty()) {
                         const auto id = self->deferred_sounds_.front();
                         self->deferred_sounds_.erase(self->deferred_sounds_.begin());
                         self->PlaySoundId(id);
@@ -1885,8 +1901,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                         self->log_("ONLINE AUDIO ERROR " + self->audio_error_);
                         self->StopAudio();
                     }
-                    if (!self->opening_.Active() && self->deferred_sounds_.empty() && !self->audio_.Active()) KillTimer(
-                        window, 2);
+                    if (self->deferred_sounds_.empty() && !self->audio_.Active()) KillTimer(window, 2);
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == 6) {

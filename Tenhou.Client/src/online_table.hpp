@@ -63,7 +63,8 @@ namespace tenhou {
 
         void BeginOpening(OpeningPresentation &opening, const OnlineState &state, bool wall) {
             Prepare();
-            opening.Begin(OnlineTableState(state), wall, &artwork_);
+            artwork_.SetRedTiles(state.red_tiles);
+            opening.Begin(OnlineTableState(state), wall, &artwork_, (state.type & 2) == 0);
         }
 
         void Paint(HDC dc, RECT bounds, const OnlineState &state, bool interactive = false,

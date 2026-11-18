@@ -8,231 +8,309 @@
 
 namespace tenhou {
     namespace {
-        constexpr unsigned kWallFlightSteps = 4; // 0048df75, distance * 0.25
-        constexpr unsigned kDealFlightSteps = 12; // 0048eaff, distance / 12
-        constexpr unsigned kDealPacketTicks = 1 + 6; // dispatch and event 100
+        constexpr unsigned kDealPacketTicks = 1 + 6; // Dispatch, then event 100.
         constexpr unsigned kDealTailTicks = 9;
-        constexpr float kOpeningSortSpeed = 25.f; // 00490dbf, pixels/update
 
-        // 0048f650 / 004900a0. Delta points away from the destination anchor.
-        struct TileFlight {
-            TileFlight(int dx, int dy, float speed) {
-                if (!dx && !dy) return;
-                const double length = std::hypot(dx, dy);
-                const double vy = -dy / length * speed;
-                step_x = static_cast<float>(-dx / length * speed);
-                step_y = static_cast<float>(vy);
-                advances = static_cast<unsigned>(1 - (dx ? dx / double(step_x) : dy / vy)) - 1;
-            }
+        float SpeedForSteps(int dx, int dy, unsigned steps) {
+            const double factor = steps == 12 ? double(0.083333336f) : 1.0 / steps;
+            return static_cast<float>(std::hypot(dx, dy) * factor);
+        }
 
-            void Move(int &x, int &y, unsigned tick) const {
-                if (tick >= advances) return;
-                float rx = -static_cast<float>(advances) * step_x;
-                float ry = -static_cast<float>(advances) * step_y;
-                for (unsigned i = 0; i < tick; ++i) {
-                    rx += step_x;
-                    ry += step_y;
-                }
-                x = static_cast<int>(x + double(rx));
-                y = static_cast<int>(y + double(ry));
-            }
-
-            float step_x = 0, step_y = 0;
-            unsigned advances = 0;
-        };
-
-        TableTile WallOrigin(const WallState &wall, int index) {
+        TableTile WallOrigin(const WallState &wall, int index, const std::vector<TableTile> &visible_wall) {
             const auto position = wall.Position(index);
-            return WallTile(wall, position.first, position.second / 2, position.second % 2 == 0);
+            auto source = WallTile(wall, position.first, position.second / 2, position.second % 2 == 0);
+            const auto stack = std::find_if(visible_wall.begin(), visible_wall.end(), [&](const TableTile &visible) {
+                return visible.direction == source.direction && visible.wall_stack == source.wall_stack;
+            });
+            if (stack != visible_wall.end()) {
+                source.dx = stack->dx;
+                source.dy = stack->dy;
+            }
+            return source;
+        }
+
+        int HandSlot(const TableTile &tile) {
+            return tile.family == 'n' ? 17 - tile.slot : tile.slot;
+        }
+
+        TableTile HandBack(TableTile tile) {
+            tile.slot = 17 - HandSlot(tile);
+            tile.family = 'n';
+            tile.tile = -1;
+            return tile;
+        }
+
+        std::pair<int, int> HandFlightLanding(const TableTile &tile, const TableTile &back,
+                                              std::pair<int, int> target, TableArtwork &artwork, bool red) {
+            const auto &back_image = artwork.Get(back, red);
+            const auto &face_image = artwork.Get(tile, red);
+            if (tile.direction == 0 && tile.tile >= 0) {
+                return {target.first + (face_image.image.width - back_image.image.width) / 2,
+                        target.second + (face_image.image.height - back_image.image.height) / 2};
+            }
+            return {target.first + back_image.x - face_image.x, target.second + back_image.y - face_image.y};
+        }
+
+        unsigned CompactSteps(int dx, int dy) {
+            unsigned steps = 0;
+            while (dx || dy) {
+                dx = static_cast<int>(dx * double(.3f));
+                dy = static_cast<int>(dy * double(.3f));
+                ++steps;
+            }
+            return steps;
+        }
+
+        bool IsHand(const TableTile &tile) { return std::string_view(tile.role) == "hand"; }
+    }
+
+    TileFlight::TileFlight(const TableTile &sprite, int x, int y, int from_x, int from_y, float speed,
+                           unsigned copies, float opacity, bool cover_landing) {
+        const int dx = from_x - x, dy = from_y - y;
+        if ((!dx && !dy) || speed <= 0) return;
+        const double length = std::hypot(dx, dy);
+        const double step_y = -dy / length * speed;
+        step_x_ = static_cast<float>(-dx / length * speed);
+        step_y_ = static_cast<float>(step_y);
+        const auto advances = static_cast<unsigned>(1 - (dx ? dx / double(step_x_) : dy / step_y)) - 1;
+        ticks = advances + 2; // The residual reaches zero before the count-zero frame.
+        residual_x_ = static_cast<float>(-double(advances) * step_x_);
+        residual_y_ = static_cast<float>(-double(advances) * step_y);
+        image_.sprite = sprite;
+        image_.landing_x = x;
+        image_.landing_y = y;
+        image_.cover_landing = cover_landing;
+        image_.count = copies;
+        image_.opacity = copies > 2 ? opacity * .5f : opacity;
+        // The original places the copies in positive coordinates within a single
+        // bitmap. Truncate there before translating the bitmap back to the anchor.
+        const double reach = (copies - 1) * .5;
+        const auto offset = [reach](float step, double distance) {
+            const int inset = static_cast<int>(std::max(0.f, step) * reach);
+            return static_cast<int>(inset - step * distance) - inset;
+        };
+        for (unsigned i = 0; i < copies; ++i) {
+            const double distance = (copies - 1 - i) * .5;
+            image_.offsets[i] = {offset(step_x_, distance), offset(step_y_, distance)};
         }
     }
+
+    void TileFlight::Place(PositionedTile &tile, unsigned tick) const {
+        if (tick >= ticks) return;
+        tile.flight = image_;
+        tile.x = image_.landing_x;
+        tile.y = image_.landing_y;
+        if (tick + 1 == ticks) return;
+        float rx = residual_x_, ry = residual_y_;
+        for (unsigned i = 0; i < tick; ++i) {
+            rx += step_x_;
+            ry += step_y_;
+        }
+        tile.x = static_cast<int>(tile.x + double(rx));
+        tile.y = static_cast<int>(tile.y + double(ry));
+    }
+
     std::vector<PositionedTile> ReplayTransition::Frame(double elapsed) const {
         std::vector<PositionedTile> result;
+        result.reserve(tiles.size());
         for (const auto &item: tiles) {
-            if (item.before_flip && elapsed < item.delay) {
-                result.push_back({*item.before_flip, item.from_x, item.from_y});
+            if (elapsed < item.delay) {
+                if (item.before_flip) result.push_back({*item.before_flip, item.from_x, item.from_y});
                 continue;
             }
-            if (elapsed < item.delay) continue;
-            if (nuki &&std::string(item.tile.role)=="nuki")
-            {
-                // 0048f70...0048f795: count=trunc(1+length/40), residual
-                // initialized from count-1, then one normalized step per update.
-                const float dx = static_cast<float>(item.from_x - item.to_x), dy = static_cast<float>(
-                    item.from_y - item.to_y);
-                const float length = std::sqrt(dx * dx + dy * dy);
-                const unsigned count = static_cast<unsigned>(1 + length / 40);
-                const unsigned tick = std::min(count, static_cast<unsigned>(std::max(0.0, elapsed) * 60 / 1000 + 1e-6));
-                const float sx = length ? -dx / length * 40 : 0, sy = length ? -dy / length * 40 : 0;
-                float rx = -static_cast<float>(count - 1) * sx, ry = -static_cast<float>(count - 1) * sy;
-                // 004900a0 adds float steps after each draw; recomputing a
-                // multiple loses those rounding points. Count zero draws target,
-                // count -1 is removed by 00485b40 on the following queue pass.
-                for (unsigned step = 0; step < tick; ++step) {
-                    rx += sx;
-                    ry += sy;
-                }
-                // x87 adds the integer anchor without a float store before ftol.
-                const int x = tick < count ? static_cast<int>(double(item.to_x) + rx) : item.to_x;
-                const int y = tick < count ? static_cast<int>(double(item.to_y) + ry) : item.to_y;
-                result.push_back({item.tile, x, y});
-                continue;
-            }
-            const auto span = std::max(1u, duration - std::min(duration, item.delay));
-            const auto tick = std::min(double(span), elapsed - item.delay);
-            const auto interpolate = [&](int start, int end) {
-                if (manual || (nuki && std::string(item.tile.role) == "hand")) {
-                    int residual = start - end;
-                    const unsigned steps = static_cast<unsigned>((tick + 1e-6) * 60 / 1000);
+            PositionedTile placed{item.tile, item.to_x, item.to_y};
+            const double age = elapsed - item.delay;
+            if (item.flight.ticks) {
+                item.flight.Place(placed, static_cast<unsigned>(age / kTableTickMs));
+            } else if (manual || item.compact_hand) {
+                const unsigned steps = static_cast<unsigned>(manual ? age * 60 / 1000 : age / kTableTickMs);
+                auto compact = [steps](int residual) {
                     for (unsigned i = 0; i < steps && residual; ++i)
                         residual = static_cast<int>(residual * double(.3f));
-                    return tick >= span ? end : end + residual;
-                }
-                return start + static_cast<int>((double(end - start) * tick) / span);
-            };
-            result.push_back({item.tile, interpolate(item.from_x, item.to_x), interpolate(item.from_y, item.to_y)});
+                    return residual;
+                };
+                placed.x += compact(item.from_x - item.to_x);
+                placed.y += compact(item.from_y - item.to_y);
+            } else if (elapsed < duration) {
+                const auto span = std::max(1u, duration - std::min(duration, item.delay));
+                placed.x = item.from_x + static_cast<int>((item.to_x - item.from_x) * age / span);
+                placed.y = item.from_y + static_cast<int>((item.to_y - item.from_y) * age / span);
+            }
+            result.push_back(placed);
         }
         return result;
     }
 
     ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
                                            const ReplayEvent &event, unsigned duration, int canvas_width,
-                                           const TileOrigin &origin, bool sort_self) {
+                                           const TileOrigin &origin, bool sort_self, TableArtwork *artwork, bool red) {
         ReplayTransition result;
-        if (!duration || !after.initialized || (event.kind != ReplayEventKind::Init &&
-                                                event.kind != ReplayEventKind::Draw && event.kind !=
-                                                ReplayEventKind::Discard &&
-                                                event.kind != ReplayEventKind::Meld && event.tag != "SORT" && event.tag
-                                                != "MANUAL" && event.tag != "VARIANT"))
+        const bool draw = event.kind == ReplayEventKind::Draw;
+        const bool discard = event.kind == ReplayEventKind::Discard;
+        const bool meld = event.kind == ReplayEventKind::Meld;
+        const bool sort = event.tag == "SORT";
+        const bool native_motion = draw || discard || meld || sort;
+        if (!after.initialized || (!native_motion && event.kind != ReplayEventKind::Init &&
+                                  event.tag != "MANUAL" && event.tag != "VARIANT"))
             return result;
-        result.duration = duration;
-        if (event.kind == ReplayEventKind::Meld && event.tag != "VARIANT" && DecodeReplayMeld(
-                static_cast<unsigned>(std::stoul(event.attributes.at("m"))), event.who).kind == MeldKind::Nuki) {
-            result.nuki = true;
-            result.duration = 0;
-        }
+        result.duration = native_motion ? 0 : duration;
         const auto previous = event.kind == ReplayEventKind::Init
                                   ? std::vector<TableTile>{}
-                                  : BuildTableScene(before, event.tag == "SORT" ? false : sort_self);
+                                  : BuildTableScene(before, sort ? false : sort_self);
         const auto current = BuildTableScene(after, sort_self);
         std::vector<bool> used(previous.size(), false);
         const double unit = canvas_width / 1024.0;
+
+        const bool actor = SeatPresent(after.seat_mask, event.who);
+        std::vector<std::size_t> hidden, removed, covered;
+        std::size_t next_hidden = 0, next_removed = 0, next_covered = 0;
+        int discarded_tile = -1;
+        bool tsumogiri = false;
+        if (actor && (discard || meld)) {
+            const auto &old = before.players[event.who];
+            const auto &player = after.players[event.who];
+            const auto count = std::count(player.hand.begin(), player.hand.end(), -1);
+            for (std::size_t i = 0; i < previous.size(); ++i)
+                if (previous[i].direction == event.who && IsHand(previous[i]) && previous[i].tile < 0) hidden.push_back(i);
+            if (discard && !player.discards.empty()) {
+                discarded_tile = player.discards.back().tile;
+                tsumogiri = player.discards.back().tsumogiri;
+            }
+            if (meld && player.melds.size() > old.melds.size() && player.melds.back().kind == MeldKind::ClosedKan) {
+                for (std::size_t i = 0; i < previous.size(); ++i) {
+                    const auto &tile = previous[i];
+                    const auto &kan = player.melds.back().tiles;
+                    if (tile.direction != event.who || !IsHand(tile) || tile.tile < 0 ||
+                        std::find(kan.begin(), kan.end(), tile.tile) == kan.end()) continue;
+                    if (std::none_of(current.begin(), current.end(), [&](const TableTile &next) {
+                            return next.direction == event.who && next.tile == tile.tile &&
+                                   std::string_view(next.role) == "meld";
+                        })) covered.push_back(i);
+                }
+            }
+            // The original uses a standing slot for a hidden tedashi and the draw
+            // slot for tsumogiri. Use the public tile ID to reproduce a stable choice.
+            while (hidden.size() > static_cast<std::size_t>(count)) {
+                const std::size_t last = hidden.size() - 1;
+                const bool extraction = player.nuki.size() > old.nuki.size() ||
+                    (meld && player.melds.size() == old.melds.size());
+                const auto index = discard && !tsumogiri && last
+                    ? static_cast<std::size_t>(std::max(discarded_tile, 0)) % last
+                    : extraction && !old.hidden_draw ? 0 : last;
+                removed.push_back(hidden[index]);
+                used[hidden[index]] = true;
+                hidden.erase(hidden.begin() + index);
+            }
+        }
+
+        const auto wall = draw && before.wall.known
+            ? BuildWallScene(before, static_cast<unsigned>(before.wall.total)) : std::vector<TableTile>{};
         for (std::size_t n = 0; n < current.size(); ++n) {
             const auto &tile = current[n];
+            const auto role = std::string_view(tile.role);
             const auto target = origin(tile);
             auto source = target;
+            const bool acting_tile = actor && tile.direction == event.who;
+            const bool hand = role == "hand";
             std::size_t found = previous.size();
-            // Entity IDs match the moving hand/river/meld tile. Covered kan backs
-            // have no public entity ID and retain matching slots where possible.
-            for (std::size_t i = 0; i < previous.size(); ++i)
-                if (!used[i] &&
-                    previous[i].tile == tile.tile && previous[i].direction == tile.direction &&
-                    (tile.tile >= 0 || (previous[i].family == tile.family && previous[i].slot == tile.slot))) {
-                    found = i;
-                    break;
-                }
-            // A called river tile changes direction when it joins the caller's meld.
-            if (found == previous.size() && tile.tile >= 0 && std::string(tile.role) != "hand")
+            if (acting_tile && hand && tile.tile < 0 && (discard || meld) && next_hidden < hidden.size()) {
+                found = hidden[next_hidden++];
+            } else {
                 for (std::size_t i = 0; i < previous.size(); ++i)
-                    if (!used[i] && previous[i].tile == tile.tile) {
+                    if (!used[i] && previous[i].tile == tile.tile && previous[i].direction == tile.direction &&
+                        (tile.tile >= 0 || (previous[i].family == tile.family && previous[i].slot == tile.slot))) {
                         found = i;
                         break;
                     }
+            }
+            // A called tile joins the meld from the source seat's river.
+            if (found == previous.size() && tile.tile >= 0 && !hand)
+                for (std::size_t i = 0; i < previous.size(); ++i)
+                    if (!used[i] && previous[i].tile == tile.tile && std::string_view(previous[i].role) == "river") {
+                        found = i;
+                        break;
+                    }
+
             unsigned delay = 0;
             std::optional<TableTile> before_flip;
-            if (event.kind == ReplayEventKind::Win && after.variant && std::string(tile.role) == "retired") {
+            if (event.kind == ReplayEventKind::Win && after.variant && role == "retired") {
                 const int index = 17 - tile.slot;
                 for (std::size_t i = 0; i < previous.size(); ++i) {
                     const auto &old = previous[i];
-                    if (old.direction == tile.direction && std::string(old.role) == "hand" &&
-                        (old.family == 't' ? old.slot : 17 - old.slot) == index) {
-                        found = i; before_flip = old; delay = 60u * (index + 1); break;
+                    if (old.direction == tile.direction && IsHand(old) && HandSlot(old) == index) {
+                        found = i;
+                        before_flip = old;
+                        delay = 60u * (index + 1);
+                        break;
                     }
                 }
                 result.duration = std::max(result.duration, 900u);
+            }
+
+            const bool drawn = draw && acting_tile && hand && found == previous.size();
+            const bool discarded = discard && acting_tile && role == "river" && tile.tile == discarded_tile;
+            const bool melded = meld && acting_tile && (role == "meld" || role == "added_kan" || role == "nuki" || role == "flower") &&
+                (found == previous.size() || std::string_view(previous[found].role) != role);
+            if (found == previous.size()) {
+                if ((discarded || melded) && next_removed < removed.size()) found = removed[next_removed++];
+                else if (melded && tile.tile < 0 && next_covered < covered.size()) found = covered[next_covered++];
             }
             if (found != previous.size()) {
                 used[found] = true;
                 source = origin(previous[found]);
             } else if (event.kind == ReplayEventKind::Init) {
                 source = {static_cast<int>(480 * unit), static_cast<int>(350 * unit)};
-                // Rebuild deal order; mjlog INIT contains hands, not original deal timing.
                 delay = static_cast<unsigned>(n % 13) * duration / 26;
-            } else if (event.kind == ReplayEventKind::Discard && tile.direction == event.who && std::string(tile.role)
-                       == "river") {
-                // A hidden opponent discard acquires an identity only when public.
-                // Its source is a public hand slot, never an invented hidden entity.
-                const auto hand = std::find_if(previous.rbegin(), previous.rend(), [&](const TableTile &old) {
-                    return old.direction == tile.direction && std::string(old.role) == "hand";
-                });
-                if (hand != previous.rend()) source = origin(*hand);
-            } else if (event.kind == ReplayEventKind::Draw || event.kind == ReplayEventKind::Meld) {
-                source = {static_cast<int>(480 * unit), static_cast<int>(350 * unit)};
-                if (event.kind == ReplayEventKind::Draw && before.wall.known && after.wall.known &&
-                    tile.direction == event.who && std::string(tile.role) == "hand") {
-                    // FUN_00491fe0 T/U/V/W: the public wall slot is the origin,
-                    // including the reversed replacement sequence for a kan.
+            } else if (drawn) {
+                if (before.wall.known && after.wall.known) {
                     const int index = !before.wall.dead_wall && after.wall.tail > before.wall.tail
                                           ? before.wall.total - after.wall.tail
                                           : before.wall.pending_kan
                                           ? (135 - before.wall.replacements) ^ 1
                                           : before.wall.front;
-                    auto wall = WallOrigin(before.wall, index);
-                    for (const auto &visible: BuildWallScene(before))
-                        if (visible.direction == wall.direction && visible.slot % 17 == wall.slot % 17 && visible.wall_extra == wall.wall_extra) {
-                            wall.dx = visible.dx;
-                            wall.dy = visible.dy;
-                            break;
-                        }
-                    source = origin(wall);
-                }
-                if (event.kind == ReplayEventKind::Meld && std::string(tile.role) != "hand") {
-                    const auto hand = std::find_if(previous.begin(), previous.end(), [&](const TableTile &old) {
-                        return old.direction == tile.direction && std::string(old.role) == "hand";
-                    });
-                    if (hand != previous.end()) source = origin(*hand);
+                    source = origin(WallOrigin(before.wall, index, wall));
+                } else {
+                    source = {static_cast<int>(480 * unit), static_cast<int>(350 * unit)};
                 }
             }
-            if (result.nuki) {
-                if (std::string(tile.role) == "nuki" && tile.direction == event.who) {
-                    // 0049a570: a hidden entity cannot be located by identity;
-                    // use the final occupied t slot, not an invented hand entity.
-                    if (found == previous.size()) {
-                        const auto hand = std::find_if(previous.rbegin(), previous.rend(), [&](const TableTile &old) {
-                            return old.direction == tile.direction && std::string(old.role) == "hand";
-                        });
-                        if (hand != previous.rend()) source = origin(*hand);
-                    }
-                    const double length = std::hypot(double(source.first - target.first),
-                                                     double(source.second - target.second));
-                    result.duration = std::max(result.duration,
-                                               static_cast<unsigned>(std::ceil(
-                                                   (static_cast<unsigned>(1 + length / 40) + 1) * 1000.0 / 60)));
-                } else if (std::string(tile.role) == "hand" && tile.direction == event.who) {
-                    // N sets the actor's sort flag (0049b800). The next timer
-                    // consumes it via 004894a0 -> 00488220 -> 00488650;
-                    // existing 0.3f hand residuals compact concurrently.
-                    int dx = source.first - target.first, dy = source.second - target.second;
-                    unsigned steps = 0;
-                    while (dx || dy) {
-                        dx = static_cast<int>(dx * double(.3f));
-                        dy = static_cast<int>(dy * double(.3f));
-                        ++steps;
-                    }
-                    result.duration = std::max(result.duration,
-                                               static_cast<unsigned>(std::ceil((steps + 1) * 1000.0 / 60)));
-                } else source = target;
+
+            AnimatedTile animation{tile, source.first, source.second, target.first, target.second, delay, before_flip};
+            if (drawn || discarded || melded) {
+                auto sprite = tile;
+                auto landing = target;
+                if (drawn && artwork) {
+                    sprite = HandBack(tile);
+                    landing = HandFlightLanding(tile, sprite, target, *artwork, red);
+                }
+                const auto speed = melded ? 40.f : SpeedForSteps(source.first - landing.first,
+                                                               source.second - landing.second, drawn ? 12u : 8u);
+                animation.flight = TileFlight(sprite, landing.first, landing.second, source.first, source.second,
+                                              speed, 4, melded ? .32f : .16f,
+                                              discarded || (drawn && tile.direction == 1));
+                result.duration = std::max(result.duration, animation.flight.ticks * kTableTickMs);
+            } else if (native_motion) {
+                animation.compact_hand = hand && (sort || (acting_tile && (discard || meld)));
+                if (animation.compact_hand) {
+                    const auto steps = CompactSteps(source.first - target.first, source.second - target.second);
+                    if (steps) result.duration = std::max(result.duration, (steps + 1) * kTableTickMs);
+                } else {
+                    animation.from_x = animation.to_x;
+                    animation.from_y = animation.to_y;
+                }
             }
-            result.tiles.push_back({tile, source.first, source.second, target.first, target.second, delay, before_flip});
+            result.tiles.push_back(std::move(animation));
         }
         return result;
     }
 
     void TablePresentation::Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
-                                  unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self) {
+                                  unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self,
+                                  TableArtwork *artwork, bool red, unsigned playback_limit) {
         Cancel();
-        transition_ = BuildReplayTransition(before, after, event, duration, width, origin, sort_self);
+        transition_ = BuildReplayTransition(before, after, event, duration, width, origin, sort_self, artwork, red);
         started_ = now;
+        playback_scale_ = playback_limit && transition_.duration > playback_limit
+            ? double(transition_.duration) / playback_limit : 1;
     }
 
     void TablePresentation::BeginManual(const ReplayState &before, const ReplayState &after, int width,
@@ -273,37 +351,38 @@ namespace tenhou {
     }
 
     bool TablePresentation::Tick(double now) {
-        if (!Active() || now < started_ || now - started_ < transition_.duration) return false;
+        if (!Active() || now < started_ || (now - started_) * playback_scale_ < transition_.duration) return false;
         Cancel();
         return true;
     }
 
     std::vector<PositionedTile> TablePresentation::Frame(double now) const {
-        return transition_.Frame(std::min(now < started_ ? 0 : now - started_, double(transition_.duration)));
+        return transition_.Frame(std::min(now < started_ ? 0 : (now - started_) * playback_scale_, double(transition_.duration)));
     }
 
-    void OpeningPresentation::Begin(const ReplayState &state, bool wall, TableArtwork *artwork) {
+    void OpeningPresentation::Begin(const ReplayState &state, bool wall, TableArtwork *artwork, bool red) {
         initial_ = state;
         progress_ = sound_ = 0;
-        hands_.clear();
-        sounds_.clear();
+        next_step_ = 0;
         packets_.clear();
+        deal_flights_ = {};
+        deal_starts_ = {};
         sort_tiles_.clear();
-        sort_steps_ = 0;
-        for (auto &player: initial_.players) if (!player.deal_hand.empty()) {
-            player.hand = player.deal_hand;
-            player.drawn_tile = -1; // The dealer's first draw follows the thirteen-tile deal/sort.
+        for (auto &player: initial_.players) {
+            if (!player.deal_hand.empty()) player.hand = player.deal_hand;
+            player.drawn_tile = -1;
+            player.hidden_draw = false;
         }
         wall_tiles_ = wall && state.wall.known ? static_cast<unsigned>(state.wall.total) : 0;
-        std::array < unsigned, 4 > counts{};
-        for (unsigned step = 0; step < wall_tiles_ / 4; ++step) {
-            hands_.push_back(counts);
-            sounds_.push_back(104);
-        }
-        for (unsigned wait = 0; wall_tiles_ && wait < 6; ++wait) {
-            hands_.push_back(counts);
-            sounds_.push_back(0);
-        }
+        const unsigned stacks = wall_tiles_ / 2;
+        // 0048de30: 0x6e runs through the six tail ticks, then 0x6f
+        // prepares the break and 0x70 reveals the first indicator.
+        wall_setup_ticks_ = stacks ? stacks + 6 + (state.wall.dead_wall ? 2 : 0) : 0;
+        std::array<unsigned, 4> counts{};
+        hands_.assign(wall_setup_ticks_, counts);
+        sounds_.assign(wall_setup_ticks_, 0);
+        for (unsigned step = 0; step < stacks; ++step) sounds_[step + 6] = 104;
+
         unsigned wall_index = 0;
         for (unsigned packet = 0; packet < 4; ++packet)
             for (int who = 0; who < 4; ++who) {
@@ -313,51 +392,89 @@ namespace tenhou {
                 counts[seat] = std::min(packet < 3 ? (packet + 1) * 4 : 13u,
                                         static_cast<unsigned>(initial_.players[seat].hand.size()));
                 if (begin == counts[seat]) continue;
-                hands_.push_back(counts);
-                sounds_.push_back(105);
-                packets_.push_back({
-                    static_cast<unsigned>(hands_.size()), static_cast<unsigned>(seat), begin, counts[seat], wall_index
-                });
+                packets_.push_back({static_cast<unsigned>(hands_.size()) + 1, static_cast<unsigned>(seat),
+                                    begin, counts[seat], wall_index});
                 wall_index += counts[seat] - begin;
-                for (unsigned wait = 1; wait < kDealPacketTicks; ++wait) {
-                    hands_.push_back(counts);
-                    sounds_.push_back(0);
+                hands_.insert(hands_.end(), kDealPacketTicks, counts);
+            }
+        hands_.insert(hands_.end(), kDealTailTicks, counts);
+        sounds_.resize(hands_.size());
+        sort_start_ = static_cast<unsigned>(hands_.size()) + 1;
+        unsigned sort_ticks = 0;
+        if (artwork && artwork->width()) {
+            const auto position = [&](const TableTile &tile) {
+                const auto &image = artwork->Get(tile, red);
+                const auto offset = artwork->Offset(tile);
+                return std::make_pair(image.x + offset.x, image.y + offset.y);
+            };
+            const auto unsorted = BuildTableScene(initial_, false, false);
+            if (wall_tiles_) {
+                auto wall_state = initial_;
+                wall_state.wall.front = wall_state.wall.initial_removed;
+                const auto visible = BuildWallScene(wall_state, wall_tiles_);
+                for (const auto &packet: packets_) {
+                    unsigned landing_tick = 0;
+                    for (const auto &tile: unsorted) {
+                        if (!IsHand(tile) || tile.direction != static_cast<int>(packet.who)) continue;
+                        const auto slot = static_cast<unsigned>(HandSlot(tile));
+                        if (slot < packet.begin || slot >= packet.end) continue;
+                        const int index = initial_.wall.initial_removed + static_cast<int>(packet.wall + slot - packet.begin);
+                        const auto source = position(WallOrigin(initial_.wall, index, visible));
+                        const auto sprite = HandBack(tile);
+                        const auto target = HandFlightLanding(tile, sprite, position(tile), *artwork, red);
+                        const auto speed = SpeedForSteps(source.first - target.first, source.second - target.second, 12);
+                        auto &flight = deal_flights_[packet.who][slot];
+                        flight = TileFlight(sprite, target.first, target.second, source.first, source.second, speed,
+                                            4, .16f, packet.who == 1);
+                        deal_starts_[packet.who][slot] = packet.step;
+                        landing_tick = std::max(landing_tick, flight.ticks);
+                    }
+                    sounds_[packet.step - 1 + landing_tick] = 105;
                 }
             }
-        for (unsigned wait = 0; wait < kDealTailTicks; ++wait) {
-            hands_.push_back(counts);
-            sounds_.push_back(0);
-        }
-        deal_steps_ = static_cast<unsigned>(hands_.size());
-        if (artwork) {
-            const auto before = BuildTableScene(initial_, false, false);
             for (const auto &tile: BuildTableScene(initial_)) {
-                const auto source = std::find_if(before.begin(), before.end(), [&](const TableTile &old) {
-                    return old.direction == tile.direction && old.tile == tile.tile && (
-                               tile.tile >= 0 || old.slot == tile.slot) && std::string(old.role) == tile.role;
+                const auto source = std::find_if(unsorted.begin(), unsorted.end(), [&](const TableTile &old) {
+                    return old.direction == tile.direction && old.tile == tile.tile &&
+                           (tile.tile >= 0 || old.slot == tile.slot) && std::string_view(old.role) == tile.role;
                 });
-                const auto &to = artwork->Get(tile);
-                const auto &from = artwork->Get(source == before.end() ? tile : *source);
-                sort_tiles_.push_back({tile, from.x, from.y, to.x, to.y, 0});
-                const TileFlight flight(from.x - to.x, from.y - to.y, kOpeningSortSpeed);
-                sort_steps_ = std::max(sort_steps_, flight.advances);
-            }
-            for (unsigned tick = 0; tick < sort_steps_; ++tick) {
-                hands_.push_back(counts);
-                sounds_.push_back(0);
+                const auto to = position(tile);
+                const auto from = position(source == unsorted.end() ? tile : *source);
+                AnimatedTile animation{tile, from.first, from.second, to.first, to.second};
+                animation.flight = TileFlight(tile, to.first, to.second, from.first, from.second, 25.f, 2, .6f, false);
+                sort_ticks = std::max(sort_ticks, animation.flight.ticks);
+                sort_tiles_.push_back(std::move(animation));
             }
         }
-        active_ = !hands_.empty();
+        if (!wall_tiles_ || !artwork || !artwork->width())
+            for (const auto &packet: packets_) sounds_[packet.step - 1] = 105;
+        // The 0x65 gate follows the sort dispatch. Publish the settled hand
+        // before 0x82 releases the first draw.
+        hands_.insert(hands_.end(), std::max(1u, sort_ticks) + 2, counts);
+        sounds_.resize(hands_.size());
+        active_ = wall_tiles_ || !packets_.empty();
     }
 
     bool OpeningPresentation::Tick(unsigned steps) {
         if (!active_ || !steps) return false;
         const auto total = static_cast<unsigned>(hands_.size());
+        const unsigned finish = progress_ + std::min(steps, total - progress_);
         sound_ = 0;
-        progress_ += std::min(steps, total - progress_);
+        while (progress_ < finish) {
+            if (sounds_[progress_]) sound_ = sounds_[progress_];
+            ++progress_;
+        }
         active_ = progress_ < total;
-        sound_ = sounds_[progress_ - 1];
         return true;
+    }
+
+    bool OpeningPresentation::Advance(double now) {
+        if (!active_) return false;
+        if (!next_step_) next_step_ = now;
+        if (now < next_step_) return false;
+        const unsigned steps = static_cast<unsigned>(std::min(1 + std::floor((now - next_step_) / kTableTickMs),
+                                                               double(hands_.size() - progress_)));
+        next_step_ += steps * kTableTickMs;
+        return Tick(steps);
     }
 
     unsigned OpeningPresentation::dealt() const {
@@ -377,70 +494,57 @@ namespace tenhou {
         for (unsigned seat = 0; seat < 4; ++seat) {
             auto &p = frame.players[seat];
             p.hand.resize(progress_ ? hands_[progress_ - 1][seat] : 0);
-            p.drawn_tile = -1;
-            if (progress_ < deal_steps_) p.flowers.clear();
+            if (progress_ < sort_start_) p.flowers.clear();
         }
-        if (wall_tiles_) frame.wall.front = initial_.wall.initial_removed + static_cast<int>(dealt());
-        if (progress_ < wall_tiles_ / 4) frame.dora_indicators.clear();
+        if (wall_tiles_) {
+            if (progress_ <= wall_tiles_ / 2 + 6) {
+                frame.wall.dead_wall = false;
+                frame.wall.front = frame.wall.initial_removed = frame.wall.tail = frame.wall.replacements = 0;
+            } else {
+                frame.wall.front = initial_.wall.initial_removed + static_cast<int>(dealt());
+            }
+            if (progress_ < wall_setup_ticks_) frame.dora_indicators.clear();
+        }
         return frame;
     }
 
     void OpeningPresentation::SlideWall(std::vector<PositionedTile> &scene) const {
-        if (!wall_tiles_ || progress_ >= wall_tiles_ / 4 + kWallFlightSteps) return;
-        // PE tables 004e60c0 and 004e60d0. Keep the approved parallel wall staging.
+        if (!wall_tiles_ || progress_ > wall_tiles_ / 2 + 5) return;
         constexpr int dx[]{0, 160, 0, -160}, dy[]{140, 0, -140, 0};
         for (auto &item: scene) {
             if (item.tile.wall_stack < 0) continue;
-            const auto start = static_cast<unsigned>(item.tile.wall_stack * 2 + 1);
-            if (progress_ < start) continue;
-            const int x = dx[item.tile.direction], y = dy[item.tile.direction];
-            const TileFlight flight(x, y, static_cast<float>(std::hypot(x, y) / kWallFlightSteps));
-            flight.Move(item.x, item.y, progress_ - start);
+            const auto seat = item.tile.direction;
+            const auto start = WallStackOrder(initial_.wall, seat, item.tile.wall_stack) + 1;
+            if (progress_ < start || progress_ - start > 5) continue;
+            const float speed = SpeedForSteps(dx[seat], dy[seat], 4);
+            const TileFlight flight(item.tile, item.x, item.y, item.x + dx[seat], item.y + dy[seat], speed,
+                                    2, .08f, seat == 1);
+            flight.Place(item, progress_ - start);
         }
     }
 
     std::vector<PositionedTile> OpeningPresentation::Scene(TableArtwork &artwork, bool red) const {
         std::vector<PositionedTile> scene;
-        if (progress_ >= deal_steps_ && !sort_tiles_.empty()) {
-            const unsigned tick = progress_ - deal_steps_;
+        if (progress_ >= sort_start_ && !sort_tiles_.empty()) {
             for (const auto &tile: sort_tiles_) {
                 PositionedTile placed{tile.tile, tile.to_x, tile.to_y};
-                const TileFlight flight(tile.from_x - tile.to_x, tile.from_y - tile.to_y, kOpeningSortSpeed);
-                flight.Move(placed.x, placed.y, tick);
+                tile.flight.Place(placed, progress_ - sort_start_);
                 scene.push_back(placed);
             }
             return scene;
         }
         const auto frame = Frame();
-        auto wall_state = initial_;
-        wall_state.wall.front = 0;
-        const auto wall_scene = BuildWallScene(wall_state);
-        for (const auto &tile: BuildTableScene(frame, false, false)) {
+        for (const auto &tile: BuildTableScene(frame, progress_ >= sort_start_, progress_ >= sort_start_)) {
             const auto &image = artwork.Get(tile, red);
             const auto offset = artwork.Offset(tile);
-            int x = image.x + offset.x, y = image.y + offset.y;
-            const int slot = tile.family == 'n' ? 17 - tile.slot : tile.slot;
-            if (wall_tiles_ && std::string_view(tile.role) == "hand") for (const auto &packet: packets_) {
-                if (packet.who != static_cast<unsigned>(tile.direction) || slot < static_cast<int>(packet.begin) ||
-                    slot >= static_cast<int>(packet.end) || progress_ < packet.step ||
-                    progress_ - packet.step > kDealFlightSteps)
-                    continue;
-                auto source = WallOrigin(initial_.wall,
-                    initial_.wall.initial_removed + static_cast<int>(packet.wall) + slot - static_cast<int>(packet.begin));
-                for (const auto &visible: wall_scene)
-                    if (visible.direction == source.direction && visible.slot % 17 == source.slot % 17 && visible.wall_extra == source.wall_extra) {
-                        source.dx = visible.dx;
-                        source.dy = visible.dy;
-                        break;
-                    }
-                const auto &origin = artwork.Get(source, red);
-                const auto shift = artwork.Offset(source);
-                const int dx = origin.x + shift.x - x, dy = origin.y + shift.y - y;
-                const TileFlight flight(dx, dy, static_cast<float>(std::hypot(dx, dy) / kDealFlightSteps));
-                flight.Move(x, y, progress_ - packet.step);
-                break;
+            PositionedTile placed{tile, image.x + offset.x, image.y + offset.y};
+            if (IsHand(tile)) {
+                const auto slot = static_cast<unsigned>(HandSlot(tile));
+                const auto start = deal_starts_[tile.direction][slot];
+                if (start && progress_ >= start)
+                    deal_flights_[tile.direction][slot].Place(placed, progress_ - start);
             }
-            scene.push_back({tile, x, y});
+            scene.push_back(placed);
         }
         return scene;
     }

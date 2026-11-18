@@ -46,6 +46,7 @@ namespace tenhou {
         int score = 25000;
         int reach = 0; // 0 none, 1 declared, 2 accepted.
         int drawn_tile = -1;
+        bool hidden_draw = false;
         bool retired = false;
         int missing_suit = -1, winning_tile = -1;
     };

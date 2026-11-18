@@ -49,6 +49,7 @@ namespace tenhou {
         constexpr UINT_PTR kPlaybackTimer = 4;
         constexpr UINT_PTR kEffectsTimer = 5;
         constexpr UINT_PTR kMotionTimer = 6;
+        constexpr UINT_PTR kOpeningTimer = 10;
         constexpr UINT kIntervals[]{2000, 1000, 500, 250, 100};
 
         std::wstring Wide(const std::string &value) {
@@ -144,12 +145,12 @@ namespace tenhou {
             InvalidateRect(viewport_, nullptr, FALSE);
         });
         match_intro_ = std::make_unique<MatchIntroView>(viewport_, [this] {
-            opening_start_ = GetTickCount64();
+            opening_.ResumeClock(AnimationNow());
             if (start_sound_pending_) {
                 start_sound_pending_ = false;
                 PlaySoundId(112);
             }
-            log_("MATCH INTRO DONE");
+            log_("MATCH INTRO DONE tick=" + std::to_string(GetTickCount64()));
             Update();
         });
         match_intro_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
@@ -460,7 +461,10 @@ namespace tenhou {
             sound_enabled_ = SendMessageW(sound_control_, BM_GETCHECK, 0, 0) == BST_CHECKED;
             settlement_view_->SetSoundEnabled(EffectsEnabled());
             settlement_view_->SetAnimationEnabled(animation_enabled_);
-            if (!animation_enabled_ && !EffectsEnabled()) opening_.Cancel();
+            if (!animation_enabled_ && !EffectsEnabled()) {
+                opening_.Cancel();
+                opening_timer_.Stop();
+            }
             if (id == kSound) {
                 sounds_ = {};
                 sound_loaded_ = false;
@@ -561,6 +565,7 @@ namespace tenhou {
         captions_.Clear();
         KillTimer(viewport_, 8);
         motion_timer_.Stop();
+        opening_timer_.Stop();
         start_sound_pending_ = false;
         if (match_intro_) match_intro_->Cancel();
         opening_.Cancel();
@@ -595,6 +600,7 @@ namespace tenhou {
         settlement_view_->CancelPresentation();
         if (opening_.Active()) {
             opening_.Cancel();
+            opening_timer_.Stop();
             audio_.Stop();
         }
         // Settle the previous presentation, without mutating the replay state.
@@ -608,27 +614,20 @@ namespace tenhou {
         result_pending_ = event.kind == ReplayEventKind::Win || event.kind == ReplayEventKind::DrawEnd;
         draw_end_ticks_ = event.kind == ReplayEventKind::DrawEnd ? 28 : 0;
         if (draw_end_ticks_) SetTimer(viewport_, kEffectsTimer, 15, nullptr);
-        if (animation_enabled_ && !text_details_ && artwork_error_.empty()) {
+        if (animation_enabled_ && event.kind != ReplayEventKind::Init && !text_details_ && artwork_error_.empty()) {
             try {
                 if (!artwork_.width()) artwork_.Load(resource_directory_, canvas_width_);
-                unsigned duration = event.kind == ReplayEventKind::Init
-                                        ? 520
-                                        : event.kind == ReplayEventKind::Meld
-                                              ? 360
-                                              : 240;
-                if (playing_) {
-                    const auto index = SendMessageW(speed_, CB_GETCURSEL, 0, 0);
-                    duration = std::min(duration, kIntervals[index] * 3 / 4);
-                }
-                presentation_.Begin(before, session_->state(), event, duration, canvas_width_,
+                const auto index = SendMessageW(speed_, CB_GETCURSEL, 0, 0);
+                const unsigned limit = playing_ && index >= 0 && index < 5 ? kIntervals[index] * 3 / 4 : 0;
+                artwork_.SetRedTiles(session_->state().red_tiles);
+                presentation_.Begin(before, session_->state(), event, 240, canvas_width_,
                                     [&](const TableTile &tile) {
                                         const auto &image = artwork_.Get(tile, red_tiles_);
                                         const auto offset = artwork_.Offset(tile);
                                         return std::make_pair(image.x + offset.x, image.y + offset.y);
-                                    }, AnimationNow());
+                                    }, AnimationNow(), true, &artwork_, red_tiles_, limit);
                 if (presentation_.Active()) {
-                    log_("ANIMATION BEGIN cursor=" + std::to_string(session_->position()) + " duration=" +
-                         std::to_string(duration));
+                    log_("ANIMATION BEGIN cursor=" + std::to_string(session_->position()));
                 }
             } catch (const std::exception &e) {
                 artwork_error_ = e.what();
@@ -644,20 +643,18 @@ namespace tenhou {
         else for (auto id: ReplaySounds(event, gender, effects_only_, individual_voices_)) PlaySoundId(id);
         if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
             presentation_.Cancel();
-            opening_start_ = GetTickCount64();
             if (!artwork_.width()) artwork_.Load(resource_directory_, canvas_width_);
-            opening_.Begin(session_->state(), original_display_ && !text_details_, &artwork_);
-            if (!intro && opening_.Tick() && opening_.sound()) PlaySoundId(opening_.sound());
-            log_("OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()));
+            artwork_.SetRedTiles(session_->state().red_tiles);
+            opening_.Begin(session_->state(), original_display_ && !text_details_, &artwork_, red_tiles_);
+            opening_.ResumeClock(AnimationNow());
+            opening_timer_.Start(viewport_, kOpeningTimer, kTableTickMs);
+            log_("OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()) +
+                 " tick=" + std::to_string(GetTickCount64()));
         }
         if (event.kind == ReplayEventKind::Init && !before.initialized && playing_ && animation_enabled_ &&
             original_display_ && !text_details_)
             PresentMatchStart();
-        if (presentation_.Active()) motion_timer_.Start(viewport_, kMotionTimer);
-        if (opening_.Active() || draw_end_ticks_ || (EffectsEnabled() && audio_error_.empty()))
-            if (!SetTimer(viewport_, kEffectsTimer,
-                          opening_.Active() ? opening_.interval() : (draw_end_ticks_ ? 15 : 25),
-                          nullptr)) throw std::runtime_error("Cannot start replay effects timer");
+        if (presentation_.Active()) motion_timer_.Start(viewport_, kMotionTimer, kTableTickMs);
     }
 
     void TableView::PlaySoundId(unsigned id, unsigned delay) {
@@ -669,8 +666,7 @@ namespace tenhou {
                 log_("AUDIO BANK loaded");
             }
             audio_.Schedule(id, sounds_.Get(id), delay);
-            if (!SetTimer(viewport_, kEffectsTimer,
-                          opening_.Active() ? opening_.interval() : (draw_end_ticks_ ? 15 : 25),
+            if (!SetTimer(viewport_, kEffectsTimer, draw_end_ticks_ ? 15 : 25,
                           nullptr)) throw std::runtime_error("Cannot start replay effects timer");
         } catch (const std::exception &e) { SoundError(e); }
     }
@@ -694,19 +690,25 @@ namespace tenhou {
             }
             InvalidateRect(viewport_, nullptr, FALSE);
         }
+        try { audio_.Poll(); } catch (const std::exception &e) { SoundError(e); }
+        if (!draw_end_ticks_ && !audio_.Active()) KillTimer(viewport_, kEffectsTimer);
+    }
+
+    void TableView::OpeningTick() {
+        const auto now = AnimationNow();
         if (match_intro_->Active()) {
-            try { audio_.Poll(); } catch (const std::exception &e) { SoundError(e); }
+            opening_.ResumeClock(now);
             return;
         }
-        if (opening_.Active()) {
-            if (opening_.Tick() && opening_.sound()) PlaySoundId(opening_.sound());
-            SetTimer(viewport_, kEffectsTimer, opening_.interval(), nullptr);
-            if (!opening_.Active() && animation_enabled_) log_("ANIMATION END opening");
-            if (!opening_.Active()) log_("OPENING DONE");
+        if (opening_.Advance(now)) {
+            if (opening_.sound()) PlaySoundId(opening_.sound());
+            if (!opening_.Active()) {
+                if (animation_enabled_) log_("ANIMATION END opening");
+                log_("OPENING DONE tick=" + std::to_string(GetTickCount64()));
+            }
             InvalidateRect(viewport_, nullptr, FALSE);
         }
-        try { audio_.Poll(); } catch (const std::exception &e) { SoundError(e); }
-        if (!opening_.Active() && !draw_end_ticks_ && !audio_.Active()) KillTimer(viewport_, kEffectsTimer);
+        if (!opening_.Active()) opening_timer_.Stop();
     }
 
     void TableView::PaintPlayer(HDC dc, int seat, RECT bounds) {
@@ -812,8 +814,7 @@ namespace tenhou {
                 display_artwork_.AppendStatus(*final, state);
                 captions_.Append(*final, w, display_artwork_.Text());
             }
-            native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), scene, artwork_, red,
-                                  WallMetadata(state, placed_count, original_display_, red),
+            native_buffer_.Render(dc, w, FitNativeCanvas(bounds, w), scene, artwork_, red, {},
                                   TableMetadata(state) + std::to_string(original_display_) + std::to_string(red),
                                   [&](HDC memory) {
                                       Gdiplus::Graphics graphics(memory);
@@ -828,6 +829,7 @@ namespace tenhou {
                                           ClipGraphics(graphics, region);
                                           shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow);
                                           for (const auto &placed: scene) {
+                                              if (placed.flight) continue;
                                               const auto &command = placed.tile;
                                               const auto &item = artwork_.Get(command, red);
                                               if (!Overlaps(
@@ -854,6 +856,7 @@ namespace tenhou {
                                                   x, y, x + item.image.width, y + item.image.height
                                               });
                                           }
+                                          PaintTableFlights(graphics, region, scene, artwork_, red);
                                           // Indicator strip uses original face images with a new caption/position.
                                           for (std::size_t i = 0; i < state.dora_indicators.size(); ++i) {
                                               if (original_display_ &&state.wall.known) break;
@@ -1069,6 +1072,10 @@ LRESULT CALLBACK TableView::ViewProc(HWND window, UINT message, WPARAM wparam, L
                 }
                 if (message == WM_TIMER && wparam == kEffectsTimer) {
                     view->EffectsTick();
+                    return 0;
+                }
+                if (message == WM_TIMER && wparam == kOpeningTimer) {
+                    view->OpeningTick();
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == kMotionTimer) {

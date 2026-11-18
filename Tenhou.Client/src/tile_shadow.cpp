@@ -119,6 +119,7 @@ namespace tenhou {
         std::vector<TileShadow> result;
         if (artwork.width() != 1440) return result; // This fixed resource is HD only.
         for (const auto &placed: scene) {
+            if (placed.flight) continue;
             const auto &t = placed.tile;
             if (t.family == 'y' && t.slot >= 17 && std::any_of(scene.begin(), scene.end(),
                                                                [&](const PositionedTile &other) {
@@ -340,9 +341,9 @@ namespace tenhou {
                                                         bool red) {
         std::vector<RetainedScene::Damage> result;
         for (const auto &placed: scene) {
-            const auto &im = artwork.Get(placed.tile, red).image;
+            const auto &im = artwork.Get(placed.flight ? placed.flight->sprite : placed.tile, red).image;
             RetainedScene::Damage damage{TileBounds(placed, im.width, im.height), {}};
-            if (const auto *shadow = FindTileShadow(shadows, placed)) {
+            if (const auto *shadow = placed.flight ? nullptr : FindTileShadow(shadows, placed)) {
                 damage.shadows = {shadow->ground, shadow->extra, shadow->received};
                 for (const auto *mask: {shadow->ground, shadow->extra})
                     if (mask) {

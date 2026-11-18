@@ -579,6 +579,7 @@ namespace tenhou {
             q.score = p.score;
             q.reach = p.reach;
             q.drawn_tile = p.drawn_tile;
+            q.hidden_draw = p.draw_pending && p.drawn_tile < 0 && p.hidden_count > 0;
             q.retired = p.retired;
             q.missing_suit = p.missing_suit;
             q.winning_tile = p.winning_tile;

@@ -53,7 +53,7 @@ namespace tenhou {
                         "Paused match did not mark the disconnected seat");
                     receive({"PAUSED", {{"show", "0"}, {"offline", "0"}}});
                     require(view.Snapshot().game.players[1].connected, "Resumed match retained an offline seat");
-                    SendMessageW(view.window_, WM_TIMER, 2, 0);
+                    view.OpeningTick(AnimationNow() + 100);
                     require(view.opening_.steps() == steps && view.match_intro_->Active(),
                         "Deal started before the match introduction was confirmed");
                 }
@@ -67,7 +67,9 @@ namespace tenhou {
                     "Ready acknowledgement erased the initial/next-hand actions");
                 if (sichuan) require(view.selection_.Active() && view.selection_.indices.size() == 2,
                     "Ready acknowledgement invalidated the exchange selection");
-                for (int tick = 0; tick < 400 && view.opening_.Active(); ++tick) SendMessageW(view.window_, WM_TIMER, 2, 0);
+                const auto now = AnimationNow();
+                for (int tick = 1; tick <= 400 && view.opening_.Active(); ++tick)
+                    view.OpeningTick(now + tick * kTableTickMs);
                 require(!view.opening_.Active() && !IsWindowVisible(view.controls_.at(5173)),
                     "Exchange confirmation appeared without three selected tiles");
                 if (sichuan) {
@@ -161,7 +163,9 @@ namespace tenhou {
             state.players[0].flowers = {136,140}; state.events.push_back({state.event_seq, "start", 0, -1, -1});
             receive("PREPARE"); receive("VSTATE"); receive("START");
             require(view.opening_flowers_[0], "Fresh guobiao deal lost its automatic flower caption");
-            for (int i = 0; i < 400 && view.opening_.Active(); ++i) SendMessageW(view.window_, WM_TIMER, 2, 0);
+            const auto now = AnimationNow();
+            for (int tick = 1; tick <= 400 && view.opening_.Active(); ++tick)
+                view.OpeningTick(now + tick * kTableTickMs);
             require(!view.opening_.Active() && view.captions_.Frames().size() == 1 && view.captions_.Frames()[0].resource == 480,
                 "Opening flowers never appeared at the end of the deal");
             snapshot.recovering = true; receive("VSTATE");
@@ -223,6 +227,68 @@ namespace {
                     image.x + offset.x + image.image.width, image.y + offset.y + image.image.height}, intersection{};
                 Check(!IntersectRect(&intersection, &win, &hand), "Side winner overlaps the retired hand");
             }
+        }
+    }
+
+    void RiichiFlights(const std::filesystem::path &resources) {
+        TableArtwork art;
+        for (const int width: {1024, 1440}) {
+            if (width == 1024 && (!std::filesystem::exists(resources / "packs/_obj0.dat") ||
+                                  !std::filesystem::exists(resources / "packs/_obj1.dat"))) continue;
+            art.Load(resources, width);
+            const auto origin = [&](const TableTile &tile) {
+                const auto &image = art.Get(tile);
+                const auto offset = art.Offset(tile);
+                return std::make_pair(image.x + offset.x, image.y + offset.y);
+            };
+            ReplayState before;
+            before.initialized = true;
+            before.wall.Init(0, 1, 1);
+            before.players[0].hand = {0,4,8,12,16,20,24,28,32,36,40,44,48};
+            auto after = before;
+            after.wall.Draw();
+            after.players[0].hand.push_back(56);
+            after.players[0].drawn_tile = 56;
+            const auto draw = BuildReplayTransition(before, after, {ReplayEventKind::Draw, "T56", {}, 0, 56},
+                                                    0, width, origin, true, &art);
+            Check(draw.duration >= 195 && draw.duration <= 210, "Draw lost its native tick duration");
+            const auto first_frame = draw.Frame(0), before_tick = draw.Frame(14.99), next_tick = draw.Frame(15);
+            const auto &flying = first_frame.back();
+            Check(flying.tile.tile == 56 && flying.flight && flying.flight->sprite.tile == -1 &&
+                  flying.flight->count == 4 && flying.flight->opacity == .08f, "Draw did not fly a four-copy back");
+            Check(flying.x == before_tick.back().x && flying.y == before_tick.back().y &&
+                  (flying.x != next_tick.back().x || flying.y != next_tick.back().y),
+                  "Draw interpolated between native ticks");
+            const auto &trail = art.GetFlight(*flying.flight, true).image;
+            unsigned peak = 0;
+            for (std::size_t i = 3; i < trail.bgra.size(); i += 4) peak = std::max(peak, unsigned(trail.bgra[i]));
+            const auto terminal = draw.Frame(draw.duration - 1).back();
+            Check(peak > 20 && peak < 90 && terminal.flight && terminal.x == terminal.flight->landing_x &&
+                  terminal.y == terminal.flight->landing_y && !draw.Frame(draw.duration).back().flight,
+                  "Composite alpha or final hand swap is wrong");
+
+            before = after;
+            after.players[0].hand.erase(after.players[0].hand.begin() + 1);
+            after.players[0].drawn_tile = -1;
+            after.players[0].discards.push_back({4, false, true, false});
+            const auto discard = BuildReplayTransition(before, after, {ReplayEventKind::Discard, "D4", {}, 0, 4},
+                                                       0, width, origin, true, &art);
+            Check(discard.duration >= 135 && discard.duration <= 150 && discard.Frame(0).back().flight &&
+                  discard.Frame(0).back().flight->sprite.slot == 40 && discard.Frame(0).back().flight->cover_landing,
+                  "Discard lost its original speed, sideways art or landing cover");
+
+            before.players[0].hand.back() = 120;
+            before.players[0].drawn_tile = 120;
+            after = before;
+            after.players[0].hand.pop_back();
+            after.players[0].drawn_tile = -1;
+            after.players[0].nuki.push_back(120);
+            const auto nuki = BuildReplayTransition(before, after, {ReplayEventKind::Meld, "N", {}, 0},
+                                                    0, width, origin, true, &art);
+            const auto nuki_frame = nuki.Frame(0);
+            Check(nuki_frame.back().flight && nuki_frame.back().flight->count == 4 &&
+                  nuki_frame.back().flight->opacity == .16f && !nuki_frame.back().flight->cover_landing,
+                  "North extraction lost its four-copy flight");
         }
     }
     void Settlement(HWND parent) {
@@ -294,14 +360,19 @@ namespace {
             OpeningPresentation opening; opening.Begin(opening_state, true, &art);
             const auto stack = WallTile(opening_state.wall, 1, 0, true);
             constexpr int landing = 900;
-            for (int step = 0; step <= 4; ++step) {
+            opening.Tick();
+            auto wall_scene = BuildWallScene(opening.Frame(), opening.placed());
+            Check(wall_scene.size() == 1 && wall_scene.front().direction == 0,
+                "Opening did not place one complete stack at a time");
+            for (int step = 0; step <= 5; ++step) {
                 opening.Tick();
                 std::vector<PositionedTile> wall{{stack, landing, 200}};
                 opening.SlideWall(wall);
-                Check(wall.front().x == landing + 160 - 40 * step && wall.front().y == 200,
+                Check(wall.front().x == landing + 160 - 40 * std::min(step, 4) && wall.front().y == 200 &&
+                      wall.front().flight && wall.front().flight->count == 2 && wall.front().flight->opacity == .08f,
                     "Wall stack did not follow the original four-step flight");
             }
-            opening.Tick(opening.wall_tiles() / 4 - opening.steps());
+            opening.Tick(opening.wall_tiles() / 2 - opening.steps());
             Check(opening.Frame().turn == -1 && opening.dealt() == 0, "Wall setup highlighted a dealing seat");
             while (opening.Active() && !opening.dealt()) opening.Tick();
             Check(opening.Frame().players[0].hand == std::vector<int>(order.begin(), order.begin() + 4),
@@ -318,7 +389,9 @@ namespace {
                     const auto tile = std::find_if(scene.begin(), scene.end(), [&](const PositionedTile &item) {
                         return item.tile.direction == 0 && item.tile.tile == order.front();
                     });
-                    Check(tile != scene.end(), "Dealing flight lost the first tile");
+                    Check(tile != scene.end() && tile->flight && tile->flight->count == 4 &&
+                          tile->flight->sprite.family == 'n' && tile->flight->sprite.tile == -1,
+                          "Dealing flight lost the first tile or used a visible face");
                     flight.push_back({tile->x, tile->y});
                 }
                 last = actor;
@@ -467,6 +540,7 @@ int main(int argc, char **argv) {
         Check(Gdiplus::GdiplusStartup(&gdiplus, &input, nullptr) == Gdiplus::Ok, "Cannot start GDI+");
         INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_STANDARD_CLASSES}; InitCommonControlsEx(&controls);
         Geometry(argv[1]);
+        RiichiFlights(argv[1]);
         parent = CreateWindowExW(0, L"STATIC", L"Presentation checks", WS_POPUP,
             -32000, -32000, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Check(parent != nullptr, "Cannot create test parent"); ShowWindow(parent, SW_SHOWNOACTIVATE);

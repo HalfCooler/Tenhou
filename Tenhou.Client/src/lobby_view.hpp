@@ -184,7 +184,7 @@ namespace tenhou {
         HWND exit_vote_ = nullptr, exit_vote_text_ = nullptr, exit_yes_ = nullptr, exit_no_ = nullptr;
         ULONGLONG exit_vote_deadline_ = 0, paused_at_ = 0;
         PaintBuffer paint_buffer_;
-        MotionTimer motion_timer_;
+        MotionTimer motion_timer_, opening_timer_;
         std::wstring painted_countdown_;
         int painted_hover_ = -1, painted_auto_hover_ = -1;
         std::map<int, HWND> controls_;
@@ -202,7 +202,7 @@ namespace tenhou {
         bool individual_voices_ = false;
         ClientPreferences preferences_;
         OpeningPresentation opening_;
-        ULONGLONG opening_start_ = 0;
+        void OpeningTick(double now);
         std::vector<unsigned> deferred_sounds_;
         ULONGLONG result_deadline_ = 0;
         bool result_pending_ = false;

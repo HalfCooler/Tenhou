@@ -5,6 +5,7 @@
 
 namespace tenhou {
     TableTile WallTile(const WallState &wall, int seat, int stack, bool stacked);
+    unsigned WallStackOrder(const WallState &wall, int seat, int stack);
     // Full stacks, remaining lower tiles, and only explicitly supplied indicators.
     std::vector<TableTile> BuildWallScene(const ReplayState &state, unsigned placed = 136);
 

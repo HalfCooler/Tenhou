@@ -17,7 +17,57 @@ namespace tenhou {
 
     // Include the GDI+ boundary pixel when restoring the old and new positions.
     inline RECT TileBounds(const PositionedTile &placed, int width, int height) {
-        return {placed.x - 2, placed.y - 2, placed.x + width + 2, placed.y + height + 2};
+        RECT bounds{placed.x - 2, placed.y - 2, placed.x + width + 2, placed.y + height + 2};
+        if (placed.flight) for (const auto &offset: placed.flight->offsets) {
+            bounds.left = std::min(bounds.left, LONG(placed.x + offset.x - 2));
+            bounds.top = std::min(bounds.top, LONG(placed.y + offset.y - 2));
+            bounds.right = std::max(bounds.right, LONG(placed.x + offset.x + width + 2));
+            bounds.bottom = std::max(bounds.bottom, LONG(placed.y + offset.y + height + 2));
+        }
+        return bounds;
+    }
+
+    inline void PaintTableFlights(Gdiplus::Graphics &graphics, RECT region,
+                                  const std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red) {
+        std::vector<std::size_t> order;
+        for (std::size_t i = 0; i < scene.size(); ++i) if (scene[i].flight) order.push_back(i);
+        const auto depth = [&](std::size_t index) {
+            const auto &flight = *scene[index].flight;
+            return flight.landing_x + flight.landing_y + std::min(0, flight.offsets[0].x) +
+                   std::min(0, flight.offsets[0].y);
+        };
+        std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return depth(a) < depth(b); });
+        for (const auto index: order) {
+            const auto &placed = scene[index];
+            const auto &flight = *placed.flight;
+            const auto &pixels = artwork.Get(flight.sprite, red).image;
+            const auto bounds = TileBounds(placed, pixels.width, pixels.height);
+            if (!Overlaps(region, bounds)) continue;
+            const auto &combined = artwork.GetFlight(flight, red);
+            const auto &trail = combined.image;
+            Gdiplus::Bitmap bitmap(trail.width, trail.height, trail.width * 4, PixelFormat32bppARGB,
+                                   const_cast<BYTE *>(trail.bgra.data()));
+            if (graphics.DrawImage(&bitmap, placed.x + combined.x, placed.y + combined.y) != Gdiplus::Ok)
+                throw std::runtime_error("Cannot draw tile flight");
+            if (!flight.cover_landing) continue;
+            const auto landing = TileBounds({placed.tile, flight.landing_x, flight.landing_y, flight},
+                                            pixels.width, pixels.height);
+            RECT patch{};
+            if (!IntersectRect(&patch, &landing, &bounds) || !IntersectRect(&patch, &patch, &region)) continue;
+            const auto saved = graphics.Save();
+            ClipGraphics(graphics, patch);
+            for (std::size_t i = index + 1; i < scene.size(); ++i) {
+                const auto &cover = scene[i];
+                if (cover.flight) continue;
+                const auto &image = artwork.Get(cover.tile, red).image;
+                if (!Overlaps(patch, TileBounds(cover, image.width, image.height))) continue;
+                Gdiplus::Bitmap sprite(image.width, image.height, image.width * 4, PixelFormat32bppARGB,
+                                       const_cast<BYTE *>(image.bgra.data()));
+                if (graphics.DrawImage(&sprite, cover.x, cover.y) != Gdiplus::Ok)
+                    throw std::runtime_error("Cannot draw tile flight cover");
+            }
+            graphics.Restore(saved);
+        }
     }
 
     // Original 00485b40 bounds overlay unions at 400 pixels. Scale that native
@@ -82,16 +132,6 @@ namespace tenhou {
         return out.str();
     }
 
-    inline std::string WallMetadata(const ReplayState &state, unsigned placed, bool original, bool red) {
-        const auto &w = state.wall;
-        std::ostringstream out;
-        out << original << ':' << red << ':' << state.initialized << ':' << placed << ':' << w.known << ':' << w.offset
-                << ':' << w.front << ':' << w.replacements << ':' << w.unavailable << ':' << w.total << ':' << w.tail << ':' << w.dead_wall;
-        out << ":indicators=" << state.dora_indicators.size();
-        for (auto indicator: state.dora_indicators) out << ':' << indicator;
-        return out.str();
-    }
-
     class RetainedScene {
     public:
         struct Damage {
@@ -124,7 +164,7 @@ namespace tenhou {
             std::vector<Item> current;
             current.reserve(scene.size());
             for (const auto &tile: scene) {
-                const auto &image = artwork.Get(tile.tile, red);
+                const auto &image = artwork.Get(tile.flight ? tile.flight->sprite : tile.tile, red);
                 const auto index = current.size();
                 current.push_back({
                     tile,
@@ -209,7 +249,7 @@ namespace tenhou {
             return a.appearance == b.appearance && a.shadows == b.shadows && EqualRect(&a.bounds, &b.bounds) && x.x == y
                    .x && x.y == y.y && x.tile.family == y.tile.family && x.tile.slot == y.tile.slot &&
                    x.tile.tile == y.tile.tile && x.tile.direction == y.tile.direction && x.tile.drawn == y.tile.drawn &&
-                   x.tile.riichi == y.tile.riichi;
+                   x.tile.riichi == y.tile.riichi && x.flight == y.flight;
         }
 
         PaintBuffer backdrop_, native_;
