@@ -15,9 +15,9 @@ namespace tenhou {
 
         void Move(RECT bounds);
 
-        void Begin(const ReplayState &state, unsigned type, const std::string &dan);
+        void Begin(const ReplayState &state, unsigned type);
 
-        void Resume(const ReplayState &state, unsigned type, const std::string &dan);
+        void Resume(const ReplayState &state, unsigned type);
 
         void Cancel();
 
@@ -61,9 +61,9 @@ namespace tenhou {
         Image background_;
         std::filesystem::path directory_;
         ReplayState state_;
-        std::array<std::wstring, 4> ranks_;
         unsigned type_ = 0;
-        int width_ = 1440, seconds_ = 5;
+        static constexpr int kReadySeconds = 10;
+        int width_ = 1440, seconds_ = kReadySeconds;
         ULONGLONG deadline_ = 0;
         ULONGLONG paused_at_ = 0;
         bool active_ = false;

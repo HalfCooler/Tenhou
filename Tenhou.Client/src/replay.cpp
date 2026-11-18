@@ -300,16 +300,19 @@ namespace tenhou {
                     if (!state.initialized || state.ended) Fail("FURITEN outside a live hand");
                     state.furiten = Integer(event, "show", 0, 1) != 0;
                 }
-                if (event.tag == "UN")
+                if (event.tag == "UN") {
+                    const auto ranks = ParseSeatRanks(Attribute(event, "dan", false));
                     for (std::size_t i = 0; i < 4; ++i) {
                         const auto key = "n" + std::to_string(i);
                         if (event.attributes.count(key)) {
                             state.players[i].name = PercentDecode(Attribute(event, key));
                             state.players[i].connected = true;
                         }
+                        if (event.attributes.count("dan")) state.players[i].rank = ranks[i];
                         if (event.attributes.count("sx")) state.players[i].gender = SoundGender(
                                                               Attribute(event, "sx"), static_cast<int>(i));
                     }
+                }
                 if (event.tag == "BYE" && event.attributes.count("who"))
                     state.players[Integer(event, "who", 0, 3)].connected = false;
                 return;
@@ -322,9 +325,13 @@ namespace tenhou {
                 std::array<std::string, 4> names;
                 std::array < char, 4 > genders;
                 std::array < bool, 4 > connected;
+                std::array<int, 4> ranks;
                 for (std::size_t i = 0; i < 4; ++i) names[i] = state.players[i].name;
                 for (std::size_t i = 0; i < 4; ++i) genders[i] = state.players[i].gender;
-                for (int i = 0; i < 4; ++i) connected[i] = state.players[i].connected;
+                for (int i = 0; i < 4; ++i) {
+                    connected[i] = state.players[i].connected;
+                    ranks[i] = state.players[i].rank;
+                }
                 const auto type = state.type;
                 const auto reds = state.red_tiles;
                 state = {};
@@ -353,6 +360,7 @@ namespace tenhou {
                     player.name = names[i];
                     player.score = scores[i] * 100;
                     player.gender = genders[i];
+                    player.rank = ranks[i];
                     player.connected = connected[i];
                     if (!SeatPresent(state.seat_mask, static_cast<int>(i))) {
                         if (scores[i] != 0 || !names[i].empty()) Fail("Absent seat has a score or name");
@@ -550,6 +558,30 @@ namespace tenhou {
             return decoded;
         }
     } // namespace
+
+    std::array<int, 4> ParseSeatRanks(std::string_view dan) {
+        std::array<int, 4> ranks{-1, -1, -1, -1};
+        for (auto &rank: ranks) {
+            if (dan.empty()) break;
+            const auto comma = dan.find(',');
+            const auto field = dan.substr(0, comma);
+            int value = -1;
+            const auto parsed = std::from_chars(field.data(), field.data() + field.size(), value);
+            if (parsed.ec == std::errc() && parsed.ptr == field.data() + field.size() && value >= 0 && value <= 20)
+                rank = value;
+            if (comma == dan.npos) break;
+            dan.remove_prefix(comma + 1);
+        }
+        return ranks;
+    }
+
+    const wchar_t *SeatRankLabel(int rank) {
+        constexpr const wchar_t *labels[]{
+            L"新人", L"９級", L"８級", L"７級", L"６級", L"５級", L"４級", L"３級", L"２級", L"１級",
+            L"初段", L"二段", L"三段", L"四段", L"五段", L"六段", L"七段", L"八段", L"九段", L"十段", L"天鳳位"
+        };
+        return rank >= 0 && rank <= 20 ? labels[rank] : L"";
+    }
 
     char SoundGender(const std::string &seats, int who) {
         // UN sx is normally comma separated; tolerate a compact four-seat string.

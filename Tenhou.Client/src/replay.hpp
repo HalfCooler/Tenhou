@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tenhou {
@@ -34,6 +35,7 @@ namespace tenhou {
     struct ReplayPlayer {
         std::string name;
         char gender = '?';
+        int rank = -1;
         bool connected = true;
         std::vector<int> hand;
         std::vector<int> deal_hand; // INIT order, retained only for the opening presentation.
@@ -109,6 +111,9 @@ namespace tenhou {
     ReplayMeld DecodeReplayMeld(std::uint32_t encoded, int who);
 
     char SoundGender(const std::string &seats, int who);
+
+    std::array<int, 4> ParseSeatRanks(std::string_view dan);
+    const wchar_t *SeatRankLabel(int rank);
 
     std::string TileLabel(int tile);
 

@@ -163,6 +163,8 @@ namespace tenhou {
             background_ = std::move(bg);
         }
         auto state = opening && opening->Active() ? opening->Frame() : Project(online);
+        for (int seat = 0; seat < 4; ++seat)
+            state.players[seat].connected = online.players[seat].connected;
         if (!settlement_presented_) {
             std::array<int, 4> scores{};
             for (int seat = 0; seat < 4; ++seat) scores[seat] = state.players[seat].score;
@@ -191,6 +193,7 @@ namespace tenhou {
                 std::find(raised_.begin(), raised_.end(), tile.tile.tile) != raised_.end()) tile.y -= static_cast<int>(8 * unit);
         SortTableScene(tiles, artwork_, red);
         if (original_display_) InsertNearWall(tiles, artwork_, state, red, placed, true);
+        if (opening && opening->Active()) opening->SlideWall(tiles);
         const auto shadows = BuildTileShadows(tiles, artwork_, ShadowPack::Embedded());
         const auto shadow_damage = TileShadowDamage(tiles, shadows, artwork_, red);
         std::ostringstream stamp;

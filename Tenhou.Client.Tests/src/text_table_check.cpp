@@ -62,6 +62,8 @@ namespace tenhou {
                 if (seat) state.players[seat].hidden_count = 13;
                 state.players[seat].name = "Player " + std::to_string(seat + 1);
                 state.players[seat].score = 25000 + seat * 100;
+                state.players[seat].rank = seat ? 0 : 11;
+                state.players[seat].gender = seat ? '?' : 'M';
             }
             if (rule == 2) state.players[1].flowers = {136, 137};
             if (rule == 1) state.players[0].missing_suit = 2;
@@ -79,7 +81,10 @@ namespace tenhou {
                 Surface actual(width + 26, width * 3 / 4 + 18), expected(actual.width, actual.height);
                 for (int stage = 0; stage < 7; ++stage) {
                     if (stage == 1) { interaction.automatic = {false, true, true, true}; interaction.hovered_button = 2; }
-                    if (stage == 2) { state.turn = 3; state.players[0].score += 1000; ++state.events; }
+                    if (stage == 2) {
+                        state.turn = 3; state.players[0].score += 1000; ++state.events;
+                        state.players[3].connected = false;
+                    }
                     if (stage == 3) for (int tick = 0; tick < 62; ++tick) captions.Tick();
                     if (stage == 4) { captions.Clear(); state.furiten = false; interaction.hovered_button = -1; }
                     if (stage == 5) actual.Clear(); // Expose/restore from the retained composite.
@@ -194,7 +199,8 @@ namespace tenhou {
             MatchIntroView intro(parent, [] {}); intro.Configure(resources, 1440);
             intro.Move({0, 0, surface.width, surface.height});
             const auto state = OnlineTableState(State(2));
-            if (resume) intro.Resume(state, 0, "1,2,3,4"); else intro.Begin(state, 0, "1,2,3,4");
+            if (resume) intro.Resume(state, 0); else intro.Begin(state, 0);
+            if (!resume) Require(intro.seconds_ == 10, "Match ready countdown did not start at ten seconds");
             intro.Capture(surface.dc);
             Require(intro.artwork_.Text().CacheStats().raster_builds >= 9, "P3 intro did not draw title/round/winds/Info");
         }

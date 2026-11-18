@@ -45,6 +45,8 @@ namespace tenhou {
         void SetOriginalDisplay(bool enabled);
 
         void SetEffectsOnly(bool enabled);
+        void SetEffectsMuted(bool muted);
+        ULONGLONG LastEffectAt() const { return audio_.LastPlayedAt(); }
 
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
@@ -81,6 +83,7 @@ namespace tenhou {
         void SoundError(const std::exception &error);
 
         void PlaySoundId(unsigned id, unsigned delay = 0);
+        bool EffectsEnabled() const { return sound_enabled_ && !effects_muted_; }
 
         void UpdateScroll();
 
@@ -105,6 +108,7 @@ namespace tenhou {
         std::filesystem::path config_path_;
         std::string audio_error_;
         bool sound_loaded_ = false, sound_enabled_ = false, animation_enabled_ = true;
+        bool effects_muted_ = false;
         bool effects_only_ = false;
         bool individual_voices_ = false;
         ClientPreferences preferences_;

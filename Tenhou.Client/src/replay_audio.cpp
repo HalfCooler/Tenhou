@@ -5,6 +5,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <cmath>
+#include <optional>
 #include <mmreg.h>
 #include <msacm.h>
 
@@ -16,6 +17,36 @@ namespace tenhou {
         void AudioCheck(MMRESULT result, const char *action) {
             if (result != MMSYSERR_NOERROR) throw std::runtime_error(
                 std::string(action) + " failed (waveOut " + std::to_string(result) + ")");
+        }
+
+        std::optional<DWORD> OutputPosition(HWAVEOUT device, const WAVEFORMATEX &format) {
+            MMTIME position{};
+            position.wType = TIME_BYTES;
+            if (waveOutGetPosition(device, &position, sizeof(position)) != MMSYSERR_NOERROR) return {};
+            if (position.wType == TIME_BYTES) return position.u.cb;
+            if (position.wType == TIME_SAMPLES) return position.u.sample * format.nBlockAlign;
+            if (position.wType == TIME_MS)
+                return static_cast<DWORD>(std::uint64_t(position.u.ms) * format.nSamplesPerSec / 1000 * format.nBlockAlign);
+            return {};
+        }
+
+        StereoLevels PcmLevels(const Bytes &pcm, const WAVEFORMATEX &format, DWORD offset, DWORD length) {
+            StereoLevels levels{};
+            if (!format.nBlockAlign || offset >= length) return levels;
+            const unsigned sample_bytes = format.wBitsPerSample / 8;
+            const std::size_t start = offset / format.nBlockAlign * format.nBlockAlign;
+            const std::size_t end = std::min<std::size_t>(length, start + format.nAvgBytesPerSec / 50);
+            for (auto frame = start; frame + format.nBlockAlign <= end; frame += format.nBlockAlign) {
+                for (unsigned channel = 0; channel < format.nChannels; ++channel) {
+                    const auto *sample = pcm.data() + frame + channel * sample_bytes;
+                    const float level = sample_bytes == 1
+                        ? std::abs(int(sample[0]) - 128) / 128.f
+                        : std::abs(int(static_cast<std::int16_t>(sample[0] | (unsigned(sample[1]) << 8)))) / 32768.f;
+                    levels[channel] = std::max(levels[channel], level);
+                }
+            }
+            if (format.nChannels == 1) levels[1] = levels[0];
+            return levels;
         }
     } // namespace
     SoundClip DecodeSound(const Bytes &wav) {
@@ -253,7 +284,9 @@ namespace tenhou {
             if (cursor_ == clip_.pcm.size()) cursor_ = 0;
         }
         buffer.header.dwBufferLength = static_cast<DWORD>(written);
+        buffer.start = queued_bytes_;
         AudioCheck(waveOutWrite(device_, &buffer.header, sizeof(WAVEHDR)), "waveOutWrite BGM");
+        queued_bytes_ += buffer.header.dwBufferLength;
     }
 
     void BackgroundMusic::BufferDone() {
@@ -284,6 +317,18 @@ namespace tenhou {
         Close();
     }
 
+    StereoLevels BackgroundMusic::Levels() const {
+        if (device_) if (const auto position = OutputPosition(device_, clip_.format)) {
+            for (const auto &buffer: buffers_) {
+                // waveOut byte positions and queue offsets wrap at the same DWORD boundary.
+                const DWORD offset = *position - buffer.start;
+                if ((buffer.header.dwFlags & WHDR_INQUEUE) && offset < buffer.header.dwBufferLength)
+                    return PcmLevels(buffer.pcm, clip_.format, offset, buffer.header.dwBufferLength);
+            }
+        }
+        return {};
+    }
+
     void BackgroundMusic::Close() {
         if (device_) {
             waveOutReset(device_);
@@ -298,6 +343,7 @@ namespace tenhou {
         clip_ = {};
         playing_.clear();
         next_buffer_ = 0;
+        queued_bytes_ = 0;
     }
 
     void ReplayAudio::SetVolumePercent(int percent) { volume_percent_ = std::clamp(percent, 0, 200); }
@@ -355,6 +401,7 @@ namespace tenhou {
 
     void ReplayAudio::Stop() {
         pending_.clear();
+        last_played_at_ = 0;
         for (auto &voice: voices_) Release(voice, true);
     }
 
@@ -407,6 +454,7 @@ namespace tenhou {
         }
         AudioCheck(prepared, "waveOutPrepareHeader");
         AudioCheck(waveOutWrite(voice.device, &voice.header, sizeof(WAVEHDR)), "waveOutWrite");
+        last_played_at_ = GetTickCount64();
         log_("AUDIO WRITE id=" + std::to_string(id) + " bytes=" + std::to_string(voice.clip->pcm.size()) + " sha256=" +
              voice.clip->sha256
              + " master=" + std::to_string(volume_percent_)

@@ -66,6 +66,10 @@ namespace tenhou {
 
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
+        void SetQuickAudio(bool mute_effects, bool mute_music);
+        ULONGLONG LastEffectAt() const { return audio_.LastPlayedAt(); }
+        StereoLevels MusicLevels() const { return lobby_music_.Levels(); }
+
     private:
         friend struct LobbyPresentationCheck;
         friend struct TextTableCheck;
@@ -129,6 +133,7 @@ namespace tenhou {
         void PlayEventSound(const ReplayEvent &event, const LobbySnapshot &snapshot);
 
         void PlaySoundId(unsigned id, unsigned delay = 0);
+        bool EffectsEnabled() const { return sound_enabled_ && !effects_muted_; }
 
         void StopSound(bool preserve_resume = false);
 
@@ -191,6 +196,7 @@ namespace tenhou {
         bool music_preview_ = false, welcome_music_ = false, official_welcome_ = false, third_party_music_ = false;
         ReplaySoundBank sounds_;
         bool sound_enabled_ = true, sound_loaded_ = false;
+        bool effects_muted_ = false, music_muted_ = false;
         bool animation_enabled_ = true;
         bool effects_only_ = false;
         bool individual_voices_ = false;
@@ -213,7 +219,6 @@ namespace tenhou {
         std::unique_ptr<MatchIntroView> match_intro_;
         std::unique_ptr<ActionSelectionView> action_view_;
         ActionSelection selection_;
-        std::string match_dan_;
         bool match_intro_pending_ = true;
         bool resume_preparation_pending_ = false;
         bool start_sound_pending_ = false, start_barrier_ = false;

@@ -40,6 +40,9 @@ namespace {
                 [&](const Resource &resource) { return resource.id == sprite.id; });
             if (entry == pack.entries.end()) throw std::runtime_error("Missing bundled display image " + std::to_string(sprite.id));
             const auto original = DecodeImage(*entry);
+            if ((sprite.id == 591 && (original.width != 728 || original.height != 330)) ||
+                (sprite.id == 592 && (original.width != 590 || original.height != 430)))
+                throw std::runtime_error("Bundled panel dimensions changed for image " + std::to_string(sprite.id));
             if (!std::filesystem::is_regular_file(resources.Path(sprite.asset)) && bundled.Get(sprite.id).bgra != original.bgra)
                 throw std::runtime_error("DAT display fallback differs for image " + std::to_string(sprite.id));
 

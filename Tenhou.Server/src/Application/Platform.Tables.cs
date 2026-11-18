@@ -9,6 +9,9 @@ namespace Tenhou.Server.Application;
 
 public sealed partial class Platform
 {
+    // Allow for client setup, ten visible seconds, and the ready reply.
+    private const int PrepareTimeoutMs = 15000;
+
     private static string Offer(Table table, int seat) => string.Join(';', table.Match.GetActions(seat).Select(a => a.Kind + ":" + string.Join(',', a.Tiles)));
     private static int BaseTime(Table table) => int.Parse(table.Record.Options.GetValueOrDefault("time", "5+20").Split('+')[0], CultureInfo.InvariantCulture) * 1000;
     private static int ReserveTime(Table table) => int.Parse(table.Record.Options.GetValueOrDefault("time", "5+20").Split('+')[1], CultureInfo.InvariantCulture) * 1000;
@@ -45,7 +48,7 @@ public sealed partial class Platform
         Dictionary<string, string> attributes = [];
         for (int j = 0; j < 4; ++j) attributes["n" + j] = Uri.EscapeDataString(names[(j + viewer) % 4]);
         attributes["sx"] = string.Concat(Enumerable.Range(0, 4).Select(j => (j + viewer) % 4 < table.Record.Humans.Count
-            ? sessions[table.Record.Humans[(j + viewer) % 4]].Gender : "M"));
+            ? sessions[table.Record.Humans[(j + viewer) % 4]].Gender : "C"));
         int category = table.Match.PlayerCount == 3 ? 1 : 0;
         Rank GetRank(int j)
         {
@@ -72,7 +75,7 @@ public sealed partial class Platform
         table.Record.Reserve = Enumerable.Repeat(ReserveTime(table), 4).ToArray();
         table.Match.Start(); table.Record.Commands.Add(new("start", Wall: table.Match.Walls[^1]));
         bool presentation = table.Presentation.SupportsAnimation && table.Record.Humans.Any(t => presence[t].Presentation);
-        table.Record.Stage = presentation ? "prepare" : "play"; table.Due = presentation ? Now + 10000 : 0;
+        table.Record.Stage = presentation ? "prepare" : "play"; table.Due = presentation ? Now + PrepareTimeoutMs : 0;
         Save();
         if (presentation) foreach (string token in table.Record.Humans.Where(t => presence[t].Presentation)) Send(token, Wire.Encode("PREPARE"));
         Flush(table, presentation);
@@ -116,14 +119,27 @@ public sealed partial class Platform
             table.WindowOffers[s] = offer;
         }
     }
+    private void SendPauseState(Table table, string token)
+    {
+        int viewer = table.Record.Humans.IndexOf(token), offline = 0;
+        for (int seat = 0; seat < table.Record.Humans.Count; ++seat)
+            if (presence[table.Record.Humans[seat]].Peer is null)
+                offline |= 1 << ((seat - viewer + 4) % 4);
+        Send(token, Wire.Encode("PAUSED", ("show", table.Paused ? "1" : "0"), ("offline", offline)));
+    }
     private void Pause(Table table)
     {
-        if (table.Paused) return;
-        table.Paused = true; table.PausedAt = Now; Broadcast(table, Wire.Encode("PAUSED", ("show", "1")));
+        if (!table.Paused) { table.Paused = true; table.PausedAt = Now; }
+        foreach (string token in table.Record.Humans) SendPauseState(table, token);
     }
     private void Resume(Table table)
     {
-        if (!table.Paused || table.Record.VoteUntil > 0 || table.Record.Humans.Any(t => presence[t].Peer is null)) return;
+        if (!table.Paused) return;
+        if (table.Record.VoteUntil > 0 || table.Record.Humans.Any(t => presence[t].Peer is null))
+        {
+            foreach (string token in table.Record.Humans) SendPauseState(table, token);
+            return;
+        }
         long now = Now, delay = now - table.PausedAt;
         if (table.Due != 0) table.Due += delay;
         if (table.NextEvent != 0) table.NextEvent += delay;
@@ -132,8 +148,10 @@ public sealed partial class Platform
             if (table.Deadlines[s] != 0) table.Deadlines[s] += delay;
             if (table.Started[s] != 0) table.Started[s] += delay;
         }
-        if (table.Record.Stage is "gok" or "prepare") table.Due = now + 10000;
-        table.Paused = false; Broadcast(table, Wire.Encode("PAUSED", ("show", "0")));
+        if (table.Record.Stage == "gok") table.Due = now + 10000;
+        if (table.Record.Stage == "prepare") table.Due = now + PrepareTimeoutMs;
+        table.Paused = false;
+        foreach (string token in table.Record.Humans) SendPauseState(table, token);
         foreach (string token in table.Record.Humans) Clock(table, token); Save();
     }
     private void Clock(Table table, string token)
@@ -153,7 +171,7 @@ public sealed partial class Platform
             table.Presentation.GameTag == "VGO" ? table.Windows[seat] : table.Match.Events.Count));
         if (table.Presentation.GameTag != "VGO") table.Windows[seat] = table.Match.GetActions(seat).Count == 0 ? 0 : table.Match.Events.Count;
         Send(token, Wire.Encode("RESTORED"));
-        if (table.Paused) Send(token, Wire.Encode("PAUSED", ("show", "1"))); else Clock(table, token);
+        if (table.Paused) SendPauseState(table, token); else Clock(table, token);
         if (table.Record.Stage == "gok") Send(token, Wire.Encode("READYREQUEST", ("kind", "gok")));
         if (table.Record.Stage == "prepare" && presence[token].Presentation) Send(token, Wire.Encode("READYREQUEST", ("kind", "start")));
         if (table.Record.VoteUntil > 0) ExitSnapshot(table, token);

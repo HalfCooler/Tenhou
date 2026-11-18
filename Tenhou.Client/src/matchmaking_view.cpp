@@ -2,6 +2,8 @@
 #include "network_protocol.hpp"
 #include "room_settings_view.hpp"
 #include <commctrl.h>
+#include <objidl.h>
+#include <gdiplus.h>
 #include <algorithm>
 #include <stdexcept>
 
@@ -80,6 +82,12 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
     }
 
     void MatchmakingView::Show(bool visible) { ShowWindow(window_, visible ? SW_SHOW : SW_HIDE); }
+
+    void MatchmakingView::ConfigureArtwork(const std::filesystem::path &directory) {
+        // The fixed-size lobby panel uses the HD display pack at both table sizes.
+        artwork_.Configure(directory, 1440);
+        InvalidateRect(window_, nullptr, FALSE);
+    }
 
     void MatchmakingView::Reset() {
         draft_.Reset();
@@ -218,9 +226,15 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
     }
 
     void MatchmakingView::Paint(HDC dc) {
-        RECT r{0, 0, 590, 430};
-        FillRect(dc, &r, reinterpret_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
-        FrameRect(dc, &r, reinterpret_cast<HBRUSH>(GetStockObject(LTGRAY_BRUSH)));
+        try {
+            const auto &frame = artwork_.Get(592);
+            if (frame.width != 590 || frame.height != 430) throw std::runtime_error("Invalid lobby resource 592 dimensions");
+            Gdiplus::Graphics graphics(dc);
+            artwork_.Sprite(graphics, 592, 0, 0);
+        } catch (const std::exception &) {
+            const RECT panel{0, 0, 590, 430};
+            FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        }
         const auto old = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(0, 0, 0));

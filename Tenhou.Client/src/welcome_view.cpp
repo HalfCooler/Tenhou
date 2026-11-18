@@ -64,7 +64,7 @@ namespace tenhou {
         font_ = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"MS UI Gothic");
         if (!font_) throw std::runtime_error("Cannot create original welcome font");
-        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kView, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 1024, 768,
+        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kView, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1024, 768,
                                     parent_, reinterpret_cast<HMENU>(200), instance, this);
         panel_ = CreateWindowExW(WS_EX_CONTROLPARENT, kPanel, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 728,
                                  330,

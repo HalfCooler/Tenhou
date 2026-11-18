@@ -2,6 +2,7 @@
 #include "resource_pack.hpp"
 #include "object_pack.hpp"
 #include <windows.h>
+#include <array>
 #include <fstream>
 #include <memory>
 
@@ -50,6 +51,9 @@ namespace tenhou {
         void SaveConfig();
 
         void ApplyPreferences(PreferenceChange change);
+        void UpdateAudioMeter();
+        void PaintAudioMeter(const DRAWITEMSTRUCT &item);
+        void ShowAudioMenu();
 
         void Log(const std::string &message);
 
@@ -58,7 +62,7 @@ namespace tenhou {
         Options options_;
         std::filesystem::path executable_directory_, config_path_, resource_directory_;
         std::ofstream log_;
-        HWND window_ = nullptr;
+        HWND window_ = nullptr, audio_meter_ = nullptr;
         HMENU client_menu_ = nullptr;
         HFONT font_ = nullptr;
         HANDLE mutex_ = nullptr;
@@ -73,6 +77,9 @@ namespace tenhou {
         int screen_width_ = 1440;
         bool original_display_ = true;
         bool sound_effects_only_ = false;
+        bool mute_effects_ = false, mute_music_ = false;
+        std::array<int, 3> audio_bars_{};
+        float music_meter_range_ = .1f;
         std::string error_;
         int exit_code_ = 0;
     };

@@ -57,8 +57,7 @@ namespace tenhou {
     std::vector<unsigned> ReplaySounds(const ReplayEvent &event, char gender = '?', bool effects_only = false,
                                        bool individual_voices = false);
 
-    // Wall preparation retains the earlier user-authorized simultaneous sides.
-    // Deal packets follow FUN_00489c40: dealer first, 4 x 3 then 1, wait 6 ticks.
+    // Prepare all sides together, then deal in seat order starting at the dealer.
     class OpeningPresentation {
     public:
         void Begin(const ReplayState &state, bool wall, TableArtwork *artwork = nullptr);
@@ -72,13 +71,15 @@ namespace tenhou {
 
         std::vector<PositionedTile> Scene(TableArtwork &artwork, bool red = true) const;
 
+        void SlideWall(std::vector<PositionedTile> &scene) const;
+
         unsigned wall_tiles() const { return wall_tiles_; }
         unsigned placed() const { return std::min(progress_, wall_tiles_ / 4) * 4; }
 
         unsigned dealt() const;
 
         unsigned steps() const { return progress_; }
-        unsigned interval() const { return progress_ < wall_tiles_ / 4 ? 25 : 15; }
+        static constexpr unsigned interval() { return 15; }
         unsigned sound() const { return sound_; }
 
     private:

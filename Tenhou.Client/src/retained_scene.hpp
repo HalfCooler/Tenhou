@@ -69,7 +69,7 @@ namespace tenhou {
                 state.result;
         out << ":seats=" << state.seat_mask;
         if (state.variant) out << ":variant:" << state.wall.total << ':' << state.wall.front << ':' << state.wall.tail;
-        for (const auto &p: state.players) out << ':' << p.connected << ':' << p.score << ':' << p.reach << ':' << p.
+        for (const auto &p: state.players) out << ':' << p.connected << ':' << p.rank << ':' << p.gender << ':' << p.score << ':' << p.reach << ':' << p.
                                            name.size() << ':' << p.name << ':' << p.nuki.size();
         for (const auto &p: state.players) {
             out << ":flowers=" << p.flowers.size();

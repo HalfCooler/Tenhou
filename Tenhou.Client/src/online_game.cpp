@@ -135,6 +135,8 @@ namespace tenhou {
             for (int i = 0; i < 4; ++i) {
                 s.players[i].name = players[i].name;
                 s.players[i].gender = players[i].gender;
+                s.players[i].rank = players[i].rank;
+                s.players[i].connected = players[i].connected;
             }
             if (type & 16) {
                 s.seat_mask = 0;
@@ -143,7 +145,9 @@ namespace tenhou {
             return;
         }
         if (tag == "UN") {
+            const auto ranks = ParseSeatRanks(Attr(m, "dan", false));
             for (int i = 0; i < 4; ++i) {
+                if (m.attributes.count("dan")) s.players[i].rank = ranks[i];
                 if (m.attributes.count("sx")) s.players[i].gender = SoundGender(Attr(m, "sx"), i);
                 const auto key = "n" + std::to_string(i);
                 if (m.attributes.count(key)) {
@@ -197,9 +201,13 @@ namespace tenhou {
             std::array<std::string, 4> names;
             std::array < char, 4 > genders;
             std::array < bool, 4 > connected;
+            std::array<int, 4> ranks;
             for (int i = 0; i < 4; ++i) names[i] = s.players[i].name;
             for (int i = 0; i < 4; ++i) genders[i] = s.players[i].gender;
-            for (int i = 0; i < 4; ++i) connected[i] = s.players[i].connected;
+            for (int i = 0; i < 4; ++i) {
+                connected[i] = s.players[i].connected;
+                ranks[i] = s.players[i].rank;
+            }
             const auto events = s.events;
             const auto type = s.type;
             const auto seats = s.seat_mask;
@@ -227,6 +235,7 @@ namespace tenhou {
                 p.name = names[i];
                 p.score = scores[i] * 100;
                 p.gender = genders[i];
+                p.rank = ranks[i];
                 p.connected = connected[i];
                 if (!SeatPresent(seats, i)) {
                     if (scores[i]) Fail("absent seat has a score");
@@ -565,6 +574,7 @@ namespace tenhou {
             auto &q = r.players[i];
             q.name = p.name;
             q.gender = p.gender;
+            q.rank = p.rank;
             q.connected = p.connected;
             q.score = p.score;
             q.reach = p.reach;

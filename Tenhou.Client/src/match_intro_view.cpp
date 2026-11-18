@@ -4,8 +4,6 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
-#include <charconv>
-#include <sstream>
 #include <stdexcept>
 
 namespace tenhou {
@@ -16,24 +14,6 @@ namespace tenhou {
             const int count = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
             std::wstring out(count, L' ');
             if (count) MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), count);
-            return out;
-        }
-
-        std::array<std::wstring, 4> Ranks(const std::string &dan) {
-            std::array<std::wstring, 4> out;
-            out.fill(L"未提供");
-            const wchar_t *labels[]{
-                L"新人", L"９級", L"８級", L"７級", L"６級", L"５級", L"４級", L"３級", L"２級", L"１級",
-                L"初段", L"二段", L"三段", L"四段", L"五段", L"六段", L"七段", L"八段", L"九段", L"十段", L"天鳳位"
-            };
-            std::istringstream stream(dan);
-            std::string field;
-            for (int i = 0; i < 4 && std::getline(stream, field, ','); ++i) {
-                int value = -1;
-                const auto parsed = std::from_chars(field.data(), field.data() + field.size(), value);
-                if (parsed.ec == std::errc() && parsed.ptr == field.data() + field.size() && value >= 0 && value <= 20)
-                    out[i] = labels[value];
-            }
             return out;
         }
 
@@ -113,20 +93,18 @@ namespace tenhou {
                    std::max(1, static_cast<int>(55 * s)), std::max(1, static_cast<int>(21 * s)), TRUE);
     }
 
-    void MatchIntroView::Begin(const ReplayState &state, unsigned type, const std::string &dan) {
+    void MatchIntroView::Begin(const ReplayState &state, unsigned type) {
         if (!state.initialized) return;
         Cancel();
         state_ = state;
         type_ = type;
-        ranks_ = Ranks(dan);
-        seconds_ = 5;
+        seconds_ = kReadySeconds;
         resuming_ = false;
         EnableWindow(ok_, TRUE);
         ShowWindow(ok_, SW_SHOW);
         if (play_sound_) play_sound_(102);
-        // First-use sound preparation can block. Start the five visible seconds
-        // after it returns, so the first countdown beat is not shortened.
-        deadline_ = GetTickCount64() + 5000;
+        // Start the visible countdown after first-use sound preparation.
+        deadline_ = GetTickCount64() + kReadySeconds * 1000;
         if (!SetTimer(window_, 1, 100, nullptr)) throw std::runtime_error("Cannot start match introduction countdown");
         active_ = true;
         HideSiblings();
@@ -135,7 +113,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void MatchIntroView::Resume(const ReplayState &state, unsigned type, const std::string &dan) {
+    void MatchIntroView::Resume(const ReplayState &state, unsigned type) {
         // Original SAIKAI: 004ab91f uses a blank, disabled button and does not
         // post the TAIKYOKU-only 8302 countdown. INIT/REINIT closes the popup.
         const bool beginning = !Resuming();
@@ -148,7 +126,6 @@ namespace tenhou {
         }
         state_ = state;
         type_ = type;
-        ranks_ = Ranks(dan);
         HideSiblings();
         SetWindowPos(window_, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         InvalidateRect(window_, nullptr, FALSE);
@@ -254,7 +231,8 @@ namespace tenhou {
                         Gdiplus::Color(255, 34, 34, 34), Gdiplus::Color(136, 17, 17, 17));
                     g.FillRectangle(&card, x, y, 190 * u, 42 * u);
                     Text(g, Wide(state_.players[i].name), x + 62 * u, y + 2 * u, 105 * u, 19 * u, (40.0f / 3) * u, L"System");
-                    Text(g, ranks_[i], x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
+                    const auto rank = state_.players[i].rank;
+                    Text(g, rank < 0 ? L"未提供" : SeatRankLabel(rank), x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
                 });
                 constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
                     TextKey::seat_neutral_west, TextKey::seat_neutral_north};
@@ -262,8 +240,8 @@ namespace tenhou {
                     x + 30 * u, y + 21 * u, true, true));
             }
             if (!resuming_) image("intro-countdown-" + std::to_string(seconds_),
-                {left + 304 * u, top + 350 * u, 9 * u, 10 * u}, [=](Gdiplus::Graphics &g) {
-                    Text(g, std::to_wstring(seconds_), left + 304 * u, top + 350 * u, 9 * u, 10 * u, 8 * u, L"System");
+                {left + 304 * u, top + 350 * u, 16 * u, 10 * u}, [=](Gdiplus::Graphics &g) {
+                    Text(g, std::to_wstring(seconds_), left + 304 * u, top + 350 * u, 16 * u, 10 * u, 8 * u, L"System");
                 });
             scene.Paint(dc, width_, h, r.right, r.bottom, r);
         } catch (const std::exception &e) {

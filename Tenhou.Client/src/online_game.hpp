@@ -9,6 +9,7 @@ namespace tenhou {
     struct OnlinePlayer {
         std::string name;
         char gender = '?';
+        int rank = -1;
         bool connected = true;
         std::vector<int> known_hand;
         std::vector<int> deal_hand;

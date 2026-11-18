@@ -26,6 +26,7 @@ namespace tenhou {
                 view.OnGameEvent(message, snapshot); view.Update(snapshot);
             };
             auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            receive({"UN", {{"dan", "11,0,0,0"}}});
             receive({"VGO", {{"rule", rule}, {"table", "opening-check"}}});
             const bool sichuan = rule == "sichuan-bloodbattle";
             std::map<std::string, std::string> fields{
@@ -40,11 +41,18 @@ namespace tenhou {
                 fields["hand_number"] = std::to_string(hand); fields["seq"] = fields["event_seq"] = std::to_string(hand);
                 fields["events"] = std::to_string(hand) + ":start:0:-1:-1";
                 receive({"PREPARE", {}}); receive({"VSTATE", fields});
+                require(view.Snapshot().game.players[0].rank == 11 && view.Snapshot().game.players[1].rank == 0,
+                    "Variant snapshot lost the relative seat ranks");
                 require(view.opening_.Active() && view.variant_hand_ == hand, "Protocol opening did not install the new hand");
                 require(view.match_intro_->Active() == (hand == 1), "First match introduction was skipped or repeated between hands");
                 require(!IsWindowVisible(view.controls_.at(5173)), "Exchange confirmation appeared before dealing/selection");
                 if (hand == 1) {
                     const auto steps = view.opening_.steps();
+                    receive({"PAUSED", {{"show", "1"}, {"offline", "2"}}});
+                    require(!view.Snapshot().game.players[1].connected && view.Snapshot().game.players[2].connected,
+                        "Paused match did not mark the disconnected seat");
+                    receive({"PAUSED", {{"show", "0"}, {"offline", "0"}}});
+                    require(view.Snapshot().game.players[1].connected, "Resumed match retained an offline seat");
                     SendMessageW(view.window_, WM_TIMER, 2, 0);
                     require(view.opening_.steps() == steps && view.match_intro_->Active(),
                         "Deal started before the match introduction was confirmed");
@@ -284,10 +292,44 @@ namespace {
             opening_state.players[0].hand = order; std::sort(opening_state.players[0].hand.begin(), opening_state.players[0].hand.end());
             opening_state.players[0].deal_hand = order;
             OpeningPresentation opening; opening.Begin(opening_state, true, &art);
-            opening.Tick(opening.wall_tiles() / 4 + 1);
+            const auto stack = WallTile(opening_state.wall, 1, 0, true);
+            constexpr int landing = 900;
+            for (int step = 0; step <= 4; ++step) {
+                opening.Tick();
+                std::vector<PositionedTile> wall{{stack, landing, 200}};
+                opening.SlideWall(wall);
+                Check(wall.front().x == landing + 160 - 40 * step && wall.front().y == 200,
+                    "Wall stack did not follow the original four-step flight");
+            }
+            opening.Tick(opening.wall_tiles() / 4 - opening.steps());
+            Check(opening.Frame().turn == -1 && opening.dealt() == 0, "Wall setup highlighted a dealing seat");
+            while (opening.Active() && !opening.dealt()) opening.Tick();
             Check(opening.Frame().players[0].hand == std::vector<int>(order.begin(), order.begin() + 4),
                 "Variant first deal packet arrived already sorted");
-            while (opening.Active()) opening.Tick();
+            std::vector<int> actors;
+            int last = -1;
+            const auto first_packet = opening.steps();
+            std::vector<POINT> flight;
+            while (opening.Active()) {
+                const int actor = opening.Frame().turn;
+                if (actor >= 0 && actor != last) actors.push_back(actor);
+                if (opening.steps() - first_packet < 3) {
+                    const auto scene = opening.Scene(art);
+                    const auto tile = std::find_if(scene.begin(), scene.end(), [&](const PositionedTile &item) {
+                        return item.tile.direction == 0 && item.tile.tile == order.front();
+                    });
+                    Check(tile != scene.end(), "Dealing flight lost the first tile");
+                    flight.push_back({tile->x, tile->y});
+                }
+                last = actor;
+                opening.Tick();
+            }
+            Check(flight.size() == 3 && (flight[0].x != flight[2].x || flight[0].y != flight[2].y)
+                && std::abs(flight[2].x - 2 * flight[1].x + flight[0].x) <= 1
+                && std::abs(flight[2].y - 2 * flight[1].y + flight[0].y) <= 1,
+                "Deal flight did not advance at a constant step");
+            Check(actors == std::vector<int>{0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3},
+                "Dealing highlight did not follow each packet's recipient");
             auto scene = opening.Scene(art); std::vector<std::pair<int,int>> slots;
             for (const auto &tile: scene) if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand")
                 slots.emplace_back(tile.tile.slot, tile.tile.tile);

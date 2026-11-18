@@ -105,7 +105,7 @@ namespace tenhou {
         font_ = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         if (!font_) throw std::runtime_error("Cannot create offline table font");
-        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_VSCROLL,
+        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VSCROLL,
                                     0, 0, width_, height_, parent_, reinterpret_cast<HMENU>(202), instance, this);
         if (!viewport_) throw std::runtime_error("Cannot create offline table viewport");
         const auto control = [&](const wchar_t *kind, const wchar_t *text, int id, DWORD style = 0) {
@@ -159,7 +159,7 @@ namespace tenhou {
         });
         animation_enabled_ = GetPrivateProfileIntW(L"REBUILD", L"ReplayAnimation", 1, config_path_.c_str()) != 0;
         sound_enabled_ = GetPrivateProfileIntW(L"REBUILD", L"ReplaySound", 0, config_path_.c_str()) != 0;
-        settlement_view_->SetSoundEnabled(sound_enabled_);
+        settlement_view_->SetSoundEnabled(EffectsEnabled());
         settlement_view_->SetAnimationEnabled(animation_enabled_);
         SendMessageW(animate_control_, BM_SETCHECK, animation_enabled_ ? BST_CHECKED : BST_UNCHECKED, 0);
         SendMessageW(sound_control_, BM_SETCHECK, sound_enabled_ ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -278,13 +278,20 @@ namespace tenhou {
         individual_voices_ = false;
     }
 
+    void TableView::SetEffectsMuted(bool muted) {
+        if (effects_muted_ == muted) return;
+        effects_muted_ = muted;
+        settlement_view_->SetSoundEnabled(EffectsEnabled());
+        if (muted) {
+            try { audio_.Stop(); } catch (const std::exception &e) { SoundError(e); }
+        }
+    }
+
     void TableView::PresentMatchStart() {
         if (!session_ || !session_->state().initialized) return;
-        std::string dan;
         unsigned type = red_tiles_ ? 1 : 3;
         for (std::size_t i = 0; i < session_->position(); ++i) {
             const auto &e = session_->log().events[i];
-            if (e.tag == "UN" && e.attributes.count("dan")) dan = e.attributes.at("dan");
             if (e.tag == "GO" && e.attributes.count("type")) type = static_cast<unsigned>(std::stoul(
                                                                  e.attributes.at("type")));
         }
@@ -292,7 +299,7 @@ namespace tenhou {
         SendMessageW(results_control_, BM_SETCHECK, BST_UNCHECKED, 0);
         settlement_view_->Show(false);
         match_intro_->Move({0, 0, width_, height_});
-        match_intro_->Begin(session_->state(), type, dan);
+        match_intro_->Begin(session_->state(), type);
         log_("MATCH INTRO BEGIN");
     }
 
@@ -451,9 +458,9 @@ namespace tenhou {
             else { try { audio_.Stop(); } catch (const std::exception &e) { SoundError(e); } }
             animation_enabled_ = SendMessageW(animate_control_, BM_GETCHECK, 0, 0) == BST_CHECKED;
             sound_enabled_ = SendMessageW(sound_control_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            settlement_view_->SetSoundEnabled(sound_enabled_);
+            settlement_view_->SetSoundEnabled(EffectsEnabled());
             settlement_view_->SetAnimationEnabled(animation_enabled_);
-            if (!animation_enabled_ && !sound_enabled_) opening_.Cancel();
+            if (!animation_enabled_ && !EffectsEnabled()) opening_.Cancel();
             if (id == kSound) {
                 sounds_ = {};
                 sound_loaded_ = false;
@@ -635,7 +642,7 @@ namespace tenhou {
                            && original_display_ && !text_details_;
         if (intro) start_sound_pending_ = !ReplaySounds(event, gender, effects_only_, individual_voices_).empty();
         else for (auto id: ReplaySounds(event, gender, effects_only_, individual_voices_)) PlaySoundId(id);
-        if (event.kind == ReplayEventKind::Init && (animation_enabled_ || sound_enabled_)) {
+        if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
             presentation_.Cancel();
             opening_start_ = GetTickCount64();
             if (!artwork_.width()) artwork_.Load(resource_directory_, canvas_width_);
@@ -647,14 +654,14 @@ namespace tenhou {
             original_display_ && !text_details_)
             PresentMatchStart();
         if (presentation_.Active()) motion_timer_.Start(viewport_, kMotionTimer);
-        if (opening_.Active() || draw_end_ticks_ || (sound_enabled_ && audio_error_.empty()))
+        if (opening_.Active() || draw_end_ticks_ || (EffectsEnabled() && audio_error_.empty()))
             if (!SetTimer(viewport_, kEffectsTimer,
                           opening_.Active() ? opening_.interval() : (draw_end_ticks_ ? 15 : 25),
                           nullptr)) throw std::runtime_error("Cannot start replay effects timer");
     }
 
     void TableView::PlaySoundId(unsigned id, unsigned delay) {
-        if (!sound_enabled_ || !audio_error_.empty()) return;
+        if (!EffectsEnabled() || !audio_error_.empty()) return;
         try {
             if (!sound_loaded_) {
                 sounds_.Load(resource_directory_, canvas_width_, config_path_);
@@ -787,6 +794,7 @@ namespace tenhou {
                 }
             SortTableScene(scene, artwork_, red);
             if (original_display_) InsertNearWall(scene, artwork_, state, red, placed_count, true);
+            if (opening_.Active() && animation_enabled_) opening_.SlideWall(scene);
             const auto shadows = BuildTileShadows(scene, artwork_, ShadowPack::Embedded());
             const auto shadow_damage = TileShadowDamage(scene, shadows, artwork_, red);
             std::vector<RECT> atomic_layers;

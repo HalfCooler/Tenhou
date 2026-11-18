@@ -12,6 +12,7 @@
 #include <commdlg.h>
 #include <mmsystem.h>
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +23,10 @@ namespace tenhou {
         constexpr const char *kWindowClass = "TENHOU_CLIENT";
         constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
         constexpr UINT kReplay = 4004, kWelcome = 4001, kSettings = 4023;
+        constexpr UINT kAudioMeter = 4030, kToggleEffects = 4031, kToggleMusic = 4032;
+        constexpr UINT_PTR kAudioTimer = 1;
+        constexpr int kMeterWidth = 14, kMeterHeight = 16, kMeterInterior = 14;
+        constexpr unsigned kMeterPeriodMs = 50;
 
         std::filesystem::path ExecutableDirectory() {
             std::vector<char> buffer(32768);
@@ -207,6 +212,14 @@ namespace tenhou {
         ApplyPreferences(PreferenceChange::Other);
         ApplyPreferences(PreferenceChange::Sound);
         ApplyPreferences(PreferenceChange::Initial);
+        mute_effects_ = GetPrivateProfileIntW(L"REBUILD", L"MuteSE", 0, config_path_.c_str()) != 0;
+        mute_music_ = GetPrivateProfileIntW(L"REBUILD", L"MuteBGM", 0, config_path_.c_str()) != 0;
+        lobby_->SetQuickAudio(mute_effects_, mute_music_);
+        table_->SetEffectsMuted(mute_effects_);
+        audio_meter_ = CreateWindowExW(0, L"BUTTON", L"立体声音量与音频开关",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, kMeterWidth, kMeterHeight,
+            window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kAudioMeter)), instance, nullptr);
+        Check(audio_meter_ != nullptr && SetTimer(window_, kAudioTimer, kMeterPeriodMs, nullptr) != 0, "Create audio meter");
         if (!options_.replay.empty()) table_->Load(options_.replay);
         SetView(view_);
         ShowWindow(window_, show == SW_HIDE ? SW_SHOWNORMAL : show);
@@ -243,7 +256,66 @@ namespace tenhou {
         if (welcome_) welcome_->Resize(client.right, client.bottom);
         if (table_) table_->Resize(client.right, client.bottom);
         if (lobby_) lobby_->Resize(client.right, client.bottom);
+        // WC_SOUND, at (canvas width - 20, canvas height - 57 + 4) in HD.
+        if (audio_meter_) SetWindowPos(audio_meter_, HWND_TOP, client.right - 20, client.bottom - 53,
+                                      kMeterWidth, kMeterHeight, SWP_NOACTIVATE);
         InvalidateRect(window_, nullptr, FALSE);
+    }
+
+    void Application::UpdateAudioMeter() {
+        if (IsIconic(window_)) return;
+        const auto last_effect = view_ == "replay" ? table_->LastEffectAt() : lobby_->LastEffectAt();
+        const auto music = lobby_->MusicLevels();
+        // WC_SOUND's music range adapts to the louder BGM channel. SE has its own decay.
+        if (std::max(music[0], music[1]) > music_meter_range_) music_meter_range_ *= 1.04f;
+        else if (music_meter_range_ > .05f) music_meter_range_ *= .99f;
+        auto next = audio_bars_;
+        for (unsigned channel = 0; channel < music.size(); ++channel)
+            next[channel] = static_cast<int>(std::min(1.f, music[channel] / music_meter_range_) * kMeterInterior);
+        const auto elapsed = last_effect ? GetTickCount64() - last_effect : 0;
+        next[2] = last_effect ? static_cast<int>(kMeterInterior * std::pow(.8, double(elapsed / kMeterPeriodMs))) : 0;
+        if (next == audio_bars_) return;
+        audio_bars_ = next;
+        InvalidateRect(audio_meter_, nullptr, FALSE);
+    }
+
+    void Application::PaintAudioMeter(const DRAWITEMSTRUCT &item) {
+        const auto &bounds = item.rcItem;
+        const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+        SetDCBrushColor(item.hDC, item.itemState & (ODS_SELECTED | ODS_FOCUS) ? RGB(51, 153, 255) : RGB(51, 51, 51));
+        FrameRect(item.hDC, &bounds, brush);
+        for (int channel = 0; channel < 3; ++channel)
+            for (int row = 0; row < kMeterInterior; ++row) {
+                const int x = bounds.left + 1 + 4 * channel, y = bounds.bottom - 2 - row;
+                const RECT line{x, y, x + 4, y + 1};
+                const int grey = 17 + 34 * row / (kMeterInterior - 1);
+                const bool lit = row < audio_bars_[channel];
+                const int green = row + 1 == audio_bars_[channel] ? 204 : 17 + 68 * row / (kMeterInterior - 1);
+                SetDCBrushColor(item.hDC, lit ? RGB(0, green, 0) : RGB(grey, grey, grey));
+                FillRect(item.hDC, &line, brush);
+            }
+    }
+
+    void Application::ShowAudioMenu() {
+        const HMENU menu = CreatePopupMenu();
+        Check(menu != nullptr, "Create audio menu");
+        AppendMenuW(menu, MF_STRING | (mute_effects_ ? MF_UNCHECKED : MF_CHECKED), kToggleEffects, L"SE");
+        AppendMenuW(menu, MF_STRING | (mute_music_ ? MF_UNCHECKED : MF_CHECKED), kToggleMusic, L"BGM");
+        RECT anchor{};
+        GetWindowRect(audio_meter_, &anchor);
+        const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN | TPM_BOTTOMALIGN,
+                                            anchor.right, anchor.top, 0, window_, nullptr);
+        DestroyMenu(menu);
+        if (command == kToggleEffects) {
+            WritePreferenceInt(config_path_, L"REBUILD", L"MuteSE", !mute_effects_);
+            mute_effects_ = !mute_effects_;
+        } else if (command == kToggleMusic) {
+            WritePreferenceInt(config_path_, L"REBUILD", L"MuteBGM", !mute_music_);
+            mute_music_ = !mute_music_;
+        } else return;
+        lobby_->SetQuickAudio(mute_effects_, mute_music_);
+        table_->SetEffectsMuted(mute_effects_);
+        UpdateAudioMeter();
     }
 
     void Application::LoadResources() {
@@ -373,6 +445,21 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
         }
         switch (message) {
             case WM_APP + 1: throw std::runtime_error(reinterpret_cast<const char *>(lparam));
+            case WM_TIMER:
+                if (wparam == kAudioTimer) UpdateAudioMeter();
+                return 0;
+            case WM_DRAWITEM:
+                if (wparam == kAudioMeter) {
+                    PaintAudioMeter(*reinterpret_cast<const DRAWITEMSTRUCT *>(lparam));
+                    return TRUE;
+                }
+                return DefWindowProcA(window_, message, wparam, lparam);
+            case WM_CONTEXTMENU:
+                if (audio_meter_ && reinterpret_cast<HWND>(wparam) == audio_meter_) {
+                    ShowAudioMenu();
+                    return 0;
+                }
+                return DefWindowProcA(window_, message, wparam, lparam);
             case WM_SIZE: Layout();
                 return 0;
             case WM_DPICHANGED: {
@@ -405,7 +492,8 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
                 if ((wparam & 0xfff0) == SC_SIZE || (wparam & 0xfff0) == SC_MAXIMIZE) return 0;
                 return DefWindowProcA(window_, message, wparam, lparam);
             case WM_COMMAND:
-                if (LOWORD(wparam) == kSettings) settings_->Open();
+                if (LOWORD(wparam) == kAudioMeter && HIWORD(wparam) == BN_CLICKED) ShowAudioMenu();
+                else if (LOWORD(wparam) == kSettings) settings_->Open();
                 else if (LOWORD(wparam) == kWelcome && view_ == "replay") SetView("welcome");
                 else if (LOWORD(wparam) == kReplay && view_ != "lobby") {
                     wchar_t file[32768]{};
@@ -428,7 +516,8 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
                 SaveConfig();
                 DestroyWindow(window_);
                 return 0;
-            case WM_DESTROY: RemovePropA(window_, instance_property_.c_str());
+            case WM_DESTROY: KillTimer(window_, kAudioTimer);
+                RemovePropA(window_, instance_property_.c_str());
                 PostQuitMessage(0);
                 return 0;
             default: return DefWindowProcA(window_, message, wparam, lparam);

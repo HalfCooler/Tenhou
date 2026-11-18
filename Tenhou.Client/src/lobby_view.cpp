@@ -32,7 +32,7 @@ namespace tenhou {
             // The original sound-volume control is the online mute switch. The
             // retired NetworkSound flag had no UI and persisted a silent default.
             sound_enabled_ = preferences.se_volume > 0;
-            settlement_view_->SetSoundEnabled(sound_enabled_);
+            settlement_view_->SetSoundEnabled(EffectsEnabled());
             StopAudio();
             audio_.SetVolumePercent(preferences.se_volume);
             const auto voice_mode = GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
@@ -90,7 +90,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             "Cannot register lobby view");
         font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kLobbyWindow, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 1024, 768,
+        window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kLobbyWindow, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1024, 768,
                                   parent, reinterpret_cast<HMENU>(220), wc.hInstance, this);
         if (!font_ || !window_) throw std::runtime_error("Cannot create lobby view");
         auto add = [&](int id, const wchar_t *type, const wchar_t *text, DWORD style) {
@@ -304,6 +304,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         audio_error_.clear();
         settlement_view_->Configure(directory, width);
         action_artwork_.Configure(directory, width);
+        matching_->ConfigureArtwork(directory);
         action_artwork_error_.clear();
         resource_directory_ = directory;
         UpdateLobbyMusic(true);
@@ -863,15 +864,20 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             CancelResultTimer();
             show_results_ = false;
         }
-        if (displaying_) displayed_.table_paused = client_->snapshot().table_paused;
         if (incoming.variant_active && (incoming.table_paused || incoming.recovering)) {
             hover_point_ = {-1, -1}; CancelHandDrag(); CancelSelection();
         }
         if (matching_) matching_->SetSnapshot(incoming);
         if (incoming.phase == LobbyPhase::Disconnected || incoming.phase == LobbyPhase::Error || incoming.recovering)
             ClearPresentationQueue();
-        if (displaying_ &&presentation_queue_.empty() && incoming.game.events == displayed_.game.events)
-        displayed_ = incoming;
+        if (displaying_) {
+            if (presentation_queue_.empty() && incoming.game.events == displayed_.game.events)
+                displayed_ = incoming;
+            const auto &live = client_->snapshot();
+            displayed_.table_paused = live.table_paused;
+            for (int seat = 0; seat < 4; ++seat)
+                displayed_.game.players[seat].connected = live.game.players[seat].connected;
+        }
         const auto &snapshot = displaying_ ? displayed_ : incoming;
         if ((pressed_auto_ >= 0 ? !AutomaticInput() : !LocalTableInput()) || (pressed_tile_ >= 0 && std::find(
                                                                                   snapshot.game.players[0].known_hand.
@@ -895,7 +901,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             StopSound(snapshot.recovering && match_intro_->Resuming());
         }
         if (snapshot.phase == LobbyPhase::Disconnected) {
-            match_dan_.clear();
             match_intro_pending_ = true;
             resume_preparation_pending_ = false;
         }
@@ -944,7 +949,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (incoming.recovering && (!incoming.native_service || resume_preparation_pending_) &&
             incoming.game.started && original_display_ && !text_details_ && IsWindowVisible(window_)) {
             const bool beginning = !match_intro_->Resuming();
-            match_intro_->Resume(OnlineTableState(incoming.game), incoming.game.type, match_dan_);
+            match_intro_->Resume(OnlineTableState(incoming.game), incoming.game.type);
             if (beginning) log_("ONLINE RESUME PREPARATION BEGIN");
         }
         InvalidateRect(window_, nullptr, FALSE);
@@ -975,10 +980,23 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
     }
 
+    void LobbyView::SetQuickAudio(bool mute_effects, bool mute_music) {
+        if (effects_muted_ != mute_effects) {
+            effects_muted_ = mute_effects;
+            if (mute_effects) StopAudio();
+            settlement_view_->SetSoundEnabled(EffectsEnabled());
+        }
+        if (music_muted_ != mute_music) {
+            music_muted_ = mute_music;
+            if (mute_music) lobby_music_.Stop();
+            UpdateLobbyMusic(true);
+        }
+    }
+
     void LobbyView::UpdateLobbyMusic(bool refresh) {
         std::wstring key;
         bool third_party_lobby = false;
-        if (!music_preview_ && !resource_directory_.empty()) {
+        if (!music_muted_ && !music_preview_ && !resource_directory_.empty()) {
             if (welcome_music_) {
                 key = L"BGM_LOBBY0";
                 third_party_lobby = !official_welcome_;
@@ -1021,7 +1039,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::PlaySoundId(unsigned id, unsigned delay) {
-        if (!sound_enabled_ || !audio_error_.empty() || !IsWindowVisible(window_)) return;
+        if (!EffectsEnabled() || !audio_error_.empty() || !IsWindowVisible(window_)) return;
         if (opening_.Active() && id != 104 && id != 105 && id != 102 && id != 112) {
             if (deferred_sounds_.size() < 256) deferred_sounds_.push_back(id);
             else {
@@ -1062,7 +1080,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                     PresentVariantState(snapshot);
                     return;
                 }
-                presentation_queue_.push_back({message, snapshot, sound_enabled_ && audio_error_.empty()});
+                presentation_queue_.push_back({message, snapshot, EffectsEnabled() && audio_error_.empty()});
                 SetTimer(window_, 7, 15, nullptr);
                 if (!opening_.Active() && !match_intro_->Active() && !pause_ticks_ && !draw_end_ticks_ &&
                     !table_.Animating() && !start_barrier_) PresentationTick();
@@ -1120,7 +1138,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 event || !presentation_queue_.empty())) {
             // Immutable public snapshots keep packet bursts from replacing a visible
             // discard/draw. Receive/validation and the server clock keep running.
-            presentation_queue_.push_back({message, snapshot, sound_enabled_ && audio_error_.empty()});
+            presentation_queue_.push_back({message, snapshot, EffectsEnabled() && audio_error_.empty()});
             SetTimer(window_, 7, 15, nullptr);
             if (!opening_.Active() && !match_intro_->Active() && !pause_ticks_ && !draw_end_ticks_ && !table_.
                 Animating()) PresentationTick();
@@ -1191,7 +1209,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             captions_.Clear(); table_.SetDrawEndSlots(14);
             table_.Accept(snapshot.game, ReplayEvent{}, false);
             show_results_ = snapshot.game.ended;
-            if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || sound_enabled_)) {
+            if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || EffectsEnabled())) {
                 table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
                 if (!state.Sichuan() && !state.events.empty() && state.events.back().kind == "start")
                     for (int seat = 0; seat < 4; ++seat)
@@ -1208,7 +1226,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 if (original_display_ && !text_details_ && snapshot.actions.enabled) {
                     RECT area{}; GetClientRect(window_, &area);
                     match_intro_->Move(area);
-                    match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type, match_dan_);
+                    match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type);
                     log_("ONLINE MATCH INTRO BEGIN");
                 }
             }
@@ -1296,7 +1314,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             Arrange();
             return;
         }
-        if (message.tag == "UN" && message.attributes.count("dan")) match_dan_ = message.attributes.at("dan");
         if (message.tag == "AGARI" || message.tag == "RYUUKYOKU" || message.tag == "PROF") match_intro_->Cancel();
         if (message.tag == "REINIT") {
             CancelResultTimer();
@@ -1388,7 +1405,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (event.kind == ReplayEventKind::Init && (intro || start_barrier_))
             start_sound_pending_ = !ReplaySounds(event).empty();
         else if (event_sound_allowed_) PlayEventSound(event, snapshot);
-        if (event.kind == ReplayEventKind::Init && (animation_enabled_ || sound_enabled_)) {
+        if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
             opening_start_ = GetTickCount64();
             table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
             if (!intro && !start_barrier_ && opening_.Tick() && opening_.sound()) PlaySoundId(opening_.sound());
@@ -1401,7 +1418,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 RECT area{};
                 GetClientRect(window_, &area);
                 match_intro_->Move(area);
-                match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type, match_dan_);
+                match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type);
                 // The confirmation countdown is idle UI time: front-load the table
                 // pack read here instead of the first visible table frame.
                 table_.Prepare();

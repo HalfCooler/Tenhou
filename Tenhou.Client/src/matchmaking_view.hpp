@@ -1,6 +1,7 @@
 #pragma once
 #include "matchmaking.hpp"
 #include "network_protocol.hpp"
+#include "original_display.hpp"
 #include <windows.h>
 #include <functional>
 
@@ -16,6 +17,7 @@ namespace tenhou {
         void Show(bool visible);
 
         void Capture(HDC dc);
+        void ConfigureArtwork(const std::filesystem::path &directory);
 
         void Reset();
 
@@ -45,5 +47,6 @@ namespace tenhou {
         std::function<void(const std::string &)> log_;
         Request request_;
         LobbySnapshot snapshot_;
+        DisplayArtwork artwork_;
     };
 }

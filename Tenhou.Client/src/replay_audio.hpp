@@ -21,6 +21,8 @@ namespace tenhou {
 
     Bytes ScaleSoundPcm(const SoundClip &clip, double gain);
 
+    using StereoLevels = std::array<float, 2>;
+
     class BackgroundMusic {
     public:
         explicit BackgroundMusic(std::function<void(const std::string &)> log) : log_(std::move(log)) {}
@@ -32,11 +34,13 @@ namespace tenhou {
         void Select(HWND window, const std::filesystem::path &path = {}, bool seek = false, double gain = 1);
         void BufferDone();
         void Stop();
+        StereoLevels Levels() const;
 
     private:
         struct Buffer {
             WAVEHDR header{};
             Bytes pcm;
+            DWORD start = 0;
         };
 
         void Start();
@@ -52,6 +56,7 @@ namespace tenhou {
         SoundClip clip_;
         std::array<Buffer, 4> buffers_;
         std::size_t cursor_ = 0, next_buffer_ = 0;
+        DWORD queued_bytes_ = 0;
     };
 
     class ReplaySoundBank {
@@ -84,6 +89,7 @@ namespace tenhou {
         void Stop();
 
         bool Active() const;
+        ULONGLONG LastPlayedAt() const { return last_played_at_; }
 
         void SetVolumePercent(int percent);
 
@@ -110,6 +116,7 @@ namespace tenhou {
 
         std::vector<Pending> pending_;
         std::uint64_t serial_ = 0;
+        ULONGLONG last_played_at_ = 0;
         int volume_percent_ = 100;
         std::function<void(const std::string &)> log_;
     };

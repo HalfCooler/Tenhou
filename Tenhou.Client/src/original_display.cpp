@@ -267,18 +267,32 @@ namespace tenhou {
             Sprite(g, 402, static_cast<int>(cursor), static_cast<int>(6 * s), false, true);
             Caption(g, honba, cursor + 7, 6 * s, 12 * s, hud);
             }
+            Gdiplus::FontFamily rank_family(L"Microsoft YaHei UI");
+            Gdiplus::Font rank_font(rank_family.IsAvailable() ? &rank_family : Gdiplus::FontFamily::GenericSansSerif(),
+                                    (28.0f / 3) * s, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+            Gdiplus::SolidBrush rank_text(Gdiplus::Color(hud.text_color));
             for (int i = 0; i < 4; ++i) {
                 if (!SeatPresent(state.seat_mask, i)) continue;
                 Transform(g, hud.seats[i]);
+                const auto &player = state.players[i];
                 const int value = state.relative_scores && i
-                                      ? state.players[i].score - state.players[0].score
-                                      : state.players[i].score;
+                                      ? player.score - state.players[0].score
+                                      : player.score;
                 const auto score = (state.relative_scores && i && value > 0 ? L"+" : L"") + std::to_wstring(value);
                 Caption(g, score, -26 * s, 28 * s, 16 * s, hud);
                 if (!state.relative_scores) {
+                    // 00484a98–00484c27: rank and line are relative to measured score width.
+                    const float base = MeasureText(std::to_string(value), 16 * s) - 53 * s;
+                    g.DrawString(SeatRankLabel(player.rank), -1, &rank_font,
+                                 Gdiplus::PointF(base + 25 * s, 31 * s), &rank_text);
+                    const auto accent = !player.connected || player.gender == 'F' ? 0xccaa0000u :
+                                        player.gender == 'M' ? 0xcc0000ffu : 0xcc00aa00u;
+                    Gdiplus::Pen underline(Gdiplus::Color(accent), s);
+                    const int y = static_cast<int>(42 * s);
+                    g.DrawLine(&underline, static_cast<int>(base + 27 * s), y, static_cast<int>(base + 47 * s), y);
                     auto name_hud = hud;
-                    if (!state.players[i].connected) name_hud.text_color = 0xffcc0000;
-                    Caption(g, Wide(state.players[i].name), -25 * s, 46 * s, (32.0f / 3) * s, name_hud, 70 * s);
+                    if (!player.connected) name_hud.text_color = 0xffcc0000;
+                    Caption(g, Wide(player.name), -25 * s, 46 * s, (32.0f / 3) * s, name_hud, 70 * s);
                 }
             }
             g.Restore(saved);

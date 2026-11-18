@@ -262,6 +262,23 @@ internal static class Program
             Check(clients.All(c => c.Seen.All(m => m.Tag != "RESTORE")), "Another player's exchange invalidated a legal simultaneous action");
             await Task.WhenAll(Enumerable.Range(0, 4).Select(i => Act(clients[i], state[i], "dingque:" + (i % 3))));
             await Task.WhenAll(clients.Select(c => Phase(c, "turn")));
+            string reconnectToken = clients[1].Seen.First(m => m.Tag == "SESSION").Get("token");
+            await clients[1].DisposeAsync();
+            foreach (int viewer in new[] { 0, 2, 3 })
+            {
+                int relative = (int.Parse(games[1].Get("seat")) - int.Parse(games[viewer].Get("seat")) + 4) % 4;
+                WireMessage paused = await clients[viewer].Until("PAUSED");
+                Check(paused.Get("show") == "1" && paused.Get("offline") == (1 << relative).ToString(),
+                    "Disconnect did not report the offline seat from each viewer's perspective");
+            }
+            clients[1] = new Client();
+            await clients[1].Connect(port); await clients[1].Login(reconnectToken); await clients[1].Until("RESTORED");
+            foreach (Client client in clients)
+            {
+                WireMessage resumed;
+                do { resumed = await client.Until("PAUSED"); } while (resumed.Get("show") == "1");
+                Check(resumed.Get("offline") == "0", "Reconnect did not clear the offline indicator");
+            }
             for (int round = 1; round <= 2; ++round)
             {
                 await clients[0].Send(Wire.Encode("EXIT", ("table", games[0].Get("table"))));

@@ -8,6 +8,39 @@
 
 namespace tenhou {
     namespace {
+        constexpr unsigned kWallFlightSteps = 4; // 0048df75, distance * 0.25
+        constexpr unsigned kDealFlightSteps = 12; // 0048eaff, distance / 12
+        constexpr unsigned kDealPacketTicks = 1 + 6; // dispatch and event 100
+        constexpr unsigned kDealTailTicks = 9;
+        constexpr float kOpeningSortSpeed = 25.f; // 00490dbf, pixels/update
+
+        // 0048f650 / 004900a0. Delta points away from the destination anchor.
+        struct TileFlight {
+            TileFlight(int dx, int dy, float speed) {
+                if (!dx && !dy) return;
+                const double length = std::hypot(dx, dy);
+                const double vy = -dy / length * speed;
+                step_x = static_cast<float>(-dx / length * speed);
+                step_y = static_cast<float>(vy);
+                advances = static_cast<unsigned>(1 - (dx ? dx / double(step_x) : dy / vy)) - 1;
+            }
+
+            void Move(int &x, int &y, unsigned tick) const {
+                if (tick >= advances) return;
+                float rx = -static_cast<float>(advances) * step_x;
+                float ry = -static_cast<float>(advances) * step_y;
+                for (unsigned i = 0; i < tick; ++i) {
+                    rx += step_x;
+                    ry += step_y;
+                }
+                x = static_cast<int>(x + double(rx));
+                y = static_cast<int>(y + double(ry));
+            }
+
+            float step_x = 0, step_y = 0;
+            unsigned advances = 0;
+        };
+
         TableTile WallOrigin(const WallState &wall, int index) {
             const auto position = wall.Position(index);
             return WallTile(wall, position.first, position.second / 2, position.second % 2 == 0);
@@ -267,28 +300,31 @@ namespace tenhou {
             hands_.push_back(counts);
             sounds_.push_back(104);
         }
+        for (unsigned wait = 0; wall_tiles_ && wait < 6; ++wait) {
+            hands_.push_back(counts);
+            sounds_.push_back(0);
+        }
         unsigned wall_index = 0;
         for (unsigned packet = 0; packet < 4; ++packet)
             for (int who = 0; who < 4; ++who) {
                 const auto seat = (state.dealer + who) % 4;
-                if (state.players[seat].hand.empty()) continue;
+                if (!SeatPresent(state.seat_mask, seat) || initial_.players[seat].hand.empty()) continue;
                 const auto begin = counts[seat];
                 counts[seat] = std::min(packet < 3 ? (packet + 1) * 4 : 13u,
-                                        static_cast<unsigned>(state.players[seat].hand.size()));
+                                        static_cast<unsigned>(initial_.players[seat].hand.size()));
+                if (begin == counts[seat]) continue;
                 hands_.push_back(counts);
                 sounds_.push_back(105);
                 packets_.push_back({
                     static_cast<unsigned>(hands_.size()), static_cast<unsigned>(seat), begin, counts[seat], wall_index
                 });
                 wall_index += counts[seat] - begin;
-                // Packet dispatch is a queue entry, followed by event 100 / nTick=6.
-                for (unsigned wait = 0; wait < 6; ++wait) {
+                for (unsigned wait = 1; wait < kDealPacketTicks; ++wait) {
                     hands_.push_back(counts);
                     sounds_.push_back(0);
                 }
             }
-        // Native tail wait (9), followed by sort / movement completion.
-        for (unsigned wait = 0; wait < 9; ++wait) {
+        for (unsigned wait = 0; wait < kDealTailTicks; ++wait) {
             hands_.push_back(counts);
             sounds_.push_back(0);
         }
@@ -303,8 +339,8 @@ namespace tenhou {
                 const auto &to = artwork->Get(tile);
                 const auto &from = artwork->Get(source == before.end() ? tile : *source);
                 sort_tiles_.push_back({tile, from.x, from.y, to.x, to.y, 0});
-                const double distance = std::hypot(double(to.x - from.x), double(to.y - from.y));
-                sort_steps_ = std::max(sort_steps_, static_cast<unsigned>(std::ceil(distance / 25)));
+                const TileFlight flight(from.x - to.x, from.y - to.y, kOpeningSortSpeed);
+                sort_steps_ = std::max(sort_steps_, flight.advances);
             }
             for (unsigned tick = 0; tick < sort_steps_; ++tick) {
                 hands_.push_back(counts);
@@ -332,6 +368,12 @@ namespace tenhou {
 
     ReplayState OpeningPresentation::Frame() const {
         auto frame = initial_;
+        frame.turn = -1;
+        for (const auto &packet: packets_)
+            if (progress_ >= packet.step && progress_ - packet.step < kDealPacketTicks) {
+                frame.turn = static_cast<int>(packet.who);
+                break;
+            }
         for (unsigned seat = 0; seat < 4; ++seat) {
             auto &p = frame.players[seat];
             p.hand.resize(progress_ ? hands_[progress_ - 1][seat] : 0);
@@ -343,17 +385,29 @@ namespace tenhou {
         return frame;
     }
 
+    void OpeningPresentation::SlideWall(std::vector<PositionedTile> &scene) const {
+        if (!wall_tiles_ || progress_ >= wall_tiles_ / 4 + kWallFlightSteps) return;
+        // PE tables 004e60c0 and 004e60d0. Keep the approved parallel wall staging.
+        constexpr int dx[]{0, 160, 0, -160}, dy[]{140, 0, -140, 0};
+        for (auto &item: scene) {
+            if (item.tile.wall_stack < 0) continue;
+            const auto start = static_cast<unsigned>(item.tile.wall_stack * 2 + 1);
+            if (progress_ < start) continue;
+            const int x = dx[item.tile.direction], y = dy[item.tile.direction];
+            const TileFlight flight(x, y, static_cast<float>(std::hypot(x, y) / kWallFlightSteps));
+            flight.Move(item.x, item.y, progress_ - start);
+        }
+    }
+
     std::vector<PositionedTile> OpeningPresentation::Scene(TableArtwork &artwork, bool red) const {
         std::vector<PositionedTile> scene;
         if (progress_ >= deal_steps_ && !sort_tiles_.empty()) {
             const unsigned tick = progress_ - deal_steps_;
             for (const auto &tile: sort_tiles_) {
-                const double distance = std::hypot(double(tile.to_x - tile.from_x), double(tile.to_y - tile.from_y));
-                const double fraction = distance > 0 ? std::min(1.0, tick * 25.0 / distance) : 1.0;
-                scene.push_back({
-                    tile.tile, tile.from_x + static_cast<int>((tile.to_x - tile.from_x) * fraction),
-                    tile.from_y + static_cast<int>((tile.to_y - tile.from_y) * fraction)
-                });
+                PositionedTile placed{tile.tile, tile.to_x, tile.to_y};
+                const TileFlight flight(tile.from_x - tile.to_x, tile.from_y - tile.to_y, kOpeningSortSpeed);
+                flight.Move(placed.x, placed.y, tick);
+                scene.push_back(placed);
             }
             return scene;
         }
@@ -365,14 +419,12 @@ namespace tenhou {
             const auto &image = artwork.Get(tile, red);
             const auto offset = artwork.Offset(tile);
             int x = image.x + offset.x, y = image.y + offset.y;
-            const int slot = tile.direction && tile.tile >= 0 ? 17 - tile.slot : tile.slot;
-            if (wall_tiles_ &&std::string(tile.role)=="hand") for (const auto &packet: packets_) {
+            const int slot = tile.family == 'n' ? 17 - tile.slot : tile.slot;
+            if (wall_tiles_ && std::string_view(tile.role) == "hand") for (const auto &packet: packets_) {
                 if (packet.who != static_cast<unsigned>(tile.direction) || slot < static_cast<int>(packet.begin) ||
-                    slot >= static_cast<int>(packet.end) || progress_ < packet.step || progress_ - packet.step >= 12)
+                    slot >= static_cast<int>(packet.end) || progress_ < packet.step ||
+                    progress_ - packet.step > kDealFlightSteps)
                     continue;
-                // FUN_0048de30 packet branch -> FUN_0048f2b0 / 0048f650:
-                // wall entity origin, speed distance/12, 12 position advances.
-                // Keep the user-authorized clean single sprite (no mode-3 trails).
                 auto source = WallOrigin(initial_.wall,
                     initial_.wall.initial_removed + static_cast<int>(packet.wall) + slot - static_cast<int>(packet.begin));
                 for (const auto &visible: wall_scene)
@@ -383,9 +435,9 @@ namespace tenhou {
                     }
                 const auto &origin = artwork.Get(source, red);
                 const auto shift = artwork.Offset(source);
-                const int remaining = 12 - static_cast<int>(progress_ - packet.step);
-                x += static_cast<int>(float(origin.x + shift.x - x) * remaining / 12);
-                y += static_cast<int>(float(origin.y + shift.y - y) * remaining / 12);
+                const int dx = origin.x + shift.x - x, dy = origin.y + shift.y - y;
+                const TileFlight flight(dx, dy, static_cast<float>(std::hypot(dx, dy) / kDealFlightSteps));
+                flight.Move(x, y, progress_ - packet.step);
                 break;
             }
             scene.push_back({tile, x, y});

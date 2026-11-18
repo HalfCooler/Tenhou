@@ -352,7 +352,10 @@ namespace tenhou {
                 snapshot.exit_allowed = Attribute(message, "exit") == "1";
                 snapshot.ranked = false;
                 snapshot.game = {};
-                for (int i = 0; i < 4; ++i) snapshot.game.players[i].gender = players[i].gender;
+                for (int i = 0; i < 4; ++i) {
+                    snapshot.game.players[i].gender = players[i].gender;
+                    snapshot.game.players[i].rank = players[i].rank;
+                }
                 snapshot.actions = {};
                 snapshot.actions.enabled = interactive_games;
                 snapshot.phase = LobbyPhase::Game;
@@ -395,7 +398,11 @@ namespace tenhou {
                     snapshot.last_result_red = false;
                 }
                 auto projected = VariantTableState(snapshot.variant, snapshot.variant_state);
-                for (int i = 0; i < 4; ++i) projected.players[i].gender = snapshot.game.players[i].gender;
+                for (int i = 0; i < 4; ++i) {
+                    projected.players[i].gender = snapshot.game.players[i].gender;
+                    projected.players[i].rank = snapshot.game.players[i].rank;
+                    projected.players[i].connected = snapshot.game.players[i].connected;
+                }
                 snapshot.game = std::move(projected);
                 const auto stage = Attribute(message, "phase");
                 snapshot.game.complete = stage == "complete";
@@ -562,6 +569,15 @@ namespace tenhou {
             }
             if (tag == "PAUSED" || tag == "TABLEERROR") {
                 snapshot.table_paused = tag == "TABLEERROR" || Attribute(message, "show") == "1";
+                if (tag == "PAUSED" && message.attributes.count("offline")) {
+                    const auto offline = Integer(Attribute(message, "offline"));
+                    if (offline > 15) Fail("Invalid offline seat mask");
+                    for (int i = 0; i < 4; ++i) {
+                        const bool connected = !SeatPresent(offline, i);
+                        snapshot.game.players[i].connected = connected;
+                        game_.state.players[i].connected = connected;
+                    }
+                }
                 return {};
             }
             if (tag == "READYREQUEST") { return {Attribute(message, "kind") == "gok" ? "<GOK />" : "<STARTREADY />"}; }
