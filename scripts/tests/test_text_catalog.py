@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("text_import", ROOT / "scripts/Import-TextCatalog.py")
 IMPORT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(IMPORT)
-WORKBOOK = ROOT / "docs/Tenhou.Client/asset-reference/Sprites.xlsx"
 CATALOG = ROOT / "Tenhou.Client/assets/text/catalog.json"
 
 
@@ -23,31 +22,46 @@ class TextCatalogChecks(unittest.TestCase):
     def setUpClass(cls):
         cls.catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
 
-    def changed_workbook(self, destination, origin, field, value):
-        """Patch only a disposable XLSX copy, including shared -> inline strings."""
-        records, _ = IMPORT.read_sheet(WORKBOOK, "Sprites705")
-        row_number = next(r["row"] for r in records if r["OriginId"] == origin)
-        column = chr(65 + IMPORT.FIELDS.index(field))
-        with zipfile.ZipFile(WORKBOOK) as source, zipfile.ZipFile(destination, "w") as target:
-            for member in source.infolist():
-                content = source.read(member)
-                if member.filename == "xl/worksheets/sheet1.xml":
-                    sheet = ET.fromstring(content)
-                    row = sheet.find(f"s:sheetData/s:row[@r='{row_number}']", IMPORT.NS)
-                    address = f"{column}{row_number}"
-                    cell = row.find(f"s:c[@r='{address}']", IMPORT.NS)
-                    if cell is None:
-                        cell = ET.SubElement(row, f"{{{IMPORT.NS['s']}}}c", {"r": address})
-                    cell.clear()
-                    cell.attrib.update({"r": address, "t": "inlineStr"})
-                    inline = ET.SubElement(cell, f"{{{IMPORT.NS['s']}}}is")
-                    ET.SubElement(inline, f"{{{IMPORT.NS['s']}}}t").text = value
-                    content = ET.tostring(sheet, encoding="utf-8", xml_declaration=True)
-                target.writestr(member, content)
+    def write_workbook(self, destination, origin=None, field=None, value=None):
+        """Build the import fixture from the original cells recorded in the catalog."""
+        namespace = IMPORT.NS["s"]
+        sheet = ET.Element("worksheet", xmlns=namespace)
+        rows = ET.SubElement(sheet, "sheetData")
 
-    def test_current_specification_is_reproducible(self):
-        candidate = IMPORT.import_catalog(WORKBOOK, self.catalog)
-        self.assertEqual(candidate, self.catalog)
+        def add_row(number, cells):
+            row = ET.SubElement(rows, "row", r=str(number))
+            for index, cell_value in enumerate(cells):
+                if cell_value != "":
+                    cell = ET.SubElement(row, "c", r=f"{chr(65 + index)}{number}", t="inlineStr")
+                    ET.SubElement(ET.SubElement(cell, "is"), "t").text = str(cell_value)
+
+        add_row(1, IMPORT.FIELDS)
+        entries = sorted(self.catalog["texts"] + self.catalog["images"], key=lambda entry: entry["source"]["row"])
+        for entry in entries:
+            record = {"OriginId": entry["origin_id"]}
+            record.update((name, entry["source"][name.lower()]) for name in IMPORT.FIELDS[1:])
+            if entry["origin_id"] == origin:
+                record[field] = value
+            add_row(entry["source"]["row"], (record[name] for name in IMPORT.FIELDS))
+
+        with zipfile.ZipFile(destination, "w") as workbook:
+            workbook.writestr("xl/workbook.xml", f'<workbook xmlns="{namespace}" xmlns:r="{IMPORT.REL}">'
+                                                '<sheets><sheet name="Sprites705" r:id="rId1"/></sheets></workbook>')
+            workbook.writestr("xl/_rels/workbook.xml.rels",
+                              '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
+            workbook.writestr("xl/worksheets/sheet1.xml", ET.tostring(sheet, encoding="utf-8"))
+
+    def test_catalog_content_round_trips_through_workbook(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            workbook = Path(temporary) / "source.xlsx"
+            self.write_workbook(workbook)
+            candidate = IMPORT.import_catalog(workbook, self.catalog)
+        expected = copy.deepcopy(self.catalog)
+        for field in ("sha256", "worksheet_sha256"):
+            expected["source"][field] = candidate["source"][field]
+        expected["review"].update(status="pending_human_review", confirmations={},
+                                  calibration_status="pending_human_review")
+        self.assertEqual(candidate, expected)
         texts = {entry["origin_id"]: entry for entry in candidate["texts"]}
         self.assertEqual(texts[481]["overrides"]["size_pt"], 24)
         self.assertEqual(texts[481]["style"], "yaku")
@@ -61,7 +75,7 @@ class TextCatalogChecks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             workbook = Path(temporary) / "source.xlsx"
             label = " 竜 幺 13 交換 カンリョウ 国標 "
-            self.changed_workbook(workbook, 705, "Label", label)
+            self.write_workbook(workbook, 705, "Label", label)
             candidate = IMPORT.import_catalog(workbook, self.catalog)
             entry = next(e for e in candidate["texts"] if e["origin_id"] == 705)
             self.assertEqual(next(e["label"] for e in candidate["labels"] if e["key"] == entry["label_key"]), label)
@@ -70,14 +84,14 @@ class TextCatalogChecks(unittest.TestCase):
     def test_state_labels_cannot_silently_diverge(self):
         with tempfile.TemporaryDirectory() as temporary:
             workbook = Path(temporary) / "source.xlsx"
-            self.changed_workbook(workbook, 450, "Label", "changed hover label")
+            self.write_workbook(workbook, 450, "Label", "changed hover label")
             with self.assertRaisesRegex(ValueError, "shared Label differs"):
                 IMPORT.import_catalog(workbook, self.catalog)
 
     def test_missing_format_outside_info_does_not_inherit(self):
         with tempfile.TemporaryDirectory() as temporary:
             workbook = Path(temporary) / "source.xlsx"
-            self.changed_workbook(workbook, 482, "Size", "")
+            self.write_workbook(workbook, 482, "Size", "")
             with self.assertRaises(ValueError):
                 IMPORT.import_catalog(workbook, self.catalog)
 

@@ -214,7 +214,7 @@ def serialize(value):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--workbook", type=Path, default=ROOT / "docs/Tenhou.Client/asset-reference/Sprites.xlsx")
+    parser.add_argument("--workbook", type=Path, required=True, help="Path to an external specification workbook")
     parser.add_argument("--catalog", type=Path, default=ROOT / "Tenhou.Client/assets/text/catalog.json")
     parser.add_argument("--output", type=Path, help="Candidate path (default: catalog.candidate.json)")
     parser.add_argument("--check", action="store_true", help="Read-only comparison; exit 1 on differences")

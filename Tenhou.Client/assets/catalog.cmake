@@ -5,6 +5,7 @@ tenhou_asset(Background images/_bg.bmp FILE 0 REQUIRED _bg.bmp)
 tenhou_asset(BackgroundAlternate images/_bg1.bmp FILE 0 REQUIRED _bg1.bmp)
 tenhou_asset(LobbyMusic audio/_bgm0.wav FILE 0 REQUIRED _bgm0.wav)
 tenhou_asset(LobbyMusicAlternate audio/_bgm1.wav FILE 0 REQUIRED _bgm1.wav)
+# The bundled display pack contains the seven original images and sound effects.
 tenhou_asset(DisplayPack packs/_res2.dat FILE 0 REQUIRED _res2.dat)
 tenhou_asset(TablePack packs/_obj2.dat FILE 0 REQUIRED _obj2.dat)
 tenhou_asset(TableCompanionPack packs/_obj3.dat FILE 0 REQUIRED _obj3.dat)

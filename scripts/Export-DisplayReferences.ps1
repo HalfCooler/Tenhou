@@ -1,14 +1,14 @@
 #requires -Version 7.2
 <#
 .SYNOPSIS
-Export the original res2 display sprites and a pixel-exact size inventory.
+Export historical sprites and a pixel-exact size inventory from the original client archive.
 .EXAMPLE
 pwsh -File ./scripts/Export-DisplayReferences.ps1
 #>
 [CmdletBinding()]
 param(
-    [string]$Pack = (Join-Path $PSScriptRoot '../Tenhou.Client/assets/packs/_res2.dat'),
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '../docs/Tenhou.Client/asset-reference')
+    [string]$Pack = (Join-Path $PSScriptRoot '../Tenhou.Client.Origin/tenhou/_res2.dat'),
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '../build/display-reference')
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
@@ -144,18 +144,10 @@ namespace Tenhou {
 $source = (Resolve-Path -LiteralPath $Pack).Path
 $destination = [System.IO.Path]::GetFullPath($OutputDirectory)
 $items = [Tenhou.DisplayReferences]::Export($source, $destination)
-$labels = @{
-    440 = '按钮底板'; 441 = 'ポン'; 442 = 'カン'; 443 = 'チー'; 444 = 'ロン'; 445 = 'ツモ'
-    446 = 'リーチ'; 447 = '流局'; 448 = '抜く'; 449 = 'パス'
-    473 = 'ポン'; 474 = 'カン'; 475 = 'チー'; 476 = 'ロン'; 477 = 'ツモ'
-    478 = 'リーチ'; 479 = 'パオ'; 480 = 'キタ'
-}
-foreach ($id in 441..449) { $labels[$id + 9] = $labels[$id] + '（悬停）' }
-$settlement = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Tenhou.Client/src/settlement.cpp') -Raw -Encoding utf8
-$nameBlock = [regex]::Match($settlement, 'static const char \*names\[\]\{([\s\S]*?)\};')
-if (-not $nameBlock.Success) { throw 'Cannot find original yaku labels in settlement.cpp' }
-$names = [regex]::Matches($nameBlock.Groups[1].Value, '"([^"]+)"')
-for ($i = 0; $i -lt $names.Count; ++$i) { $labels[481 + $i] = $names[$i].Groups[1].Value }
+$catalog = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Tenhou.Client/assets/text/catalog.json') -Raw -Encoding utf8 |
+    ConvertFrom-Json
+$labels = @{ 440 = '按钮底板' }
+foreach ($entry in $catalog.texts) { $labels[[int]$entry.origin_id] = $entry.source.label }
 $items | Sort-Object Id | Select-Object Id, @{Name='Label'; Expression={ $labels[[int]$_.Id] }},
     Width, Height, StoredBytes, PngBytes, InkX, InkY, InkWidth, InkHeight, AlphaMin, AlphaMax, File |
     Export-Csv -LiteralPath (Join-Path $destination 'original-display.csv') -NoTypeInformation -Encoding utf8BOM
@@ -163,60 +155,11 @@ $items | Sort-Object Id | Select-Object Id, @{Name='Label'; Expression={ $labels
 [Tenhou.DisplayReferences]::Sheet($items, $destination, 'actions.png', 473, 480)
 [Tenhou.DisplayReferences]::Sheet($items, $destination, 'yaku.png', 481, 535)
 [ordered]@{
-    source = 'Tenhou.Client/assets/packs/_res2.dat'
+    source = [System.IO.Path]::GetRelativePath((Split-Path -Parent $PSScriptRoot), $source).Replace('\', '/')
     sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
     canvas = @(1440, 1080)
     image_count = $items.Count
     pixels = 'top-down straight-alpha BGRA -> lossless RGBA PNG; no resizing'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'source.json') -Encoding utf8
 
-# Authoring plan only: these paths are proposed names, not registered runtime assets.
-$work = [System.Collections.Generic.List[object]]::new()
-function Add-WorkItem($priority, $group, $text, $file, $width, $height, $reference, $state, $notes) {
-    $work.Add([pscustomobject][ordered]@{
-        Priority=$priority; Group=$group; Text=$text; ProposedFile=$file
-        Width=$width; Height=$height; Reference=$reference; CurrentState=$state; Notes=$notes
-    })
-}
-foreach ($text in @('选择完毕', '补花', '吃', '碰', '杠', '荣和', '自摸')) {
-    $new = $text -in @('选择完毕', '补花')
-    Add-WorkItem $(if ($new) { 'P0' } else { 'P1' }) 'action' $text "actions/$text.png" 220 72 '473–480' `
-        $(if ($new) { '楷体动态文字' } else { '复用日文原图' }) '白字、黑色投影；四字内容须单独检查适配'
-}
-foreach ($text in @('万', '筒', '索', '确认换牌', '吃', '碰', '杠', '荣和', '自摸', '过')) {
-    foreach ($state in @('normal', 'hover')) {
-        $new = $text -in @('万', '筒', '索', '确认换牌')
-        Add-WorkItem $(if ($new) { 'P0' } else { 'P1' }) 'button' $text "buttons/$text-$state.png" 140 51 `
-            $(if ($state -eq 'normal') { '441–449' } else { '450–458' }) `
-            $(if ($new) { '楷体动态文字，已有底板' } else { '复用日文原图，已有底板' }) `
-            '仅文字透明层；共用440底板；normal参考金色光晕，hover参考白字；禁用态由程序压暗'
-    }
-}
-$sichuanSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Tenhou.Server/src/Rules/Sichuan/SichuanMatch.cs') -Raw -Encoding utf8
-$sichuanNames = @('底和', '清一色', '七对', '清七对', '龙七对', '清龙七对', '对对和', '清对', '带幺九', '清幺九',
-    '将对', '金钩钓', '清金钩钓', '天和', '地和', '杠上花', '抢杠', '杠上炮')
-foreach ($text in $sichuanNames) {
-    if (-not $sichuanSource.Contains('"' + $text + '"')) { throw "Sichuan label no longer in source: $text" }
-    Add-WorkItem 'P0' 'sichuan-pattern' $text "patterns/sichuan/$text.png" '按文字实测' 34 '481–535' '楷体动态文字' '仅名称；左右约3–5px透明余量；白字；不把翻数画进名称'
-}
-Add-WorkItem 'P0' 'sichuan-pattern' '根' 'patterns/sichuan/根.png' '按文字实测' 34 '481–535' '根×N动态文字' '根名称与动态×N分开；也可制作实际用到的根×1至根×4完整图片'
-$fanSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '../Tenhou.Server/src/Rules/Guobiao/FanCatalog.cs') -Raw -Encoding utf8
-$fans = [regex]::Matches($fanSource, '\["([^"]+)"\]\s*=\s*(\d+)')
-if ($fans.Count -eq 0) { throw 'Cannot find Guobiao fan catalog' }
-foreach ($fan in $fans) {
-    $text = $fan.Groups[1].Value
-    Add-WorkItem 'P0' 'guobiao-pattern' $text "patterns/guobiao/$text.png" '按文字实测' 34 '481–535' '楷体动态文字' `
-        ("目录值$($fan.Groups[2].Value)番；仅名称；数量×N单独处理" + $(if ($text -eq '明暗杠') { '；项目扩展项' } else { '' }))
-}
-foreach ($text in @('翻', '番', '×', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9')) {
-    Add-WorkItem 'P0' 'counter' $text "counters/$text.png" 34 34 '552–565' '动态文字；已有立直数字图片' '数字可复用原图；翻/番须区分，原图562是日文飜；×N需要后续拼接'
-}
-foreach ($text in @('梅', '兰', '竹', '菊', '春', '夏', '秋', '冬')) {
-    Add-WorkItem 'P0' 'flower-face' $text "flowers/$text.png" '待定' '待定' '_obj2.dat普通牌框；VARIANT-INTERACTION.md第6节' '尚无专用八花图片' '独立图案层；先核对普通牌有效区域、方向、遮罩再定尺寸；不使用220×72文字模板'
-}
-foreach ($text in @('查花猪', '查大叫', '退税', '已和牌', '换三张', '定缺', '盘末结算')) {
-    Add-WorkItem 'P2' 'optional-status' $text "status/$text.png" '待定' '待定' '按最终显示位置确定' '文字或组合结算原因；无独立图片槽' '装饰性候选；当前协议未逐项提供查花猪/查大叫/退税演出事件，接入需另做设计'
-}
-$work | Export-Csv -LiteralPath (Join-Path $destination '制作清单.csv') -NoTypeInformation -Encoding utf8BOM
 Write-Host "Exported $($items.Count) original sprites to $destination"
-Write-Host "Wrote $($work.Count) authoring rows, including $($sichuanNames.Count) fixed Sichuan patterns and $($fans.Count) Guobiao patterns."

@@ -1,6 +1,6 @@
 # 文字规格目录
 
-`catalog.json` 保存生产客户端的 TrueType 文案、样式和番型映射，`rendering.json` 保存绘制效果参数。设计来源是 `docs/Tenhou.Client/asset-reference/Sprites.xlsx` 的 `Sprites705` 及用户确认的修正。详见 [实施计划](../../../docs/Tenhou.Client/TRUETYPE-TEXT-PLAN.md) 和 [规格核对记录](../../../docs/Tenhou.Client/TRUETYPE-TEXT-P0-REVIEW.md)。
+`catalog.json` 保存生产客户端的 TrueType 文案、样式和番型映射，`rendering.json` 保存绘制效果参数。历史规格源于 `Sprites.xlsx` 的 `Sprites705` 工作表及用户确认的修正。详见 [实施计划](../../../docs/Tenhou.Client/TRUETYPE-TEXT-PLAN.md) 和 [规格核对记录](../../../docs/Tenhou.Client/TRUETYPE-TEXT-P0-REVIEW.md)。
 
 ## 数据约定
 
@@ -16,14 +16,15 @@
 
 ## 主动更新规格
 
-从仓库根目录执行；只需要 Python 3 标准库，不需要 Excel 或第三方 Python 包：
+直接维护 JSON 目录。如需从外部 XLSX 导入规格，可从仓库根目录用 Python 3 执行。
 
 ```powershell
 # 只读核对：一致为 0，有差异为 1，无效输入为 2
-python -B scripts/Import-TextCatalog.py --check
+python -B scripts/Import-TextCatalog.py --workbook 'C:/path/to/Sprites.xlsx' --check
 
 # 输出差异和独立候选文件；显式请求时另生成核对表
 python -B scripts/Import-TextCatalog.py `
+  --workbook 'C:/path/to/Sprites.xlsx' `
   --output build/text-catalog.candidate.json `
   --report build/text-catalog-review.md
 ```
@@ -45,7 +46,7 @@ ctest --test-dir ./Tenhou.Client.Tests/obj/native/Release --output-on-failure
 python -B scripts/tests/test_text_catalog.py -v
 ```
 
-`client_text_catalog` 检查分类、样式、字形字符串、共享文案、Info 装饰、番型映射、生产按钮状态及已知和未知番型的显示。显式 Python 检查在临时副本上验证导入和 CMake 对错误数据的处理。
+`client_text_catalog` 检查分类、样式、字形字符串、共享文案、Info 装饰、番型映射、生产按钮状态及已知和未知番型的显示。显式 Python 检查从 JSON 的来源记录生成临时工作簿，验证导入和 CMake 对错误数据的处理。
 
 ## P1 字体与样张
 
@@ -59,4 +60,4 @@ P0 验证已完成。P1 新增 `text_renderer.hpp/.cpp` 和独立 `rendering.jso
 
 结算使用文字目录绘制役种、番型、标题、风位、次数和带单位的数值。四川和国标按服务端原名匹配 `rule_patterns`，从同一条映射取得显示文字和缺省番值。接入和检查结果见 [P4 记录](../../../docs/Tenhou.Client/TRUETYPE-TEXT-P4-REVIEW.md)。
 
-296 个文案 OriginId 用于追溯规格。编号 PNG 只为 7 个 Image 条目登记，旧文字样图保存在源码资源目录供对照。图像和打包检查见 [P5 记录](../../../docs/Tenhou.Client/TRUETYPE-TEXT-P5-REVIEW.md)。
+296 个文案 OriginId 用于追溯规格。编号 PNG 只为 7 个 Image 条目登记。图像和打包检查见 [P5 记录](../../../docs/Tenhou.Client/TRUETYPE-TEXT-P5-REVIEW.md)。

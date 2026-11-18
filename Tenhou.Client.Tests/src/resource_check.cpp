@@ -78,6 +78,10 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("Background decode failed");
         }
         const auto display = tenhou::LoadResourcePack(resources.Path(tenhou::AssetId::DisplayPack));
+        for (const auto &entry : display.entries) {
+            if (entry.metadata && !tenhou::FindTextImageByOrigin(entry.id))
+                throw std::runtime_error("Unexpected image in bundled display pack: " + std::to_string(entry.id));
+        }
         CheckDisplayImages(argv[1], display);
         const auto table = tenhou::LoadObjectPack(resources.Path(tenhou::AssetId::TablePack));
         const auto companion = tenhou::LoadObjectPack(resources.Path(tenhou::AssetId::TableCompanionPack));

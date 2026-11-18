@@ -4,7 +4,7 @@
 
 状态：用户已确认当前文案及下列规格；P1 效果参数仍待样张校准。
 
-来源：`docs/Tenhou.Client/asset-reference/Sprites.xlsx`，工作表 `Sprites705`。
+历史来源为 `Sprites.xlsx` 的 `Sprites705` 工作表。当前规格见 [文字目录](../../Tenhou.Client/assets/text/README.md)。
 
 XLSX SHA-256：`b4be245fafd3b68d79c1a4fe784662cc7e790b1e958558cf61813d076ecc8bd0`。
 

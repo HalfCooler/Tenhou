@@ -14,16 +14,16 @@ Windows / C++17 / GDI。项目位于 `Tenhou.Client/`，代码位于 `Tenhou.Cli
 | --- | --- | --- |
 | `assets/images/` | 默认背景 BMP、八花 PNG 和 7 个图像编号的可选 PNG 覆盖 | 复制至 EXE 相邻的 `resources/images/` |
 | `assets/audio/` | 默认背景音乐 WAV | 复制至 `resources/audio/` |
-| `assets/packs/` | 图片、音效及牌面原始 DAT 资源包 | 复制至 `resources/packs/` |
+| `assets/packs/` | 图形与音效 DAT、原始牌面 DAT | 复制至 `resources/packs/` |
 | `assets/dialogs/` | 设置页的原始二进制模板 | 内嵌至 EXE 的 RCDATA |
 | `assets/shadows/` | 压缩的牌面阴影数据 | 内嵌至 EXE 的 RCDATA |
 | `assets/fonts/` | 私有字体文件，来源与随包条件待发布前落实 | 通过 `TextFont` 登记，复制至 `resources/fonts/` |
 
 清单统一生成 `AssetId`、路径元数据和 Win32 RC，并驱动构建复制与安装。新增资源时，在对应目录放入文件并添加一条 `tenhou_asset(...)`；业务代码通过 `ResourceManager` 的 `Path`、`Read` 或 `Embedded` 访问，格式解码仍由原有图片、音频和资源包模块负责。构建时会检查必需文件及重复 ID；仅修改外置资源后重新构建，也会同步更新输出目录。
 
-修改按钮、动作浮字、玩法信息或番型时，按 [TrueType 文字目录维护说明](../../Tenhou.Client/assets/text/README.md) 编辑文案、字号和样式。目录登记 296 个文字条目，界面按需绘制。旧 PNG 和 XLSX、Word 资料可用于对照。
+修改按钮、动作浮字、玩法信息或番型时，按 [TrueType 文字目录维护说明](../../Tenhou.Client/assets/text/README.md) 编辑文案、字号和样式。目录登记 296 个文字条目，界面按需绘制。
 
-`images/sprites/` 的发布清单仅登记 401、402、440、466、589、591、592。旧 DAT 仍提供原始图形和音效。增量构建及安装会清除输出目录中旧清单登记的其余编号 PNG。迁移和检查记录见 [TrueType 实施计划](TRUETYPE-TEXT-PLAN.md) 和 [P5 记录](TRUETYPE-TEXT-P5-REVIEW.md)。
+随客户端发布的 `packs/_res2.dat` 包含 29 个音效和 401、402、440、466、589、591、592 七个图形。可在 `images/sprites/` 提供同编号 PNG 作为可选资源。增量构建及安装会清除输出目录中旧清单登记的文字 PNG。迁移和检查记录见 [TrueType 实施计划](TRUETYPE-TEXT-PLAN.md) 和 [P5 记录](TRUETYPE-TEXT-P5-REVIEW.md)。
 
 `--resources <目录>` 和配置中的 `[REBUILD] ResourceDirectory` 继续指定外置资源根目录。优先查找清单中的分类路径，找不到时兼容旧版平铺文件名，例如 `_res2.dat`。`TENHOU_ASSET_DIRECTORY` 也接受这两种目录布局；内嵌模板始终取自仓库。自定义背景及音频仍按原配置解析。仓库只提供 HD 牌面，清单中的 SD 牌面条目为可选兼容项。
 
