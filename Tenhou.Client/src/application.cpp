@@ -4,6 +4,7 @@
 #include "welcome_view.hpp"
 #include "table_view.hpp"
 #include "lobby_view.hpp"
+#include "offline_lobby_view.hpp"
 #include "settings_view.hpp"
 #include "window_layout.hpp"
 #include <objidl.h>
@@ -23,6 +24,7 @@ namespace tenhou {
         constexpr const char *kWindowClass = "TENHOU_CLIENT";
         constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
         constexpr UINT kReplay = 4004, kWelcome = 4001, kSettings = 4023;
+        constexpr UINT kOfflineLobby = 4024;
         constexpr UINT kAudioMeter = 4030, kToggleEffects = 4031, kToggleMusic = 4032;
         constexpr UINT_PTR kAudioTimer = 1;
         constexpr int kMeterWidth = 14, kMeterHeight = 16, kMeterInterior = 14;
@@ -48,6 +50,14 @@ namespace tenhou {
         try {
             for (int i = 1; i < count; ++i) {
                 const std::wstring name = arguments[i];
+                if (name == L"--offline-lobby") {
+                    options.offline_lobby = true;
+                    continue;
+                }
+                if (name == L"--service-lobby") {
+                    options.service_lobby = true;
+                    continue;
+                }
                 if (name != L"--config-dir" && name != L"--resources" && name != L"--replay") throw std::runtime_error(
                     "不支持的启动参数");
                 if (++i >= count) throw std::runtime_error("启动参数缺少路径");
@@ -88,6 +98,7 @@ namespace tenhou {
         PlaySoundA(nullptr, nullptr, 0);
         welcome_.reset();
         table_.reset();
+        offline_lobby_.reset();
         lobby_.reset();
         if (IsMenu(client_menu_)) DestroyMenu(client_menu_);
         if (gdiplus_token_) Gdiplus::GdiplusShutdown(gdiplus_token_);
@@ -168,6 +179,7 @@ namespace tenhou {
         AppendMenuW(client_menu_, MF_STRING, kSettings, L"设置...");
         AppendMenuW(client_menu_, MF_STRING, kReplay, L"打开牌谱...");
         AppendMenuW(client_menu_, MF_STRING, kWelcome, L"返回登录");
+        if (options_.offline_lobby) AppendMenuW(client_menu_, MF_STRING, kOfflineLobby, L"离线大厅");
         Check(SetMenu(window_, client_menu_) != FALSE, "SetMenu");
         // Keep configured values as client dimensions after adding the new tools menu.
         RECT client_bounds{0, 0, width_, height_};
@@ -193,7 +205,21 @@ namespace tenhou {
         table_->ConfigureArtwork(resource_directory_, screen_width_);
         lobby_ = std::make_unique<LobbyView>(window_, config_path_,
                                              [this](const std::string &message) { Log(message); });
+        if (options_.service_lobby) lobby_->EnableServiceLobby([this] { settings_->Open(); },
+            [this] { PostMessageW(window_, WM_APP + 27, 0, 0); });
         lobby_->ConfigureArtwork(resource_directory_, screen_width_);
+        if (options_.offline_lobby) {
+            offline_lobby_ = std::make_unique<OfflineLobbyView>(window_, config_path_, [this](OfflineLobbyView::Action action) {
+                switch (action) {
+                    case OfflineLobbyView::Action::Settings: settings_->Open(); break;
+                    case OfflineLobbyView::Action::OpenReplay: PostMessageW(window_, WM_COMMAND, kReplay, 0); break;
+                    case OfflineLobbyView::Action::Logout: PostMessageW(window_, WM_APP + 25, 0, 0); break;
+                    case OfflineLobbyView::Action::RoomConfirmed:
+                        lobby_->SetOfflineLobbyMusic(offline_lobby_->contest());
+                        break;
+                }
+            }, [this](const std::string &message) { Log(message); });
+        }
         lobby_->SetConnectionObserver([this](const LobbySnapshot &s) {
             if (view_ != "welcome") return;
             if (s.phase == LobbyPhase::Lobby && s.native_service) {
@@ -221,13 +247,15 @@ namespace tenhou {
             window_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kAudioMeter)), instance, nullptr);
         Check(audio_meter_ != nullptr && SetTimer(window_, kAudioTimer, kMeterPeriodMs, nullptr) != 0, "Create audio meter");
         if (!options_.replay.empty()) table_->Load(options_.replay);
-        SetView(view_);
+        SetView(options_.offline_lobby && options_.replay.empty() ? "offline_lobby" : view_);
         ShowWindow(window_, show == SW_HIDE ? SW_SHOWNORMAL : show);
         UpdateWindow(window_);
         MSG message{};
         BOOL result;
         while ((result = MotionTimer::GetMessage(&message)) > 0) {
             if (settings_->HandleMessage(message)) continue;
+            if (message.message == WM_KEYDOWN && offline_lobby_ &&
+                offline_lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
             if (lobby_ &&lobby_->HandleExitVoteMessage(message)) continue;
             if (message.message == WM_KEYDOWN && lobby_ && lobby_->HandleKey(static_cast<UINT>(message.wParam)))
                 continue;
@@ -256,6 +284,7 @@ namespace tenhou {
         if (welcome_) welcome_->Resize(client.right, client.bottom);
         if (table_) table_->Resize(client.right, client.bottom);
         if (lobby_) lobby_->Resize(client.right, client.bottom);
+        if (offline_lobby_) offline_lobby_->Resize(client.right, client.bottom);
         // WC_SOUND, at (canvas width - 20, canvas height - 57 + 4) in HD.
         if (audio_meter_) SetWindowPos(audio_meter_, HWND_TOP, client.right - 20, client.bottom - 53,
                                       kMeterWidth, kMeterHeight, SWP_NOACTIVATE);
@@ -321,22 +350,30 @@ namespace tenhou {
     void Application::LoadResources() {
         if (view_ == "welcome") welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
         else if (view_ == "replay") table_->Reload();
+        else if (view_ == "offline_lobby") offline_lobby_->ConfigureArtwork(resource_directory_);
         else lobby_->ConfigureArtwork(resource_directory_, screen_width_);
     }
 
     void Application::SetView(const std::string &requested_view) {
-        if (requested_view != "welcome" && requested_view != "lobby" && requested_view != "replay") throw
+        if (requested_view != "welcome" && requested_view != "lobby" && requested_view != "replay" &&
+            (requested_view != "offline_lobby" || !offline_lobby_)) throw
                 std::runtime_error("页面不可用");
         if (welcome_ &&view_=="welcome" && requested_view != "welcome") welcome_->Save(config_path_);
         view_ = requested_view;
+        if (offline_lobby_ && view_ != "offline_lobby") offline_lobby_->Show(false);
         welcome_->Show(view_ == "welcome");
         table_->Show(view_ == "replay");
         lobby_->Show(view_ == "lobby");
         lobby_->SetWelcomeMusic(view_ == "welcome", welcome_->OfficialServer());
+        lobby_->SetOfflineLobbyMusic(view_ == "offline_lobby" ? std::optional<bool>(offline_lobby_->contest()) : std::nullopt);
         EnableMenuItem(client_menu_, kReplay, MF_BYCOMMAND | (view_ == "lobby" ? MF_GRAYED : MF_ENABLED));
-        EnableMenuItem(client_menu_, kWelcome, MF_BYCOMMAND | (view_ == "replay" ? MF_ENABLED : MF_GRAYED));
+        EnableMenuItem(client_menu_, kWelcome, MF_BYCOMMAND |
+                       (view_ == "replay" || view_ == "offline_lobby" ? MF_ENABLED : MF_GRAYED));
+        if (offline_lobby_) EnableMenuItem(client_menu_, kOfflineLobby, MF_BYCOMMAND |
+                                          (view_ == "welcome" || view_ == "replay" ? MF_ENABLED : MF_GRAYED));
         Layout();
         LoadResources();
+        if (view_ == "offline_lobby") offline_lobby_->Show(true);
         Log("VIEW " + view_);
     }
 
@@ -370,6 +407,7 @@ namespace tenhou {
         connection.register_account = register_account;
         connection.config_file = config_path_;
         connection.native_service = true;
+        connection.origin_lobby = options_.service_lobby;
         connection.interactive_games = true;
         connection.match_games = true;
         connection.recover_games = true;
@@ -384,12 +422,28 @@ namespace tenhou {
         lobby_->Login(connection);
     }
 
+    void Application::OpenReplay() {
+        wchar_t file[32768]{};
+        OPENFILENAMEW dialog{};
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = window_;
+        dialog.lpstrFilter = L"麻将牌谱 (*.xml;*.mjlog)\0*.xml;*.mjlog\0所有文件\0*.*\0\0";
+        dialog.lpstrFile = file;
+        dialog.nMaxFile = 32768;
+        dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (GetOpenFileNameW(&dialog)) {
+            table_->Load(file);
+            SetView("replay");
+        } else if (CommDlgExtendedError()) throw std::runtime_error("无法打开牌谱文件选择窗口");
+    }
+
     void Application::Paint(HDC dc) {
         RECT bounds{};
         GetClientRect(window_, &bounds);
         FillRect(dc, &bounds, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
         if (view_ == "welcome" && welcome_) welcome_->Capture(dc);
         else if (view_ == "replay" && table_) table_->Capture(dc);
+        else if (view_ == "offline_lobby" && offline_lobby_) offline_lobby_->Capture(dc);
         else if (lobby_) lobby_->Capture(dc);
     }
 
@@ -416,6 +470,8 @@ namespace tenhou {
         }
         table_->ApplyPreferences(preferences, change);
         lobby_->ApplyPreferences(preferences, change);
+        if (change == PreferenceChange::Artwork && view_ == "offline_lobby")
+            offline_lobby_->ConfigureArtwork(resource_directory_);
     }
 
 
@@ -441,6 +497,10 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
     LRESULT Application::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
         if (message == WM_APP + 25) {
             SetView("welcome");
+            return 0;
+        }
+        if (message == WM_APP + 27 && view_ == "lobby" && options_.service_lobby) {
+            OpenReplay();
             return 0;
         }
         switch (message) {
@@ -494,21 +554,10 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
             case WM_COMMAND:
                 if (LOWORD(wparam) == kAudioMeter && HIWORD(wparam) == BN_CLICKED) ShowAudioMenu();
                 else if (LOWORD(wparam) == kSettings) settings_->Open();
-                else if (LOWORD(wparam) == kWelcome && view_ == "replay") SetView("welcome");
-                else if (LOWORD(wparam) == kReplay && view_ != "lobby") {
-                    wchar_t file[32768]{};
-                    OPENFILENAMEW dialog{};
-                    dialog.lStructSize = sizeof(dialog);
-                    dialog.hwndOwner = window_;
-                    dialog.lpstrFilter = L"麻将牌谱 (*.xml;*.mjlog)\0*.xml;*.mjlog\0所有文件\0*.*\0\0";
-                    dialog.lpstrFile = file;
-                    dialog.nMaxFile = 32768;
-                    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-                    if (GetOpenFileNameW(&dialog)) {
-                        table_->Load(file);
-                        SetView("replay");
-                    } else if (CommDlgExtendedError()) throw std::runtime_error("无法打开牌谱文件选择窗口");
-                }
+                else if (LOWORD(wparam) == kWelcome && (view_ == "replay" || view_ == "offline_lobby")) SetView("welcome");
+                else if (LOWORD(wparam) == kOfflineLobby && offline_lobby_ && (view_ == "welcome" || view_ == "replay"))
+                    SetView("offline_lobby");
+                else if (LOWORD(wparam) == kReplay && view_ != "lobby") OpenReplay();
                 return 0;
             case WM_CLOSE:
                 if (table_) table_->Show(false);

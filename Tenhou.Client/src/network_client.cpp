@@ -109,7 +109,8 @@ namespace tenhou {
 
         void Error(const std::string &error, bool transport = false) {
             const bool available = transport && options.recover_games &&
-                                   (((session.snapshot.game.initialized || session.snapshot.variant_active) && !session.snapshot.game.complete) || resuming);
+                                   (((session.snapshot.game.initialized || session.snapshot.variant_active) && !session.snapshot.game.complete) ||
+                                    session.snapshot.origin_lobby.has_value() || resuming);
             revision_floor = std::max({
                                  revision_floor, session.snapshot.actions.revision, session.snapshot.lobby_revision
                              }) + 1;
@@ -150,6 +151,7 @@ namespace tenhou {
             session.resume_connection = resume;
             session.match_games = options.match_games;
             session.require_native = options.native_service;
+            session.origin_lobby = options.origin_lobby;
             session.presentation = options.presentation;
             session.native_gender = options.gender;
             session.native_password = options.password;
@@ -208,7 +210,8 @@ namespace tenhou {
                 "No recoverable disconnected game");
             if (!request.recover_games || request.host != options.host || request.port != options.port ||
                 request.gender != options.gender || request.observe_games != options.observe_games || request.
-                interactive_games != options.interactive_games || request.match_games != options.match_games)
+                interactive_games != options.interactive_games || request.match_games != options.match_games ||
+                request.origin_lobby != options.origin_lobby)
                 throw std::runtime_error("Reconnect requires the same server and game mode");
             Connect(request, true);
         }
@@ -333,7 +336,8 @@ namespace tenhou {
                     if (message.tag == "PREPARE") local_prepare = true;
                     if (message.tag == "START") local_prepare = false;
                     if (accepted_event) accepted_event(message, session.snapshot);
-                    if (message.tag == "REINIT" || message.tag == "RESTORED") {
+                    if (message.tag == "REINIT" || message.tag == "RESTORED" ||
+                        (message.tag == "CHAT" && session.snapshot.origin_lobby && !session.snapshot.recovering)) {
                         resuming = false;
                         recovery_start = 0;
                     }
@@ -370,13 +374,13 @@ namespace tenhou {
             if (!Active()) return;
             const auto now = GetTickCount64();
             const auto phase = session.snapshot.phase;
-            if (session.snapshot.native_pending.empty()) native_request_start = 0;
+            if (session.snapshot.native_pending.empty() && session.snapshot.origin_pending.empty()) native_request_start = 0;
             else if (!native_request_start) native_request_start = now;
             else if (now - native_request_start >= options.handshake_ms) throw TransportFailure(
                 "Native room request confirmation timed out");
             if (resuming && recovery_start && now - recovery_start >= options.handshake_ms)
                 throw std::runtime_error("Game recovery snapshot timed out");
-            if (phase == LobbyPhase::Matching && now - phase_start >= options.matching_ms)
+            if (!options.origin_lobby && phase == LobbyPhase::Matching && now - phase_start >= options.matching_ms)
                 throw std::runtime_error("Matchmaking timed out; connect explicitly to retry");
             const bool established = phase == LobbyPhase::Lobby || phase == LobbyPhase::Game || phase ==
                                      LobbyPhase::MatchComplete || phase == LobbyPhase::Matching;
@@ -404,6 +408,11 @@ namespace tenhou {
 
         void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
             const auto replies = session.SubmitLobby(revision, command, value);
+            SendLobbyReplies(replies);
+        }
+
+        void SendLobbyReplies(const std::vector<std::string> &replies) {
+            if (replies.empty()) return;
             try {
                 Phase(session.snapshot.phase);
                 for (const auto &reply: replies) Queue(reply);
@@ -476,6 +485,10 @@ namespace tenhou {
 
     void NetworkClient::SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
         impl_->SubmitLobby(revision, command, value);
+    }
+
+    void NetworkClient::SubmitOriginLobby(const std::string &command, const std::wstring &value) {
+        impl_->SendLobbyReplies(impl_->session.SubmitOriginLobby(command, value));
     }
 
     void NetworkClient::ConfigureRoom(std::uint64_t revision, const std::map<std::string, std::string> &settings) {

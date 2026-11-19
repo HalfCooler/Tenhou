@@ -29,6 +29,17 @@ NoName 的 `token` 只是续接访客会话的提示：令牌有效时恢复原�
 
 `JOIN t="0,队列ID"` 进入快捷练习；`JOIN t="房间号,0" revision="..."` 在好友房排队。收到 `QUEUED room/type` 后等待开桌。`JOIN` 无参数取消排队；随后的 `CHAT text="%2Flobby%20房间号"` 请求大厅确认。
 
+## 自建服务大厅
+
+服务通过 `HELO caps` 中的 `origin-lobby` 宣告能力。客户端在 `CAPS` 加 `lobby="origin"` 进入重建大厅，收到 `SESSION`、`PROFILE` 后以 `CHAT lobby/epoch/rid/seated` 确认当前会场。会场用完整的 `L0000`、`L1000` 至 `L9999` 或 `C` 加八位数字表示。每次成功切厅递增当前连接的 `epoch`。
+
+- 变更请求带 `lobby/epoch/rid`，分别为来源会场、会场代次和本连接内递增的请求编号。客户端一次等待一个请求。普通切厅使用 `CHAT text="%2Flobby%20房间号"`，大会切厅使用 `CS target="Cxxxxxxxx"`。成功由同一 `rid` 的 `CHAT` 确认，拒绝通过 `RESERVATIONS` 返回。
+- `CS lobby/epoch/title/players/rule/premiumonly/joinfee/registered/blocked/start/end/now` 下发大会配置及报名资格。时间为 UTC Unix 秒，可预约区间含开始时刻，截止时刻即关闭。报名请求为 `CSREG`，以同一场次重复报名返回当前结果。费用是测试配置展示值。
+- 普通会场用 `JOIN t="房间号,玩法掩码"`，大会用 `JOIN type="玩法掩码"`。只带 `lobby/epoch/rid` 的 `JOIN` 取消全部预约。`RESERVATIONS lobby/epoch/types/rid/code` 返回当前预约集合、请求编号及拒绝原因。到期主动撤销时 `rid` 为空。
+- `LN lobby/epoch/n/j/g` 下发当前会场的十进制计数向量，长度分别为 4、113、113。当前使用 `n[0]` 连接人数、`n[2]` 预约人数、`j` 各玩法的预约人数、`g` 各玩法进行中的桌数。段位、R 值、名次、会员日期和剩余天数由 `PROFILE` 下发。
+- `UN` 后的 `GO` 带 `lobby/reservation`，明确服务选择的预约。原有 `GO type` 传牌桌呈现用的玩法位，不含段位页掩码。席位一旦提交，该玩家的其他预约同时移除，晚到的取消由已发出的 `GO` 收敛。完成对局后发 `BYE`，服务以 `CHAT` 确认返回原会场。
+- 断线时将未开桌预约移出真人队列。同一服务进程内，`CAPS resume="1"` 可恢复仍符合资格的预约，重新排到队尾。普通登录开始新的排队会话。已开桌时沿用牌桌存档和 `RESTORE/RESTORED`，登录确认中的 `seated="1"` 表示即将恢复牌桌。
+
 ## 对局
 
 立直使用 `UN/GO/INIT`、摸打/副露/和牌事件，以及既有 `D/N/REACH` 操作。GOK、STARTREADY、NEXTREADY 是幂等准备屏障；READYACK 确认提交，等待其他玩家时不再触发客户端动作超时。

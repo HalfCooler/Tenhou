@@ -50,6 +50,8 @@ dotnet publish Tenhou.Server -c Release -r win-x64 --self-contained true -o buil
 
 快捷练习为单真人加人机。好友房满员立即开桌；未满员则从最早排队者开始等待 `matchWaitMs` 后补人机。队列不跨服务重启恢复。
 
+客户端以 `--service-lobby` 启动并使用第三方服务器登录时，可进入原版布局的自建服务大厅。排位、大会和编号会场分别按完整会场 ID 和玩法掩码排队，满三位或四位真人才开桌。`contests` 可配置大会，字段及本地演示命令见 [自建服务闭环](../Tenhou.Client/ORIGIN-REBUILD.md#自建服务闭环交付)。
+
 ## 数据
 
 - `state.json`：账号、房间、恢复会话、进行中的对局和结算标记。

@@ -14,6 +14,42 @@ namespace tenhou {
     void RunTextTableChecks(HWND parent, const std::filesystem::path &resources);
     // Exercise the production receive/display boundary with packet bursts and a stalled UI timer.
     struct LobbyPresentationCheck {
+        static void RecoveredContestReturn(HWND parent, const std::filesystem::path &resources) {
+            LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
+            view.EnableServiceLobby([] {}, [] {});
+            view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
+            LobbySession session;
+            session.require_native = session.origin_lobby = session.interactive_games = session.match_games = true;
+            session.Connected("NoName", 'M');
+            auto receive = [&](const char *frame) {
+                const auto message = ParseNetworkMessage(frame);
+                session.Receive(message);
+                const auto &snapshot = session.snapshot;
+                const_cast<LobbySnapshot &>(view.client_->snapshot()) = snapshot;
+                view.OnGameEvent(message, snapshot);
+                view.Update(snapshot);
+            };
+            receive("<HELO uname=\"TENHOU-PLATFORM\" version=\"1\" caps=\"origin-lobby\" />");
+            receive("<CHAT lobby=\"C00112233\" epoch=\"1\" seated=\"1\" />");
+            receive("<RESTORE />");
+            receive("<UN n0=\"A\" n1=\"B\" n2=\"C\" n3=\"D\" sx=\"MMMM\" />");
+            receive("<GO type=\"9\" lobby=\"C00112233\" reservation=\"9\" table=\"contest-check\" />");
+            receive("<INIT seed=\"7,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"3\" hai=\"0,4,8,12,16,20,24,28,32,36,40,44,48\" />");
+            receive("<RYUUKYOKU sc=\"250,0,250,0,250,0,250,0\" owari=\"250,20,250,10,250,-10,250,-20\" />");
+            receive("<PROF />");
+            receive("<RESTORED />");
+
+            const HWND settlement = GetDlgItem(view.window_, 5400);
+            if (view.displaying_ || !view.show_results_ || !IsWindowVisible(settlement))
+                throw std::runtime_error("Recovered contest result did not use the live snapshot");
+            session.SubmitLobby(session.snapshot.lobby_revision, "return");
+            receive("<CHAT lobby=\"C00112233\" epoch=\"1\" seated=\"0\" />");
+            if (session.snapshot.phase != LobbyPhase::Lobby || session.snapshot.last_settlement.receipts.empty() ||
+                view.show_results_ || IsWindowVisible(settlement))
+                throw std::runtime_error("The recovered contest result stayed visible after return");
+            view.Disconnect();
+        }
+
         static void ProtocolOpening(HWND parent, const std::filesystem::path &resources, const std::string &rule) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
@@ -545,6 +581,7 @@ int main(int argc, char **argv) {
             -32000, -32000, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Check(parent != nullptr, "Cannot create test parent"); ShowWindow(parent, SW_SHOWNOACTIVATE);
         Settlement(parent); SettlementPresentationCheck::Run(parent); Guobiao(parent, argv[1]);
+        LobbyPresentationCheck::RecoveredContestReturn(parent, argv[1]);
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "sichuan-bloodbattle");
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
         LobbyPresentationCheck::Run(parent, argv[1]);

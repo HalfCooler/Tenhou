@@ -32,13 +32,22 @@ public sealed partial class Platform
                 table.Record.Humans = waiting.Take(humans).Select(s => s.Token).ToList();
                 table.Record.Ranked = group.Key.Room != 0 && humans == players && table.Presentation.RankCategory.StartsWith("riichi/", StringComparison.Ordinal)
                     && table.Record.Humans.All(t => sessions[t].Account.Length > 0);
-                foreach (string token in table.Record.Humans)
-                { sessions[token].Table = table.Record.Id; presence[token].Queued = false; presence[token].Exited = false; }
-                waiting.RemoveRange(0, humans); tables.Add(table.Record.Id, table); Save();
-                store.Log("table_created", humans);
-                foreach (string token in table.Record.Humans) Identity(table, token);
+                waiting.RemoveRange(0, humans);
+                CommitTable(table);
             }
         }
+    }
+    private void CommitTable(Table table)
+    {
+        foreach (string token in table.Record.Humans)
+        {
+            sessions[token].Table = table.Record.Id;
+            Presence current = presence[token];
+            current.Queued = false; current.Exited = false; current.Reservations.Clear();
+        }
+        tables.Add(table.Record.Id, table); Save();
+        store.Log("table_created", table.Record.Humans.Count);
+        foreach (string token in table.Record.Humans) Identity(table, token);
     }
     private string[] Names(Table table) => Enumerable.Range(0, 4).Select(s => s >= table.Match.PlayerCount ? ""
         : s < table.Record.Humans.Count ? Name(table.Record.Humans[s]) : "人机" + (s + 1)).ToArray();
@@ -61,6 +70,11 @@ public sealed partial class Platform
         Send(token, Wire.Encode("UN", attributes));
         Dictionary<string, string> go = table.Presentation.GameInfo;
         go["table"] = table.Record.Id; go["ranked"] = table.Record.Ranked ? "1" : "0"; go["exit"] = table.Record.Ranked ? "0" : "1";
+        if (table.Record.OriginLobby.Length > 0)
+        {
+            go["lobby"] = table.Record.OriginLobby;
+            go["reservation"] = table.Record.ReservationType.ToString(CultureInfo.InvariantCulture);
+        }
         if (table.Presentation.GameTag == "VGO")
         {
             go["seat"] = viewer.ToString(CultureInfo.InvariantCulture);
@@ -207,6 +221,7 @@ public sealed partial class Platform
             TickTable(table);
         }
         Matchmake();
+        TickOrigin();
         if (Now - checkpoint >= 1000) { if (tables.Count > 0) Save(); checkpoint = Now; }
     }
     private void TickTable(Table table)

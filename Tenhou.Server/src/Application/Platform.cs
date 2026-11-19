@@ -20,6 +20,9 @@ public sealed partial class Platform
         public bool Queued, Presentation, Exited;
         public int Queue;
         public long QueuedAt, Order;
+        public bool Origin;
+        public int LobbyEpoch;
+        public Dictionary<int, long> Reservations { get; } = [];
     }
     private sealed class Table
     {
@@ -49,12 +52,19 @@ public sealed partial class Platform
     private long order, checkpoint;
     private static long Now => Environment.TickCount64;
     private static string Token() => Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
-    public Platform(ServerSettings settings, JsonStore store, RuleRegistry rules, PresentationRegistry presentations)
+    public Platform(ServerSettings settings, JsonStore store, RuleRegistry rules, PresentationRegistry presentations,
+        TimeProvider? originClock = null)
     {
         this.settings = settings; this.store = store; this.rules = rules; this.presentations = presentations;
+        this.originClock = originClock ?? TimeProvider.System;
         queues = settings.Queues.Select(q => new QueueDefinition(q.Id, q.Name, q.Rule, new(rules.Get(q.Rule).Normalize(q.Options))))
             .ToDictionary(q => q.Id);
         if (queues.Count > 64 || queues.Keys.Any(k => k <= 0)) throw new InvalidDataException("Invalid queue catalog");
+        contests = settings.Contests.ToDictionary(c => c.Id, StringComparer.Ordinal);
+        if (contests.Count > 64 || contests.Values.Any(c => !IsContest(c.Id) || string.IsNullOrWhiteSpace(c.Title)
+            || c.Title.Length > 80 || c.Title.Any(char.IsControl) || !OriginTypes.ContainsKey(c.Type)
+            || (c.Type & TierBits) != 0 || c.EndsAt <= c.StartsAt || c.JoinFee is < 0 or > 1000000))
+            throw new InvalidDataException("Invalid contest configuration");
         Load(); checkpoint = Now;
         store.Log("ready", tables.Count);
     }
@@ -71,13 +81,15 @@ public sealed partial class Platform
             throw new InvalidDataException("Unsupported/oversized state");
         foreach (Account account in state.Accounts)
         {
-            if (Account.NormalizeId(account.Id) != account.Id || account.Ranks.Length != 2) throw new InvalidDataException("Invalid account");
+            if (Account.NormalizeId(account.Id) != account.Id || account.Ranks.Length != 2
+                || account.Ranks.Any(r => r.Level is < 0 or > 18)) throw new InvalidDataException("Invalid account");
             accounts.Add(account.Id, account);
         }
         foreach (Session session in state.Sessions)
         {
             if (session.Token.Length != 64 || session.Token.Any(c => !char.IsAsciiHexDigit(c))
-                || (session.Account.Length > 0 && !accounts.ContainsKey(session.Account))) throw new InvalidDataException("Invalid session");
+                || !IsOriginLobby(session.OriginLobby) || (session.Account.Length > 0 && !accounts.ContainsKey(session.Account)))
+                throw new InvalidDataException("Invalid session");
             sessions.Add(session.Token, session); presence.Add(session.Token, new());
         }
         foreach (Room room in state.Rooms)
@@ -91,19 +103,23 @@ public sealed partial class Platform
             if (record.Id.Length != 32 || record.Id.Any(c => !char.IsAsciiHexDigit(c)) || record.Commands.Count > 100000
                 || record.Stage is not ("gok" or "prepare" or "deal" or "play" or "next" or "complete")
                 || record.Humans.Count == 0 || record.Humans.Distinct().Count() != record.Humans.Count
+                || (record.OriginLobby.Length > 0 && (!IsOriginLobby(record.OriginLobby) || !OriginTypes.ContainsKey(record.ReservationType)))
                 || record.Remaining.Length != 4 || record.Elapsed.Length != 4 || record.Reserve.Length != 4 || record.Votes.Length != 4)
                 throw new InvalidDataException("Invalid table");
             Table table = CreateTable(record);
-            if (record.Humans.Count > table.Match.PlayerCount) throw new InvalidDataException("Too many seats");
+            if (record.Humans.Count > table.Match.PlayerCount ||
+                (record.OriginLobby.Length > 0 && record.Humans.Count != table.Match.PlayerCount))
+                throw new InvalidDataException("Invalid seat count");
             foreach (MatchCommand command in record.Commands) Replay(table.Match, command);
-            table.Match.Validate(); table.Cursor = table.Match.Events.Count; table.Paused = true; table.PausedAt = Now;
+            table.Match.Validate(); table.Cursor = table.Match.Events.Count; table.Paused = !table.Match.IsComplete; table.PausedAt = Now;
             if (record.Stage == "deal") record.Stage = "play";
             for (int s = 0; s < 4; ++s)
                 if (record.Remaining[s] >= 0)
                 { table.Deadlines[s] = table.PausedAt + record.Remaining[s]; table.Started[s] = table.PausedAt; table.Offers[s] = Offer(table, s); }
             tables.Add(record.Id, table);
             foreach (string token in record.Humans)
-                if (!sessions.TryGetValue(token, out Session? session) || session.Table != record.Id) throw new InvalidDataException("Invalid seat/session reference");
+                if (!sessions.TryGetValue(token, out Session? session) || (session.Table != record.Id && !table.Match.IsComplete))
+                    throw new InvalidDataException("Invalid seat/session reference");
         }
         foreach (Session session in sessions.Values)
         {
@@ -136,6 +152,7 @@ public sealed partial class Platform
             TableRecord r = table.Record;
             records.Add(new() { Id = r.Id, Rule = r.Rule, RuleVersion = r.RuleVersion, Options = r.Options, Humans = r.Humans, Commands = r.Commands,
                 Stage = r.Stage, Ranked = r.Ranked, Settled = r.Settled, Reserve = r.Reserve, Remaining = r.Remaining,
+                OriginLobby = r.OriginLobby, ReservationType = r.ReservationType,
                 Elapsed = Enumerable.Range(0, 4).Select(s => r.Elapsed[s] + (table.Started[s] == 0 ? 0 : (int)((table.Paused ? table.PausedAt : Now) - table.Started[s]))).ToArray(),
                 VoteRevision = r.VoteRevision, VoteUntil = r.VoteUntil, Votes = r.Votes });
         }
@@ -149,7 +166,7 @@ public sealed partial class Platform
         if (peer.Token.Length == 0 || !presence.TryGetValue(peer.Token, out Presence? current) || current.Peer != peer) return;
         current.Peer = null; current.Queued = false;
         Session session = sessions[peer.Token];
-        if (session.Table.Length > 0 && tables.TryGetValue(session.Table, out Table? table)) Pause(table);
+        if (session.Table.Length > 0 && tables.TryGetValue(session.Table, out Table? table) && !table.Match.IsComplete) Pause(table);
         Save();
         store.Log("disconnected", connections.Count);
     }
@@ -170,7 +187,7 @@ public sealed partial class Platform
             if (message.Tag == "HELO" && !peer.Hello && peer.Token.Length == 0)
             {
                 peer.Login = message.Get("name") == "NoName" ? "NoName" : Account.NormalizeId(message.Get("name"));
-                peer.Hello = true; peer.Send(Wire.Encode("HELO", ("uname", "TENHOU-PLATFORM"), ("version", "1"), ("caps", "catalog,rooms,queue,recovery,presentation"))); return;
+                peer.Hello = true; peer.Send(Wire.Encode("HELO", ("uname", "TENHOU-PLATFORM"), ("version", "1"), ("caps", "catalog,rooms,queue,recovery,presentation,origin-lobby"))); return;
             }
             if (message.Tag == "CAPS" && peer.Hello && peer.Token.Length == 0) { Authenticate(peer, message); return; }
             if (peer.Token.Length == 0) throw new ArgumentException("Authentication required");
@@ -216,10 +233,25 @@ public sealed partial class Platform
         }
         Presence current = presence[token];
         if (current.Peer is not null) throw new ArgumentException("该账号已在其他窗口登录");
+        Session session = sessions[token];
+        bool origin = message.Get("lobby") == "origin";
+        if (session.Table.Length > 0 && origin != (tables[session.Table].Record.OriginLobby.Length > 0))
+            throw new ArgumentException("请使用开桌时的大厅模式恢复对局");
+        if (!origin || !current.Origin || message.Get("resume") != "1")
+            current.Reservations.Clear();
+        else
+        {
+            PruneReservations(session, originClock.GetUtcNow());
+            foreach (int type in current.Reservations.Keys.ToArray()) current.Reservations[type] = ++order;
+        }
+        current.Origin = origin; current.LobbyEpoch = 1;
+        if (origin && session.Table.Length == 0 && IsContest(session.OriginLobby) && !contests.ContainsKey(session.OriginLobby))
+            session.OriginLobby = OriginRankedLobby;
         peer.Token = token; peer.Presentation = message.Get("presentation") == "1";
         current.Peer = peer; current.Presentation = peer.Presentation; current.Exited = false;
         Save(); peer.Send(Wire.Encode("SESSION", ("token", token), ("rid", sessions[token].LastRequest)));
-        Catalog(peer); Lobby(sessions[token]);
+        if (!origin) Catalog(peer);
+        Lobby(session);
         if (sessions[token].Table.Length > 0)
         { Table table = tables[sessions[token].Table]; Restore(table, token); Resume(table); }
     }
@@ -258,6 +290,16 @@ public sealed partial class Platform
                 attrs["grade" + n] = rank.Name; attrs["points" + n] = rank.Points.ToString(CultureInfo.InvariantCulture);
                 attrs["target" + n] = rank.Target.ToString(CultureInfo.InvariantCulture); attrs["games" + n] = rank.Games.ToString(CultureInfo.InvariantCulture);
                 attrs["rating" + n] = rank.Rating.ToString(CultureInfo.InvariantCulture);
+                if (presence[session.Token].Origin)
+                {
+                    attrs["dan" + n] = rank.Level.ToString(CultureInfo.InvariantCulture);
+                    attrs["places" + n] = string.Join(',', rank.Places);
+                }
+            }
+            if (presence[session.Token].Origin)
+            {
+                attrs["expiredays"] = MembershipDays(account, originClock.GetUtcNow()).ToString(CultureInfo.InvariantCulture);
+                attrs["expire"] = account.MembershipUntil?.ToString("yyyy/MM/dd", CultureInfo.InvariantCulture) ?? "";
             }
         }
         Send(session.Token, Wire.Encode("PROFILE", attrs));
@@ -265,6 +307,7 @@ public sealed partial class Platform
     private string Name(string token) => sessions[token].Account.Length == 0 ? "NoName" : accounts[sessions[token].Account].Nickname;
     private void Lobby(Session session, string rid = "")
     {
+        if (presence[session.Token].Origin) { OriginSnapshot(session, rid); return; }
         Send(session.Token, Wire.Encode("CS", ("lobby", "L" + session.Room.ToString("D4", CultureInfo.InvariantCulture)), ("rid", rid)));
         if (session.Room != 0) RoomSnapshot(session, rid); Profile(session);
     }

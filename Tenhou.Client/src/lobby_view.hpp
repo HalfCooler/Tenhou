@@ -18,6 +18,7 @@
 
 namespace tenhou {
     class MatchmakingView;
+    class OfflineLobbyView;
     enum class PreferenceChange;
 
     class LobbyView {
@@ -27,6 +28,7 @@ namespace tenhou {
         ~LobbyView();
 
         void Login(const ConnectionOptions &options);
+        void EnableServiceLobby(std::function<void()> settings, std::function<void()> replay);
 
         bool LoggedIn() const;
 
@@ -37,6 +39,8 @@ namespace tenhou {
         void Show(bool visible);
 
         void SetWelcomeMusic(bool visible, bool official);
+
+        void SetOfflineLobbyMusic(std::optional<bool> contest);
 
         void Resize(int width, int height);
 
@@ -194,6 +198,7 @@ namespace tenhou {
         BackgroundMusic lobby_music_;
         std::wstring lobby_music_key_;
         bool music_preview_ = false, welcome_music_ = false, official_welcome_ = false, third_party_music_ = false;
+        std::optional<bool> offline_lobby_music_;
         ReplaySoundBank sounds_;
         bool sound_enabled_ = true, sound_loaded_ = false;
         bool effects_muted_ = false, music_muted_ = false;
@@ -215,6 +220,7 @@ namespace tenhou {
         std::function<void(const LobbySnapshot &)> connection_changed_;
         OnlineTable table_;
         std::unique_ptr<MatchmakingView> matching_;
+        std::unique_ptr<OfflineLobbyView> service_lobby_;
         std::unique_ptr<SettlementView> settlement_view_;
         std::unique_ptr<MatchIntroView> match_intro_;
         std::unique_ptr<ActionSelectionView> action_view_;

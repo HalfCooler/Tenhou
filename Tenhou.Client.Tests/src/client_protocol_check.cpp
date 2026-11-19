@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "network_protocol.hpp"
+#include "game_seats.hpp"
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -8,7 +9,10 @@
 int main(int argc, char **argv) {
     SOCKET socket = INVALID_SOCKET;
     try {
-        if (argc < 2 || argc > 3) throw std::runtime_error("Usage: tenhou_protocol_check PORT [QUEUE_ID]");
+        const bool service = argc == 5 && std::string(argv[2]) == "--service";
+        const bool service_return = argc == 4 && std::string(argv[2]) == "--service-return";
+        if ((argc < 2 || argc > 3) && !service && !service_return)
+            throw std::runtime_error("Usage: tenhou_protocol_check PORT [QUEUE_ID | --service ACCOUNT TYPE | --service-return ACCOUNT]");
         const unsigned queue_id = argc == 3 ? static_cast<unsigned>(std::stoul(argv[2])) : 101u;
         WSADATA data{};
         if (WSAStartup(MAKEWORD(2, 2), &data)) return 1;
@@ -32,9 +36,15 @@ int main(int argc, char **argv) {
         };
         tenhou::LobbySession session;
         session.require_native = session.interactive_games = session.match_games = session.recover_games = true;
-        send(session.Connected("NoName", 'M'));
+        session.origin_lobby = service || service_return;
+        session.native_register = service;
+        if (service || service_return) {
+            session.native_password = "test-password";
+            session.native_nickname = argv[3];
+        }
+        send(session.Connected(session.origin_lobby ? argv[3] : "NoName", 'M'));
         tenhou::NetworkFramer framer;
-        bool requested = false;
+        bool requested = false, returning = false;
         unsigned actions = 0;
         std::string last;
         while (true) {
@@ -45,13 +55,42 @@ int main(int argc, char **argv) {
                 try { send(session.Receive(message)); }
                 catch (const std::exception &error) { throw std::runtime_error(last + ": " + error.what()); }
                 const auto &s = session.snapshot;
+                if (service && s.origin_lobby && s.phase == tenhou::LobbyPhase::Lobby && !requested) {
+                    send(session.SubmitOriginLobby("join", tenhou::NetworkWide(argv[4])));
+                    requested = true;
+                }
+                if (service && s.game.initialized) {
+                    const auto type = static_cast<unsigned>(std::stoul(argv[4]));
+                    if (s.match_type != type || s.game.type != (type & ~0xA0u) || !s.ranked ||
+                        tenhou::SeatCount(s.game.seat_mask) != ((type & 16) ? 3 : 4) ||
+                        s.game.players[0].name != argv[3] ||
+                        std::any_of(s.game.players.begin(), s.game.players.end(), [](const auto &player) {
+                            return player.name.rfind("人机", 0) == 0;
+                        }) || s.game.players[0].known_hand.size() != 13 || s.origin_lobby->reservations())
+                        throw std::runtime_error("Ranked handoff mismatch");
+                    std::cout << "PASS native ranked handoff " << type << " for " << argv[3] << '\n';
+                    closesocket(socket); WSACleanup(); return 0;
+                }
                 if (s.catalog_ready && s.phase == tenhou::LobbyPhase::Lobby && !requested) {
                     if (s.queues.empty() || s.rules.empty()) throw std::runtime_error("Empty catalog");
                     send(session.SubmitLobby(s.lobby_revision, "match", queue_id)); requested = true;
                 }
                 if (s.phase == tenhou::LobbyPhase::MatchComplete) {
+                    if (s.recovering) continue;
+                    if (service_return) {
+                        send(session.SubmitLobby(s.lobby_revision, "return"));
+                        returning = true;
+                        continue;
+                    }
                     send(session.SubmitLobby(s.lobby_revision, "return"));
                     std::cout << "PASS native client queue " << queue_id << " and full match: " << actions << " actions\n";
+                    closesocket(socket); WSACleanup(); return 0;
+                }
+                if (returning && s.phase == tenhou::LobbyPhase::Lobby) {
+                    if (!s.origin_lobby || s.lobby != "C00112233" || s.game.started || s.exit_table.size() ||
+                        s.origin_lobby->reservations())
+                        throw std::runtime_error("Completed table did not return to its contest");
+                    std::cout << "PASS native completed-table recovery and contest return\n";
                     closesocket(socket); WSACleanup(); return 0;
                 }
                 if (s.phase != tenhou::LobbyPhase::Game || !s.actions.pending.empty() || s.actions.choices.empty()) continue;

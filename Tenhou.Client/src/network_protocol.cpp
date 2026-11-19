@@ -304,7 +304,7 @@ namespace tenhou {
         snapshot.recovering = resume_connection;
         snapshot.matchmaking = match_games;
         snapshot.lobby_revision = revision;
-        room_ = 0;
+        room_ = origin_epoch_ = origin_request_ = 0;
         return {"<HELO name=\"" + Escape(identity) + "\" sx=\"" + gender + "\" tid=\"w0\" />"};
     }
 
@@ -332,6 +332,7 @@ namespace tenhou {
         if (tag == "BYE" && !message.attributes.count("who")) Fail("Server ended session (BYE)");
         const auto phase = snapshot.phase;
         if (snapshot.native_service) {
+            if (origin_lobby && ApplyOriginLobby(message)) return {};
             if (tag == "READYACK") {
                 // STARTREADY can be acknowledged after the initial VSTATE offers.
                 // Only NEXTREADY consumes an action; opening acknowledgements do not.
@@ -648,7 +649,11 @@ namespace tenhou {
                 if (tag == "GO") {
                     if (phase != LobbyPhase::Matching && phase != LobbyPhase::Cancelling) Fail(
                         "GO outside an active match request");
-                    if (Integer(Attribute(message, "type")) != snapshot.match_type) Fail(
+                    if (snapshot.origin_lobby) {
+                        const auto type = Integer(Attribute(message, "reservation"));
+                        if (Attribute(message, "lobby") != snapshot.lobby || !snapshot.origin_lobby->Reserved(type))
+                            Fail("GO did not select a confirmed reservation");
+                    } else if (Integer(Attribute(message, "type")) != snapshot.match_type) Fail(
                         "GO rule differs from requested match");
                     snapshot.target_lobby.clear();
                     ++snapshot.lobby_revision;
@@ -679,6 +684,17 @@ namespace tenhou {
             auto game_message = message;
             if (snapshot.native_service) game_message.attributes.erase("window");
             if (snapshot.native_service && tag == "GO") {
+                if (snapshot.origin_lobby) {
+                    const auto type = Integer(Attribute(message, "reservation"));
+                    if (Attribute(message, "lobby") != snapshot.lobby ||
+                        (type & ~0xA0u) != Integer(Attribute(message, "type")) ||
+                        Attribute(message, "open_hands") == "1")
+                        Fail("GO rule differs from the lobby reservation");
+                    snapshot.origin_lobby->Cancel();
+                    snapshot.origin_pending.clear();
+                    snapshot.origin_error.clear();
+                    snapshot.match_type = type;
+                }
                 snapshot.exit_table = Attribute(message, "table");
                 snapshot.exit_allowed = Attribute(message, "exit") == "1";
                 snapshot.ranked = Attribute(message, "ranked") == "1";
@@ -733,6 +749,8 @@ namespace tenhou {
             if (snapshot.identity.size() > 1024) Fail("Server identity exceeds limit");
             snapshot.phase = LobbyPhase::AwaitLobby;
             if (Attribute(message, "uname") == "TENHOU-PLATFORM" && Attribute(message, "version") == "1") {
+                if (origin_lobby && ("," + Attribute(message, "caps") + ",").find(",origin-lobby,") == std::string::npos)
+                    Fail("自建服务器未开放重建大厅协议");
                 snapshot.native_service = true;
                 std::string credentials;
                 if (!native_password.empty() || native_register)
@@ -743,7 +761,9 @@ namespace tenhou {
                 native_register = false;
                 return {
                     "<CAPS version=\"1\" token=\"" + Escape(native_token) + "\" sx=\"" + native_gender +
-                    "\" presentation=\"" + (presentation ? "1" : "0") + "\"" + credentials + " />"
+                    "\" presentation=\"" + (presentation ? "1" : "0") + "\"" +
+                    (origin_lobby ? " lobby=\"origin\"" : "") +
+                    (origin_lobby && resume_connection ? " resume=\"1\"" : "") + credentials + " />"
                 };
             }
             if (require_native) Fail("The configured endpoint is not a Tenhou platform service");
@@ -789,6 +809,178 @@ namespace tenhou {
             }
         }
         return {}; // Unknown extensions never advance the session.
+    }
+
+    namespace {
+        std::vector<int> DecimalList(const std::string &text, std::size_t limit) {
+            std::vector<int> values;
+            if (text.empty()) return values;
+            std::istringstream fields(text);
+            for (std::string field; std::getline(fields, field, ',');) {
+                const auto value = Integer(field);
+                if (value > 100000000 || values.size() == limit) Fail("Invalid self-hosted lobby list");
+                values.push_back(static_cast<int>(value));
+            }
+            if (text.back() == ',') Fail("Incomplete self-hosted lobby list");
+            return values;
+        }
+
+        OfflineLobbyProfile ServiceProfile(const NetworkMessage &message) {
+            OfflineLobbyProfile profile{};
+            profile.name = NetworkWide(Attribute(message, "nickname"));
+            profile.membership_expiry = NetworkWide(Attribute(message, "expire"));
+            profile.ranked_allowed = !Attribute(message, "account").empty();
+            const auto number = [&](const std::string &key) {
+                const auto value = Attribute(message, key);
+                return value.empty() ? 0 : static_cast<int>(Integer(value.substr(0, value.find('.'))));
+            };
+            profile.membership_days = number("expiredays");
+            profile.light_options = number("opt");
+            for (int i = 0; i < 2; ++i) {
+                const std::string n = i ? "3" : "4";
+                auto &rank = i ? profile.three : profile.four;
+                auto &stats = profile.lifetime[i];
+                rank = {number("dan" + n), number("rating" + n)};
+                stats.games = number("games" + n);
+                stats.points = number("points" + n);
+                stats.next_points = number("target" + n);
+                const auto places = DecimalList(Attribute(message, "places" + n), 4);
+                if (!stats.games || places.size() != 4) continue;
+                std::int64_t total_places = 0;
+                for (int p = 0; p < 4; ++p) {
+                    total_places += (p + 1) * static_cast<std::int64_t>(places[p]);
+                    stats.place_per_mille[p] = static_cast<int>(1000LL * places[p] / stats.games);
+                }
+                stats.average_place_hundredths = static_cast<int>(100 * total_places / stats.games);
+            }
+            return profile;
+        }
+    }
+
+    void LobbySession::ReturnToOriginLobby() {
+        const auto revision = snapshot.actions.revision + 1;
+        game_ = {};
+        actions_ = {};
+        actions_.snapshot.enabled = interactive_games;
+        actions_.snapshot.revision = revision;
+        snapshot.game = {};
+        snapshot.actions = actions_.snapshot;
+        snapshot.exit_table.clear();
+        snapshot.exit_allowed = snapshot.table_paused = snapshot.recovering = false;
+        snapshot.native_window = 0;
+        snapshot.target_lobby.clear();
+        snapshot.phase = LobbyPhase::Lobby;
+        ++snapshot.lobby_revision;
+    }
+
+    bool LobbySession::ApplyOriginLobby(const NetworkMessage &message) {
+        const auto &tag = message.tag;
+        if (tag == "PROFILE") {
+            snapshot.profile = message.attributes;
+            if (snapshot.origin_lobby) snapshot.origin_lobby->profile = ServiceProfile(message);
+            return true;
+        }
+        if (tag != "CHAT" && tag != "CS" && tag != "LN" && tag != "RESERVATIONS") return false;
+        if (!message.attributes.count("epoch")) return true;
+        const auto epoch = Integer(Attribute(message, "epoch"));
+        const auto id = Attribute(message, "lobby");
+        const auto rid = Attribute(message, "rid");
+        const auto phase = snapshot.phase;
+        const bool receipt = !snapshot.origin_pending.empty() && rid == std::to_string(origin_request_);
+        if (tag == "CHAT") {
+            const auto room = LobbyNumber(NetworkWide(id));
+            if (!room || NetworkUtf8(*room) != id) Fail("Invalid self-hosted lobby identifier");
+            if (phase == LobbyPhase::AwaitLobby && origin_epoch_ == 0 && epoch == 1 && rid.empty()) {
+                snapshot.origin_lobby.emplace(ServiceProfile({"PROFILE", snapshot.profile}));
+                snapshot.recovering = Attribute(message, "seated") == "1";
+                if (!snapshot.recovering) resume_connection = false;
+            } else if (phase == LobbyPhase::ChangingLobby && receipt && epoch == origin_epoch_ + 1 &&
+                       id == snapshot.target_lobby) {
+                snapshot.target_lobby.clear();
+            } else if (phase == LobbyPhase::AwaitReturn && epoch == origin_epoch_ && id == snapshot.target_lobby && rid.empty()) {
+                ReturnToOriginLobby();
+            } else if (phase == LobbyPhase::Lobby && epoch == origin_epoch_ && id == snapshot.lobby && rid.empty()) {
+                return true;
+            } else return true;
+            auto profile = snapshot.origin_lobby->profile;
+            snapshot.origin_lobby.emplace(std::move(profile));
+            snapshot.origin_lobby->Enter(*room);
+            snapshot.lobby = id;
+            origin_epoch_ = epoch;
+            snapshot.origin_pending.clear();
+            snapshot.origin_error.clear();
+            snapshot.origin_clock = snapshot.origin_clock_at = 0;
+            snapshot.phase = LobbyPhase::Lobby;
+            ++snapshot.lobby_revision;
+            return true;
+        }
+        if (epoch != origin_epoch_ || id != snapshot.lobby || !snapshot.origin_lobby ||
+            (phase != LobbyPhase::Lobby && phase != LobbyPhase::Matching && phase != LobbyPhase::Cancelling &&
+             phase != LobbyPhase::ChangingLobby)) return true;
+        auto &lobby = *snapshot.origin_lobby;
+        if (tag == "CS") {
+            if (!lobby.contest()) return true;
+            const auto number = [&](const char *key) { return Integer(Attribute(message, key)); };
+            const auto players = number("players"), type = number("rule"), start = number("start"), end = number("end");
+            if ((players != 3 && players != 4) || end <= start) Fail("Invalid self-hosted contest");
+            lobby.SetContest(lobby.room(), {NetworkWide(Attribute(message, "title")), players, type, number("joinfee"),
+                number("premiumonly") == 1, number("registered") == 1, number("blocked") == 1, start, end});
+            snapshot.origin_clock = number("now");
+            snapshot.origin_clock_at = GetTickCount64();
+        } else if (tag == "LN") {
+            const auto n = DecimalList(Attribute(message, "n"), 4);
+            const auto j = DecimalList(Attribute(message, "j"), 113);
+            const auto g = DecimalList(Attribute(message, "g"), 113);
+            OfflineLobbyCounts counts;
+            if (n.size() != counts.totals.size() || j.size() != counts.waiting.size() ||
+                g.size() != counts.playing.size()) Fail("Invalid self-hosted lobby counts");
+            std::copy(n.begin(), n.end(), counts.totals.begin());
+            std::copy(j.begin(), j.end(), counts.waiting.begin());
+            std::copy(g.begin(), g.end(), counts.playing.begin());
+            lobby.SetCounts(lobby.room(), counts);
+        } else if (rid.empty() || receipt) {
+            const auto types = DecimalList(Attribute(message, "types"), 48);
+            lobby.SetReservations(types);
+            snapshot.origin_error = Attribute(message, "code");
+            if (receipt) {
+                lobby.DeclineMove();
+                snapshot.origin_pending.clear();
+                snapshot.target_lobby.clear();
+            }
+            if (snapshot.origin_pending.empty())
+                snapshot.phase = lobby.reservations() ? LobbyPhase::Matching : LobbyPhase::Lobby;
+        }
+        return true;
+    }
+
+    std::vector<std::string> LobbySession::SubmitOriginLobby(const std::string &command, const std::wstring &value) {
+        if (!snapshot.origin_lobby || !snapshot.origin_pending.empty() ||
+            (snapshot.phase != LobbyPhase::Lobby && snapshot.phase != LobbyPhase::Matching) || snapshot.recovering)
+            return {};
+        auto &lobby = *snapshot.origin_lobby;
+        std::string wire;
+        if (command == "change") {
+            if (!lobby.RequestMove(value)) return {};
+            snapshot.target_lobby = NetworkUtf8(*lobby.pending());
+            const auto &target = snapshot.target_lobby;
+            wire = target.front() == 'C' ? "<CS target=\"" + target + "\"" :
+                "<CHAT text=\"%2Flobby%20" + std::to_string(Integer(target.substr(1))) + "\"";
+            snapshot.phase = LobbyPhase::ChangingLobby;
+        } else if (command == "join") {
+            const auto type = Integer(NetworkUtf8(value));
+            wire = lobby.contest() ? "<JOIN type=\"" + std::to_string(type) + "\"" :
+                "<JOIN t=\"" + std::to_string(Integer(snapshot.lobby.substr(1))) + "," + std::to_string(type) + "\"";
+            snapshot.phase = LobbyPhase::Matching;
+        } else if (command == "cancel" && lobby.reservations()) {
+            wire = "<JOIN";
+            snapshot.phase = LobbyPhase::Cancelling;
+        } else if (command == "register" && lobby.contest()) {
+            wire = "<CSREG";
+        } else return {};
+        snapshot.origin_pending = command;
+        snapshot.origin_error.clear();
+        return {wire + " lobby=\"" + snapshot.lobby + "\" epoch=\"" + std::to_string(origin_epoch_) +
+            "\" rid=\"" + std::to_string(++origin_request_) + "\" />"};
     }
 
     std::vector<std::string> LobbySession::SubmitLobby(std::uint64_t revision, const std::string &command,
@@ -851,9 +1043,14 @@ namespace tenhou {
             snapshot.phase = LobbyPhase::Cancelling;
         } else if (command == "return") {
             if (snapshot.phase != LobbyPhase::MatchComplete || !snapshot.game.complete) Fail("Match is not complete");
-            if (snapshot.lobby != roomName(room_)) Fail("Return requires a confirmed supported lobby");
-            replies = {"<BYE />", change(room_)};
-            snapshot.target_lobby = roomName(room_);
+            if (snapshot.origin_lobby) {
+                replies = {"<BYE />"};
+                snapshot.target_lobby = snapshot.lobby;
+            } else {
+                if (snapshot.lobby != roomName(room_)) Fail("Return requires a confirmed supported lobby");
+                replies = {"<BYE />", change(room_)};
+                snapshot.target_lobby = roomName(room_);
+            }
             snapshot.phase = LobbyPhase::AwaitReturn;
             snapshot.variant_active = false;
             snapshot.variant_state.clear();

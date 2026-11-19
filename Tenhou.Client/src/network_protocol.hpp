@@ -2,6 +2,7 @@
 #include "online_actions.hpp"
 #include "variant_state.hpp"
 #include "matchmaking.hpp"
+#include "offline_lobby.hpp"
 #include <cstdint>
 #include <map>
 #include <string>
@@ -56,6 +57,9 @@ namespace tenhou {
         bool native_service = false, queue_confirmed = false, table_paused = false;
         std::string native_token, native_pending, native_error;
         std::map<std::string, std::string> profile;
+        std::optional<OfflineLobby> origin_lobby;
+        std::string origin_pending, origin_error;
+        std::uint64_t origin_clock = 0, origin_clock_at = 0;
         bool ranked = false;
         std::string replay_status;
         unsigned native_request = 0;
@@ -94,7 +98,7 @@ namespace tenhou {
         bool observe_games = false, interactive_games = false;
         bool recover_games = false, resume_connection = false;
         bool match_games = false;
-        bool require_native = false, presentation = false;
+        bool require_native = false, presentation = false, origin_lobby = false;
         std::string native_token;
         std::string native_password, native_nickname;
         bool native_register = false;
@@ -104,6 +108,7 @@ namespace tenhou {
                                                const std::map<std::string, std::string> &settings = {});
 
         std::vector<std::string> SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0);
+        std::vector<std::string> SubmitOriginLobby(const std::string &command, const std::wstring &value);
 
         std::vector<std::string> SubmitAction(std::uint64_t revision, std::size_t index);
 
@@ -114,10 +119,13 @@ namespace tenhou {
 
     private:
         std::vector<std::string> Apply(const NetworkMessage &message);
+        bool ApplyOriginLobby(const NetworkMessage &message);
+        void ReturnToOriginLobby();
 
         OnlineGame game_;
         OnlineActions actions_;
         bool rejoin_received_ = false, recovery_go_ = false;
         unsigned room_ = 0;
+        unsigned origin_epoch_ = 0, origin_request_ = 0;
     };
 } // namespace tenhou

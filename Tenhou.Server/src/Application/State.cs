@@ -14,6 +14,7 @@ public sealed class Account
     public string Salt { get; set; } = "";
     public string PasswordHash { get; set; } = "";
     public int Played { get; set; }
+    public DateTimeOffset? MembershipUntil { get; set; }
     public Rank[] Ranks { get; set; } = [new(), new()];
     public static string NormalizeId(string id)
     {
@@ -70,6 +71,8 @@ public sealed class Session
     public string Gender { get; set; } = "M";
     public string Table { get; set; } = "";
     public int Room { get; set; }
+    public string OriginLobby { get; set; } = "L0000";
+    public Dictionary<string, DateTimeOffset> ContestEntries { get; set; } = [];
     public long LastRequest { get; set; }
     public string RequestText { get; set; } = "";
     public string RequestReply { get; set; } = "";
@@ -93,6 +96,8 @@ public sealed class TableRecord
     public List<MatchCommand> Commands { get; set; } = [];
     public string Stage { get; set; } = "gok";
     public bool Ranked { get; set; }
+    public string OriginLobby { get; set; } = "";
+    public int ReservationType { get; set; }
     public bool Settled { get; set; }
     public int[] Reserve { get; set; } = new int[4];
     public int[] Remaining { get; set; } = [-1, -1, -1, -1];

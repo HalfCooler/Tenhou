@@ -13,6 +13,7 @@ public sealed partial class Platform
     private void Command(Session session, WireMessage message, string raw)
     {
         string tag = message.Tag; Presence current = presence[session.Token];
+        if (current.Origin && OriginCommand(session, message)) return;
         if (tag is "ROOMCREATE" or "ROOMJOIN" or "ROOMLEAVE" or "ROOMCLOSE" or "SETROOM")
         { RoomCommand(session, message, raw); return; }
         if (tag == "PRESENTATION") { current.Presentation = true; return; }
@@ -53,7 +54,9 @@ public sealed partial class Platform
             if (session.Table.Length == 0 || !tables[session.Table].Match.IsComplete) throw new ArgumentException("Match is not complete");
             string id = session.Table; session.Table = "";
             if (sessions.Values.All(s => s.Table != id)) tables.Remove(id);
-            Save(); return;
+            Save();
+            if (current.Origin) Lobby(session);
+            return;
         }
         if (session.Table.Length == 0 && current.Exited && tag is "D" or "N" or "REACH" or "GOK" or "STARTREADY" or "NEXTREADY") return;
         if (session.Table.Length == 0) throw new ArgumentException("No active table");

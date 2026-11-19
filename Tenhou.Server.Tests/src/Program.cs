@@ -19,7 +19,7 @@ using Tenhou.Server.Rules.Guobiao;
 
 namespace Tenhou.Server.Tests;
 
-internal static class Program
+internal static partial class Program
 {
     private static void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
     private static void Reject(System.Action action, string message)
@@ -124,14 +124,17 @@ internal static class Program
                     else partial.Add(buffer[i]);
             }
         }
-        public async Task Login(string? token = null, string name = "NoName", bool register = false)
+        public async Task Login(string? token = null, string name = "NoName", bool register = false, bool origin = false, bool resume = false)
         {
             // Deliberately split a UTF-8 frame across two writes.
             await Send(Wire.Encode("HELO", ("name", name), ("sx", "M"))); WireMessage hello = await Until("HELO");
             Check(hello.Get("uname") == "TENHOU-PLATFORM" && hello.Get("version") == "1", "Platform handshake");
             await Send(Wire.Encode("CAPS", ("version", "1"), ("token", token ?? ""), ("sx", "M"),
-                ("password", "test-password"), ("nickname", "测试玩家"), ("register", register ? "1" : "0")));
-            await Until("SESSION"); await Until("CATALOGEND"); await Until("CS");
+                ("password", "test-password"), ("nickname", "测试玩家"), ("register", register ? "1" : "0"),
+                ("lobby", origin ? "origin" : ""), ("resume", resume ? "1" : "0")));
+            await Until("SESSION");
+            if (origin) await Until("CHAT");
+            else { await Until("CATALOGEND"); await Until("CS"); }
         }
         public ValueTask DisposeAsync() { tcp.Dispose(); return ValueTask.CompletedTask; }
     }
@@ -337,7 +340,8 @@ internal static class Program
             else if (args[i] == "--native-client") nativeClient = args[i + 1];
             else throw new ArgumentException("Unknown test option");
         }
-        try { VariantChecks.Scoring(); VariantChecks.Games(); Rules(oracle); await Integration(nativeClient); await Multiplayer(); await Lifecycle(); Console.WriteLine("All checks passed."); return 0; }
+        try { VariantChecks.Scoring(); VariantChecks.Games(); Rules(oracle); await Integration(nativeClient);
+            await OriginLobbyChecks(nativeClient); await Multiplayer(); await Lifecycle(); Console.WriteLine("All checks passed."); return 0; }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }
     }
 }

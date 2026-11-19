@@ -29,6 +29,7 @@ public interface IMatch
     void Validate();
 }
 
+[method: System.Text.Json.Serialization.JsonConstructor]
 public sealed record MatchAction(string Kind, int[] Tiles)
 {
     public MatchAction(string kind) : this(kind, []) { }

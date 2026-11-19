@@ -9,7 +9,7 @@ try:
 except ModuleNotFoundError as error:
     if error.name != 'unicorn':
         raise
-    message = 'P0 branch replay requires unicorn==2.1.4 (see ORIGINAL-LOBBY-P0.md)'
+    message = 'P0 branch replay requires unicorn==2.1.4 (see ORIGIN-REBUILD.md)'
     if __name__ == '__main__':
         raise SystemExit(message) from error
     raise unittest.SkipTest(message) from error
@@ -100,11 +100,12 @@ class Branch:
         self.calls.append(self.text(fmt) % values)
 
 
-def ranked_case(tab, pf4, pf3, expire, opt, reservations):
+def ranked_case(tab, pf4, pf3, expire, opt, reservations, room=0):
     branch = Branch()
     branch.put(STATE + 4, opt, expire)
     branch.put(STATE + 0x1C, *pf4, *pf3, 0)
     branch.put(STATE + 0x0C + tab * 4, reservations)
+    branch.put(STATE + 0x2C, room)
     branch.put(STACK + 0x64, 1)
     branch.cpu.reg_write(EAX, tab)
     branch.stub(0x443E60, 2, lambda out, reason: out, caller_cleanup=True)
@@ -214,6 +215,13 @@ class OriginalLobbyP0(unittest.TestCase):
         branch.stub(0x415AC0, 1, branch.wire, caller_cleanup=True)
         branch.run(0x42706F, 0x427725)
         self.assertEqual(branch.calls[-1], '<JOIN />')
+
+    def test_ordinary_room_and_broadcast_visibility(self):
+        for room in (1234, 8141):
+            with self.subTest(room=room):
+                regular = set(range(12)) - {6, 7}
+                self.assertEqual(ranked_case(0, (0, 1500), (17, 2200), 0, 0xF, 1 << 2, room),
+                                 (regular, regular - {2}))
 
     def test_lobby_requests_preserve_contest_leading_zeroes(self):
         branch = Branch()

@@ -16,6 +16,7 @@ namespace tenhou {
         bool presentation = false;
         unsigned matching_ms = 120000;
         bool native_service = false;
+        bool origin_lobby = false;
         std::string password, nickname;
         bool register_account = false;
         std::filesystem::path config_file;
@@ -44,6 +45,7 @@ namespace tenhou {
         void SubmitAction(std::uint64_t revision, std::size_t index);
 
         void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0);
+        void SubmitOriginLobby(const std::string &command, const std::wstring &value);
 
         void ConfirmMatchStart();
 

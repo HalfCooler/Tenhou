@@ -17,6 +17,7 @@ public sealed record ServerSettings
     public int MaxTables { get; init; } = 64;
     public int BotDelayMs { get; init; } = 350;
     public int MatchWaitMs { get; init; } = 10000;
+    public ContestSettings[] Contests { get; init; } = [];
     public QueueSettings[] Queues { get; init; } =
     [
         new(101, "立直 四人 东风", "riichi", new() { ["match_type"] = "standard4", ["length"] = "east" }),
@@ -46,3 +47,5 @@ public sealed record ServerSettings
 }
 
 public sealed record QueueSettings(int Id, string Name, string Rule, System.Collections.Generic.Dictionary<string, string> Options);
+public sealed record ContestSettings(string Id, string Title, int Type, DateTimeOffset StartsAt, DateTimeOffset EndsAt,
+    bool PremiumOnly = false, int JoinFee = 0);

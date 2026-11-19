@@ -1,4 +1,5 @@
 #include "lobby_view.hpp"
+#include "offline_lobby_view.hpp"
 #include "settings_view.hpp"
 #include "music_preferences.hpp"
 #include "matchmaking_view.hpp"
@@ -29,6 +30,7 @@ namespace tenhou {
             lobby_background_ = {};
             table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
             InvalidateRect(window_, nullptr, FALSE);
+            if (service_lobby_ && !resource_directory_.empty()) service_lobby_->ConfigureArtwork(resource_directory_);
         }
         if (change == PreferenceChange::Sound) {
             // The original sound-volume control is the online mute switch. The
@@ -227,6 +229,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         lobby_music_.Stop();
         StopSound();
         variant_.reset();
+        service_lobby_.reset();
         matching_.reset();
         client_.reset();
         match_intro_.reset();
@@ -238,12 +241,26 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (font_) DeleteObject(font_);
     }
 
+    void LobbyView::EnableServiceLobby(std::function<void()> settings, std::function<void()> replay) {
+        service_lobby_ = std::make_unique<OfflineLobbyView>(window_, config_,
+            [this, settings = std::move(settings), replay = std::move(replay)](OfflineLobbyView::Action action) {
+                switch (action) {
+                    case OfflineLobbyView::Action::Settings: settings(); break;
+                    case OfflineLobbyView::Action::OpenReplay: replay(); break;
+                    case OfflineLobbyView::Action::Logout: PostMessageW(parent_, WM_APP + 25, 0, 0); break;
+                    case OfflineLobbyView::Action::RoomConfirmed: UpdateLobbyMusic(); break;
+                }
+            }, log_, [this](const std::string &command, const std::wstring &value) {
+                client_->SubmitOriginLobby(command, value);
+            });
+    }
+
     void LobbyView::Login(const ConnectionOptions &options) {
         if (client_->active()) client_->Disconnect();
         const bool reconnect = client_->snapshot().reconnect_available && options.recover_games &&
                                !options.register_account && options.host == login_options_.host &&
                                options.port == login_options_.port && options.identity == login_options_.identity &&
-                               options.gender == login_options_.gender;
+                               options.gender == login_options_.gender && options.origin_lobby == login_options_.origin_lobby;
         login_options_ = options;
         if (reconnect) client_->Reconnect(login_options_);
         else client_->Connect(login_options_);
@@ -266,10 +283,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!visible) {
             ClearPresentationQueue();
             matching_->Reset();
+            if (service_lobby_) service_lobby_->Show(false);
         }
         if (!visible && exit_vote_) ShowWindow(exit_vote_, SW_HIDE);
         if (!visible && client_->active()) client_->Disconnect();
         ShowWindow(window_, visible ? SW_SHOW : SW_HIDE);
+        if (visible) Arrange();
         UpdateLobbyMusic();
         if (visible) PostMessageW(window_, WM_APP + 18, 0, 0);
     }
@@ -290,6 +309,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::Resize(int width, int height) {
         MoveWindow(window_, 0, 0, width, height, TRUE);
+        if (service_lobby_) service_lobby_->Resize(width, height);
         Arrange();
     }
 
@@ -307,6 +327,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->Configure(directory, width);
         action_artwork_.Configure(directory, width);
         matching_->ConfigureArtwork(directory);
+        if (service_lobby_) service_lobby_->ConfigureArtwork(directory);
         action_artwork_error_.clear();
         resource_directory_ = directory;
         UpdateLobbyMusic(true);
@@ -325,8 +346,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         GetClientRect(window_, &r);
         if (variant_) variant_->Show(false);
         const bool game = Snapshot().game.initialized;
+        const auto &session = client_->snapshot();
+        const bool service = service_lobby_ && session.origin_lobby.has_value();
         matching_->Move(r);
-        matching_->Show(!game);
+        matching_->Show(!game && !service);
+        if (service_lobby_) service_lobby_->Show(service && !session.game.started && !session.recovering &&
+                                               IsWindowVisible(window_));
         for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
         const auto board = BoardBounds();
         settlement_view_->Move(board);
@@ -512,6 +537,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     bool LobbyView::HandleKey(UINT key) {
         if (!IsWindowVisible(window_) || !client_) return false;
+        if (service_lobby_ && service_lobby_->HandleKey(key)) return true;
         if (settlement_view_->HandleKey(key)) return true;
         if (!selection_.Active()) return key == VK_ESCAPE && !Snapshot().actions.pending.empty();
         if (key == VK_ESCAPE) {
@@ -862,7 +888,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->SetPaused(paused);
         match_intro_->SetPaused(paused);
         UpdateExitVote();
-        if (!incoming.game.initialized && displaying_) {
+        // A restored result can be visible directly from the live snapshot.
+        if (!incoming.game.initialized && (displaying_ || show_results_)) {
             ClearPresentationQueue();
             CancelSelection();
             CancelResultTimer();
@@ -872,6 +899,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             hover_point_ = {-1, -1}; CancelHandDrag(); CancelSelection();
         }
         if (matching_) matching_->SetSnapshot(incoming);
+        if (service_lobby_) service_lobby_->SetServiceSnapshot(incoming);
         if (incoming.phase == LobbyPhase::Disconnected || incoming.phase == LobbyPhase::Error || incoming.recovering)
             ClearPresentationQueue();
         if (displaying_) {
@@ -1005,6 +1033,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             if (welcome_music_) {
                 key = L"BGM_LOBBY0";
                 third_party_lobby = !official_welcome_;
+            } else if (offline_lobby_music_) {
+                key = *offline_lobby_music_ ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
             } else if (client_ && IsWindowVisible(window_)) {
                 const auto &s = client_->snapshot();
                 const auto &game = displaying_ ? displayed_.game : s.game;
@@ -1019,7 +1049,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                     key = L"BGM_GAME" + std::to_wstring(index);
                 } else if (s.phase == LobbyPhase::Lobby || s.phase == LobbyPhase::Matching ||
                            s.phase == LobbyPhase::Cancelling || s.phase == LobbyPhase::ChangingLobby) {
-                    third_party_lobby = s.native_service;
+                    third_party_lobby = s.native_service && !s.origin_lobby;
                     const bool custom = !s.lobby.empty() && s.lobby.front() == 'C';
                     key = custom && !third_party_lobby ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
                 }
@@ -1041,6 +1071,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 0, 200);
             lobby_music_.Select(window_, path, key == L"BGM_LOBBY0", (master * .01) * (level * .01));
         } catch (const std::exception &e) { log_(std::string("LOBBY BGM ERROR ") + e.what()); }
+    }
+
+    void LobbyView::SetOfflineLobbyMusic(std::optional<bool> contest) {
+        offline_lobby_music_ = contest;
+        UpdateLobbyMusic();
     }
 
     void LobbyView::PlaySoundId(unsigned id, unsigned delay) {
@@ -1689,6 +1724,7 @@ LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM 
     void LobbyView::Capture(HDC dc) {
         Paint(dc);
         matching_->Capture(dc);
+        if (service_lobby_) service_lobby_->Capture(dc);
         settlement_view_->Capture(dc);
         POINT origin{};
         ClientToScreen(window_, &origin);

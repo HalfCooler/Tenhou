@@ -14,6 +14,7 @@ namespace tenhou {
     class WelcomeView;
     class TableView;
     class LobbyView;
+    class OfflineLobbyView;
     class SettingsView;
     enum class PreferenceChange;
 
@@ -21,6 +22,7 @@ namespace tenhou {
         std::filesystem::path config_directory;
         std::filesystem::path resource_directory;
         std::filesystem::path replay;
+        bool offline_lobby = false, service_lobby = false;
     };
 
     Options ParseOptions(int argc, char **argv);
@@ -45,6 +47,7 @@ namespace tenhou {
         void SetView(const std::string &view);
 
         void Login(bool register_account);
+        void OpenReplay();
 
         void Paint(HDC dc);
 
@@ -71,6 +74,7 @@ namespace tenhou {
         std::unique_ptr<WelcomeView> welcome_;
         std::unique_ptr<TableView> table_;
         std::unique_ptr<LobbyView> lobby_;
+        std::unique_ptr<OfflineLobbyView> offline_lobby_;
         std::unique_ptr<SettingsView> settings_;
         int width_ = 1440, height_ = 1080;
         std::string view_;
