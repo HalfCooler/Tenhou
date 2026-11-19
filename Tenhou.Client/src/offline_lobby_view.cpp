@@ -739,7 +739,8 @@ namespace tenhou {
         const auto id = static_cast<unsigned>(GetDlgCtrlID(window));
         const int slot = static_cast<int>(id) - static_cast<int>(kQueue);
         if (slot >= 0 && slot < static_cast<int>(kRankedSlots)) {
-            if (msg == WM_MOUSEMOVE && self.outer_ == 0 && !self.state_.pending() && IsWindowEnabled(window)) {
+            if (msg == WM_MOUSEMOVE && self.outer_ == 0 && self.state_.ranked() &&
+                !self.state_.pending() && IsWindowEnabled(window)) {
                 TRACKMOUSEEVENT event{sizeof(event), TME_LEAVE, window, 0};
                 TrackMouseEvent(&event);
                 self.Hover(slot);
