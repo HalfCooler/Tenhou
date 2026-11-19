@@ -32,6 +32,7 @@ namespace tenhou {
         HWND Window() const { return viewport_; }
 
         std::wstring Identity() const;
+        std::wstring OfficialIdentity() const;
 
         std::wstring Password() const;
 

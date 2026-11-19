@@ -224,6 +224,7 @@ namespace tenhou {
         confirm_seconds_ = -1;
         confirm_ready_ = false;
         presentation_frames_ = 0;
+        yaku_entrance_frame_ = 10;
         totals_revealed_ = true;
         ura_pause_done_ = false;
         if ((shown_yaku_ != static_cast<std::size_t>(-1) || shown_tiles_ != static_cast<std::size_t>(-1)) &&
@@ -267,6 +268,10 @@ namespace tenhou {
             return;
         }
         const auto &r = state_.receipts[selected_];
+        if (yaku_entrance_frame_ < 10) {
+            ++yaku_entrance_frame_;
+            if (animation_enabled_) InvalidateRect(window_, nullptr, FALSE);
+        }
         if (r.who >= 0 && presentation_frames_) {
             if (--presentation_frames_) return;
         }
@@ -284,12 +289,11 @@ namespace tenhou {
                 ++shown_yaku_;
                 if (animation_enabled_) pattern_page_ = (shown_yaku_ - 1) / kSettlementPatternsPerPage;
                 if (sound_enabled_ && play_sound_) play_sound_(109);
-            } else if (!r.yakuman.empty()) {
-                shown_yaku_ = r.yakuman.size();
-                if (sound_enabled_ && play_sound_) play_sound_(111);
             } else {
-                if (SettlementDisplayYaku(r)[shown_yaku_].id == 53) ura_revealed_ = true;
+                if (r.yakuman.empty() && yaku[shown_yaku_].id == 53) ura_revealed_ = true;
                 ++shown_yaku_;
+                yaku_entrance_frame_ = 0;
+                if (shown_yaku_ == 1 && !r.yakuman.empty() && sound_enabled_ && play_sound_) play_sound_(111);
                 if (sound_enabled_ && play_sound_) play_sound_(109);
             }
             ura_pause_done_ = false;
@@ -357,12 +361,11 @@ namespace tenhou {
         MoveWindow(choices_, 8, 4, std::max(50L, r.right - 160), 220, TRUE);
         ShowWindow(choices_, multiple || details ? SW_SHOW : SW_HIDE);
         const auto target = Target();
-        const bool win = selected_ < state_.receipts.size();
-        const bool draw = win && state_.receipts[selected_].who < 0;
         const double unit = canvas_ == 1440 ? 1.4 : 1.0, fit = double(target.right - target.left) / canvas_;
         const int center = target.left + (target.right - target.left) / 2;
-        const int x = center + static_cast<int>((win ? -23 : -28) * unit * fit), y =
-                target.top + static_cast<int>((canvas_ * 3 / 8.0 + (draw ? 100 : 271) * unit) * fit);
+        const auto confirm = SettlementConfirmRect(state_, selected_, canvas_);
+        const int x = target.left + static_cast<int>(confirm.left * fit),
+                  y = target.top + static_cast<int>(confirm.top * fit);
         // Same native rectangle as SettlementScene::confirm, including centering.
         const int w = std::max(38, static_cast<int>(56 * unit * fit)), h = std::max(
             18, static_cast<int>(21 * unit * fit));
@@ -376,8 +379,7 @@ namespace tenhou {
             std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
         EnableWindow(previous_patterns_, !Animating() && pattern_page_ > 0);
         EnableWindow(next_patterns_, !Animating() && pattern_page_ + 1 < pages);
-        const int final_top = (canvas_ * 3 / 4 - static_cast<int>(480 * unit)) / 2;
-        MoveWindow(ok_, x, win ? bottom : target.top + static_cast<int>((final_top + 430 * unit) * fit), w, h, TRUE);
+        MoveWindow(ok_, x, bottom, w, h, TRUE);
         EnableWindow(ok_, confirm_enabled_ && !Animating());
         const bool next = (continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
             selected_ + 1 == state_.receipts.size()) ||
@@ -490,6 +492,7 @@ namespace tenhou {
             artwork_.SetRedTiles(state_.red_tiles);
             const auto all = static_cast<std::size_t>(-1);
             auto layout = Layout();
+            layout.yaku_entrance = yaku_entrance_frame_ / 10.0;
             const bool win = selected_ < state_.receipts.size();
             const auto scene = BuildSettlementScene(state_, selected_, names_, animation_enabled_ ? shown_yaku_ : all,
                                                     animation_enabled_ ? shown_tiles_ : all,
@@ -549,7 +552,7 @@ namespace tenhou {
                     throw std::runtime_error("Cannot paint settlement image");
             }
             for (const auto &item: scene.text) {
-                if (!item.visible || !item.spans.empty()) continue;
+                if (!item.visible || !item.spans.empty() || item.entrance <= 0) continue;
                 Gdiplus::FontFamily family(item.role == "unknown_yaku" || item.role.rfind("variant_", 0) == 0
                                                ? L"KaiTi"
                                                : item.original_font
@@ -557,7 +560,8 @@ namespace tenhou {
                                                      : L"Arial");
                 Gdiplus::Font font(family.IsAvailable() ? &family : Gdiplus::FontFamily::GenericSansSerif(), item.size,
                                    Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
-                Gdiplus::SolidBrush ink(Gdiplus::Color(item.color));
+                const auto alpha = static_cast<unsigned>((item.color >> 24) * item.entrance);
+                Gdiplus::SolidBrush ink(Gdiplus::Color((alpha << 24) | (item.color & 0xffffff)));
                 const auto value = Wide(item.text);
                 Gdiplus::StringFormat format;
                 format.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
@@ -571,6 +575,14 @@ namespace tenhou {
                                     static_cast<float>(item.rect.right - item.rect.left),
                                     static_cast<float>(item.rect.bottom - item.rect.top));
                 Gdiplus::Status status;
+                const auto saved = graphics.Save();
+                if (item.entrance < 1) {
+                    const auto zoom = static_cast<float>(2.5 - 1.5 * item.entrance);
+                    const auto center_x = rect.X + rect.Width / 2, center_y = rect.Y + rect.Height / 2;
+                    graphics.TranslateTransform(center_x, center_y);
+                    graphics.ScaleTransform(zoom, zoom);
+                    graphics.TranslateTransform(-center_x, -center_y);
+                }
                 if (item.original_font) {
                     // FUN_004b3360 uses zero-width point anchors. A clipped layout
                     // rectangle adds GDI+ padding and truncates even measured scores.
@@ -583,6 +595,7 @@ namespace tenhou {
                                               : rect.X;
                     status = graphics.DrawString(value.c_str(), -1, &font, Gdiplus::PointF(x, rect.Y), &format, &ink);
                 } else status = graphics.DrawString(value.c_str(), -1, &font, rect, &format, &ink);
+                graphics.Restore(saved);
                 if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement text");
             }
             graphics.ResetTransform();

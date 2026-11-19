@@ -16,6 +16,7 @@ namespace tenhou {
         bool presentation = false;
         unsigned matching_ms = 120000;
         bool native_service = false;
+        bool official = false, auto_reconnect = false;
         bool origin_lobby = false;
         std::string password, nickname;
         bool register_account = false;

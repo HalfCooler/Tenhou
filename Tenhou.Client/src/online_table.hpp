@@ -16,6 +16,7 @@ namespace tenhou {
         std::vector<int> playable;
         std::vector<int> selected;
         bool selecting = false;
+        bool restrict_discards = false;
         std::wstring countdown;
         std::wstring hint;
         std::array<bool, 4> automatic{true, false, false, false};

@@ -106,6 +106,13 @@ namespace tenhou {
             return tag.size() > 0 && std::string("TUVWDEFGtuvwdefg").find(tag[0]) != std::string::npos &&
                    (tag.size() == 1 || (tag[1] >= '0' && tag[1] <= '9'));
         }
+
+        bool KuikaeForbidden(int discard, int called, int chi_low = -1) {
+            if (discard == called) return true;
+            if (chi_low < 0 || discard / 9 != called / 9) return false;
+            return (called == chi_low && discard == chi_low + 3) ||
+                   (called == chi_low + 2 && discard == chi_low - 1);
+        }
     }
 
     void OnlineActions::Offer(const OnlineState &s, unsigned hint) {
@@ -128,19 +135,11 @@ namespace tenhou {
         for (const auto &m: p.melds) locked.insert(locked.end(), m.tiles.begin(), m.tiles.end());
         const bool own = s.turn == 0 && hand.size() % 3 == 2;
         if (own) {
-            std::vector<int> forbidden;
-            if (!p.draw_pending && !p.melds.empty()) {
-                const auto &m = p.melds.back();
-                forbidden.push_back(m.called_tile / 4);
-                if (m.kind == MeldKind::Chi) {
-                    const int low = m.tiles.front() / 4, high = m.tiles.back() / 4, called = m.called_tile / 4;
-                    if (called == low && high % 9 < 8) forbidden.push_back(high + 1);
-                    if (called == high && low % 9 > 0) forbidden.push_back(low - 1);
-                }
-            }
+            const auto *call = !p.draw_pending && !p.melds.empty() ? &p.melds.back() : nullptr;
             for (int tile: hand)
                 if ((!p.reach || tile == p.drawn_tile) &&
-                    std::find(forbidden.begin(), forbidden.end(), tile / 4) == forbidden.end())
+                    (!call || !KuikaeForbidden(tile / 4, call->called_tile / 4,
+                                                call->kind == MeldKind::Chi ? call->tiles.front() / 4 : -1)))
                     add("discard", {tile}, {One("D", "p", tile)});
             // A full uninterrupted rotation must still reach this seat's next draw.
             // Restored snapshots without wall history continue to trust the server hint.
@@ -217,8 +216,7 @@ namespace tenhou {
                                     // At least one post-call discard must survive kuikae restrictions.
                                     const auto rest = Without(Without(hand, a), b);
                                     const bool playable = std::any_of(rest.begin(), rest.end(), [&](int t) {
-                                        return t / 4 != kind && !(kind == low && t / 4 == low + 3) && !(
-                                                   kind == low + 2 && t / 4 == low - 1);
+                                        return !KuikaeForbidden(t / 4, kind, low);
                                     });
                                     if (playable) add("chi", {a, b}, {
                                                           "<N type=\"3\" hai0=\"" + std::to_string(a) + "\" hai1=\"" +

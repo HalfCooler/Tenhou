@@ -12,13 +12,14 @@ const numericFields = {
     GO: 'type', TAIKYOKU: 'oya', SAIKAI: 'oya t', UN: 'dan rate',
     INIT: 'seed ten oya hai hai0 hai1 hai2 hai3',
     REINIT: 'seed ten oya hai hai0 hai1 hai2 hai3 kawa0 kawa1 kawa2 kawa3 m0 m1 m2 m3',
-    D: 'p hai t', N: 'who m type hai t', DORA: 'hai', REACH: 'who step ten',
+    D: 'p hai t', N: 'who m type hai hai0 hai1 t', DORA: 'hai', REACH: 'who step ten hai',
+    BYE: 'who', FURITEN: 'show',
     AGARI: 'ba hai m machi ten yaku yakuman doraHai doraHaiUra who fromWho paoWho sc owari',
     RYUUKYOKU: 'ba hai0 hai1 hai2 hai3 ten sc owari',
     PROF: 'dan rate', DATE: 'date',
 };
 const presenceFields = {
-    HELO: 'name uname auth expire', AUTH: 'val', CHAT: 'uname',
+    HELO: 'name uname auth expire gpid', AUTH: 'val', CHAT: 'uname', GO: 'gpid',
     CS: 'title', CSREG: 'uname', RANKING: 'rankingcs',
     UN: 'n0 n1 n2 n3', TAIKYOKU: 'log', SAIKAI: 'log',
     SHUFFLE: 'seed', ERR: 'text message',

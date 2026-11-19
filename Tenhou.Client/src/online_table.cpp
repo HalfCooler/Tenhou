@@ -205,23 +205,27 @@ namespace tenhou {
             for (auto c: interaction->countdown) stamp << ':' << int(c);
             for (auto value: interaction->automatic) stamp << ':' << value;
         }
+        enum class HandColor : unsigned { Normal, Hover, UnavailableHover, Selected, Dim, SelectedHover, Exchange };
+        const auto hand_color = [&](const TableTile &tile) {
+            if (!interaction || !interactive || state.ended || tile.tile < 0 || tile.direction != 0 ||
+                std::string_view(tile.role) != "hand") return HandColor::Normal;
+            const bool hover = tile.tile == interaction->hovered;
+            const bool playable = std::find(interaction->playable.begin(), interaction->playable.end(), tile.tile)
+                                  != interaction->playable.end();
+            const bool selected = std::find(interaction->selected.begin(), interaction->selected.end(), tile.tile)
+                                  != interaction->selected.end();
+            if (state.variant) {
+                if (selected) return HandColor::Exchange;
+                if (interaction->selecting && playable) return HandColor::Hover;
+            } else {
+                if (selected) return hover ? HandColor::SelectedHover : HandColor::Selected;
+                if (!playable && (interaction->selecting || interaction->restrict_discards))
+                    return hover ? HandColor::UnavailableHover : HandColor::Dim;
+            }
+            return hover ? (playable ? HandColor::Hover : HandColor::UnavailableHover) : HandColor::Normal;
+        };
         std::vector<unsigned> appearances;
-        for (const auto &t: tiles) {
-            const bool hand = interaction && interactive && !state.ended && t.tile.tile >= 0 && t.tile.direction == 0 &&
-                              std::string(t.tile.role) == "hand";
-            const bool hover = hand && t.tile.tile == interaction->hovered;
-            const bool playable = hand && std::find(interaction->playable.begin(), interaction->playable.end(),
-                                                    t.tile.tile) != interaction->playable.end();
-            const bool selected = hand && std::find(interaction->selected.begin(), interaction->selected.end(),
-                                                    t.tile.tile) != interaction->selected.end();
-            appearances.push_back(selected
-                                      ? 3u
-                                      : interaction && interaction->selecting && playable
-                                            ? 1u
-                                            : hover
-                                                  ? (playable ? 1u : 2u)
-                                                  : 0u);
-        }
+        for (const auto &tile: tiles) appearances.push_back(static_cast<unsigned>(hand_color(tile.tile)));
         std::vector<RECT> metadata_regions, atomic_layers;
         if (original_display_) {
             const auto hud = BuildOriginalHud(state, w);
@@ -289,51 +293,28 @@ namespace tenhou {
                                                                 item.image.width * 4,
                                                                 PixelFormat32bppARGB, const_cast<BYTE *>(pixels));
                                           Gdiplus::ImageAttributes attributes;
-                                          const bool own_hand =
-                                                  interaction && interactive && !state.ended && tile.tile.tile >= 0 &&
-                                                  tile.tile.direction == 0 && std::string(tile.tile.role) == "hand";
-                                          const bool selectable = own_hand && std::find(interaction->playable.begin(),
-                                                                      interaction->playable.end(),
-                                                                      tile.tile.tile) != interaction->playable.end();
-                                          const bool selected = own_hand && std::find(interaction->selected.begin(),
-                                                                    interaction->selected.end(),
-                                                                    tile.tile.tile) != interaction->selected.end();
-                                          const bool hover =
-                                                  own_hand && (
-                                                      tile.tile.tile == interaction->hovered || selected || (
-                                                          interaction->selecting && selectable));
-                                          if (hover) {
-                                              const bool playable = std::find(interaction->playable.begin(),
-                                                                              interaction->playable.end(),
-                                                                              tile.tile.tile) != interaction->playable.
-                                                                    end();
-                                              // Tint the selected/hovered sprite while preserving its alpha.
-                                              Gdiplus::ColorMatrix matrix{
-                                                  {
-                                                      {.95f, 0, 0, 0, 0}, {0, .5f, 0, 0, 0}, {0, 0, .75f, 0, 0},
-                                                      {0, 0, 0, 1, 0}, {0, .5f, .25f, 0, 1}
-                                                  }
-                                              };
-                                              if (!playable) matrix = {
-                                                                 {
-                                                                     {.5f, 0, 0, 0, 0}, {0, 1, 0, 0, 0},
-                                                                     {0, 0, 1, 0, 0}, {0, 0, 0, 1, 0}, {.5f, 0, 0, 0, 1}
-                                                                 }
-                                                             };
-                                              if (selected) matrix = {
-                                                                {
-                                                                    {1, 0, 0, 0, 0}, {0, .8f, 0, 0, 0},
-                                                                    {0, 0, .35f, 0, 0}, {0, 0, 0, 1, 0},
-                                                                    {0, .2f, 0, 0, 1}
-                                                                }
-                                                            };
-                                              attributes.SetColorMatrix(&matrix);
-                                          }
+                                          const auto color = hand_color(tile.tile);
+                                          // FUN_00481ab0 selects matrices at 0x4fde78 by hand flags.
+                                          const auto matrix = [](float r, float g, float b, float dr, float dg, float db) {
+                                              return Gdiplus::ColorMatrix{{{r,0,0,0,0}, {0,g,0,0,0}, {0,0,b,0,0},
+                                                                            {0,0,0,1,0}, {dr,dg,db,0,1}}};
+                                          };
+                                          const Gdiplus::ColorMatrix colors[]{
+                                              matrix(1, 1, 1, 0, 0, 0),
+                                              matrix(.95f, .5f, .75f, 0, .5f, .25f),
+                                              matrix(.5f, 1, 1, .5f, 0, 0),
+                                              matrix(1, 1, 1, 0, 0, 1),
+                                              matrix(.8f, .8f, .8f, 0, 0, 0),
+                                              matrix(1, .5f, 0, 0, .5f, 1),
+                                              matrix(1, .8f, .35f, 0, .2f, 0)
+                                          };
+                                          if (color != HandColor::Normal)
+                                              attributes.SetColorMatrix(&colors[static_cast<unsigned>(color)]);
                                           if (graphics.DrawImage(
                                                   &image, Gdiplus::Rect(tile.x, tile.y, item.image.width,
                                                                         item.image.height),
                                                   0, 0, item.image.width, item.image.height, Gdiplus::UnitPixel,
-                                                  hover ? &attributes : nullptr) != Gdiplus::Ok)
+                                                  color != HandColor::Normal ? &attributes : nullptr) != Gdiplus::Ok)
                                               throw std::runtime_error("Cannot draw online tile");
                                           if (missing) {
                                               Gdiplus::SolidBrush overlay(Gdiplus::Color(145, 90, 90, 90));

@@ -80,7 +80,8 @@ function Invoke-TenhouNativeBuild {
     }
     $checks = if ($Target -eq 'tenhou_client_checks') { 'ON' } else { 'OFF' }
     $reference = if ($Target -eq 'tenhou_rule_oracle') { 'ON' } else { 'OFF' }
-    $configure = '"{0}" -S "{1}" -B "{2}" -G "NMake Makefiles" -DCMAKE_BUILD_TYPE={3} -DTENHOU_BUILD_CLIENT_TESTS={4} -DTENHOU_BUILD_RULE_ORACLE={5} -DTENHOU_OUTPUT_DIRECTORY="{6}"' -f $CMake, $SourceDirectory, $BuildDirectory, $Configuration, $checks, $reference, $OutputDirectory.Replace('\', '/')
+    # Localized MSVC /showIncludes output can leave NMake builds with empty header dependencies.
+    $configure = '"{0}" -S "{1}" -B "{2}" -G "NMake Makefiles" -DCMAKE_DEPENDS_USE_COMPILER=OFF -DCMAKE_BUILD_TYPE={3} -DTENHOU_BUILD_CLIENT_TESTS={4} -DTENHOU_BUILD_RULE_ORACLE={5} -DTENHOU_OUTPUT_DIRECTORY="{6}"' -f $CMake, $SourceDirectory, $BuildDirectory, $Configuration, $checks, $reference, $OutputDirectory.Replace('\', '/')
     if ($Fresh) { $configure += ' --fresh' }
     $compile = '"{0}" --build "{1}" --target {2}' -f $CMake, $BuildDirectory, $Target
     $batchPath = Join-Path $env:TEMP ('tenhou-build-' + [guid]::NewGuid().ToString('N') + '.cmd')

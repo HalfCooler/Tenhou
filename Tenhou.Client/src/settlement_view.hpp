@@ -151,5 +151,6 @@ namespace tenhou {
         bool totals_revealed_ = true, ura_pause_done_ = false;
         unsigned presentation_frames_ = 0;
         std::size_t shown_yaku_ = static_cast<std::size_t>(-1), shown_tiles_ = static_cast<std::size_t>(-1);
+        int yaku_entrance_frame_ = 10;
     };
 } // namespace tenhou

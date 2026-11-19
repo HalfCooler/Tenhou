@@ -51,7 +51,7 @@ namespace tenhou {
     void ActionSelection::Sync(const ActionSnapshot &actions) {
         if (!actions.enabled || actions.revision != revision || !actions.pending.empty() ||
             std::any_of(indices.begin(), indices.end(), [&](std::size_t i) {
-                return i >= actions.choices.size() || ActionGroup(actions.choices[i].kind) != group;
+                return i >= actions.choices.size() || (group != "call" && ActionGroup(actions.choices[i].kind) != group);
             })) Clear();
         revision = actions.revision;
     }
@@ -60,8 +60,11 @@ namespace tenhou {
         Clear();
         revision = actions.revision;
         if (!actions.enabled || !actions.pending.empty()) return;
-        for (std::size_t i = 0; i < actions.choices.size(); ++i)
-            if (ActionGroup(actions.choices[i].kind) == wanted) indices.push_back(i);
+        for (std::size_t i = 0; i < actions.choices.size(); ++i) {
+            const auto &kind = actions.choices[i].kind;
+            if (ActionGroup(kind) == wanted || (wanted == "call" && (kind == "chi" || kind == "pon")))
+                indices.push_back(i);
+        }
         if (!indices.empty()) group = wanted;
     }
 

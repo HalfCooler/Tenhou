@@ -261,6 +261,7 @@ namespace tenhou {
 
     void OfflineLobbyView::SetServiceSnapshot(const LobbySnapshot &snapshot) {
         if (!snapshot.origin_lobby) return;
+        official_ = snapshot.official;
         const bool moved = state_.room() != snapshot.origin_lobby->room();
         state_ = *snapshot.origin_lobby;
         service_pending_ = snapshot.origin_pending;
@@ -291,7 +292,8 @@ namespace tenhou {
             const bool normal = outer_ == 0 && slot.visible;
             const bool parlor = outer_ == 1 && i < kParlorSlots;
             const bool toutenkou = outer_ == 5 && i == 0;
-            control(kQueue + i, normal || parlor || toutenkou, normal && !pending && !slot.reserved);
+            control(kQueue + i, normal || parlor || toutenkou,
+                    (normal && !pending && !slot.reserved) || (official_ && toutenkou));
             if (hovered_ == static_cast<int>(i) && (!normal || pending || slot.reserved)) Hover(-1);
         }
         const auto contest_action = state_.ContestAction(seconds_);
@@ -486,7 +488,7 @@ namespace tenhou {
         for (auto label: {Label::lobby_practice_parlor_0, Label::lobby_practice_parlor_2, Label::lobby_practice_parlor_three})
             MenuItem(menu, 0, label, MF_GRAYED);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        MenuItem(menu, 0, Label::lobby_practice_toutenkou, MF_GRAYED);
+        MenuItem(menu, 1, Label::lobby_practice_toutenkou, official_ ? MF_ENABLED : MF_GRAYED);
         Popup(menu, buttons_.at(kPractice), panel_);
     }
 
@@ -548,7 +550,7 @@ namespace tenhou {
         Line(dc, {30, 119, 320, 120});
         Line(dc, {30, 349, 320, 350});
         SelectObject(dc, font_);
-        std::wstring status = Text(submit_ ? Label::lobby_service : Label::lobby_offline);
+        std::wstring status = official_ ? L"天凤官方" : Text(submit_ ? Label::lobby_service : Label::lobby_offline);
         if (state_.pending()) status = std::wstring(Text(Label::lobby_switching)) + L"  " + *state_.pending();
         else if (!service_pending_.empty()) status = Text(Label::lobby_waiting_receipt);
         else if (!service_error_.empty()) {

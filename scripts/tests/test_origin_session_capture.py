@@ -77,6 +77,10 @@ class OriginSessionCapture(unittest.TestCase):
             receive('<RANK v2="1200,0,-1,2.5" />');
             receive('<REINIT hai="1,2,3" kawa0="1,255,33" m0="8736" />');
             receive('<TAIKYOKU log="log-secret" />');
+            receive('<GO type="9" gpid="game-secret" />');
+            transmit(7, '<N type="3" hai0="8" hai1="12" />');
+            transmit(7, '<REACH hai="52" />');
+            receive('<BYE who="2" />');
             receive('<UNKNOWN_SECRET id="other-secret" />');
             rpc.exports.setRecording(false);
             receive('<Z />');
@@ -89,7 +93,8 @@ class OriginSessionCapture(unittest.TestCase):
         self.assertNotIn("20991231", result.stdout)
         rows = json.loads(result.stdout)
         self.assertEqual([row["tag"] for row in rows],
-                         ["AUTH", "HELO", "CHAT", "CSREG", "LN", "RANK", "REINIT", "TAIKYOKU", "UNKNOWN"])
+                         ["AUTH", "HELO", "CHAT", "CSREG", "LN", "RANK", "REINIT", "TAIKYOKU",
+                          "GO", "N", "REACH", "BYE", "UNKNOWN"])
         self.assertEqual(rows[0]["attrs"], {"val": "<present>"})
         self.assertEqual(rows[0]["send"]["requested"] - rows[0]["send"]["accepted"], 1)
         self.assertEqual(rows[1]["attrs"]["PF4"], "1,2,3")
@@ -98,3 +103,7 @@ class OriginSessionCapture(unittest.TestCase):
         self.assertEqual(rows[4]["attrs"], {"n": "A1Bc"})
         self.assertEqual(rows[5]["attrs"], {"v2": "1200,0,-1,2.5"})
         self.assertEqual(rows[6]["attrs"], {"hai": "1,2,3", "kawa0": "1,255,33", "m0": "8736"})
+        self.assertEqual(rows[8]["attrs"], {"type": "9", "gpid": "<present>"})
+        self.assertEqual(rows[9]["attrs"], {"type": "3", "hai0": "8", "hai1": "12"})
+        self.assertEqual(rows[10]["attrs"], {"hai": "52"})
+        self.assertEqual(rows[11]["attrs"], {"who": "2"})

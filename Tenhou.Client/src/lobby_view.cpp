@@ -185,7 +185,10 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             }, [this] { CancelSelection(); });
         match_intro_ = std::make_unique<MatchIntroView>(window_, [this] {
             opening_.ResumeClock(AnimationNow());
-            if (start_barrier_) client_->ConfirmMatchStart();
+            if (start_barrier_) {
+                if (Snapshot().official) start_barrier_ = false;
+                client_->ConfirmMatchStart();
+            }
             else if (start_sound_pending_) {
                 start_sound_pending_ = false;
                 PlaySoundId(112);
@@ -247,7 +250,10 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 switch (action) {
                     case OfflineLobbyView::Action::Settings: settings(); break;
                     case OfflineLobbyView::Action::OpenReplay: replay(); break;
-                    case OfflineLobbyView::Action::Logout: PostMessageW(parent_, WM_APP + 25, 0, 0); break;
+                    case OfflineLobbyView::Action::Logout:
+                        Disconnect();
+                        PostMessageW(parent_, WM_APP + 25, 0, 0);
+                        break;
                     case OfflineLobbyView::Action::RoomConfirmed: UpdateLobbyMusic(); break;
                 }
             }, log_, [this](const std::string &command, const std::wstring &value) {
@@ -628,6 +634,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (selection_.HandSelection()) result.playable = selection_.Selectable(snapshot.actions);
         result.selected = selection_.selected;
         result.selecting = selection_.HandSelection();
+        result.restrict_discards = !snapshot.variant_active && (!result.playable.empty() || action_filter_ == "riichi") &&
+                                   !result.selecting;
         if (clock_active_ &&clock_revision_ == snapshot.actions.revision && snapshot.actions.pending.empty())
         {
             const auto now = GetTickCount64();
@@ -754,6 +762,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         selection_.Sync(actions);
         if (Snapshot().variant_active && Snapshot().variant.phase == VariantPhase::Exchange && !selection_.Active())
             selection_.Open(actions, "exchange");
+        if (Compact() && Snapshot().game.initialized && !Snapshot().variant_active &&
+            !selection_.Active() && !SuppressCallPrompt())
+            selection_.Open(actions, "call");
         action_revision_ = actions.revision;
         if (selecting && !selection_.Active()) action_filter_ = "discard";
         UpdateActionAvailability();
@@ -978,7 +989,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         result_pending_ = false;
         UpdateActions();
         Arrange();
-        if (incoming.recovering && (!incoming.native_service || resume_preparation_pending_) &&
+        if (incoming.recovering && !incoming.silent_recovery && (!incoming.native_service || resume_preparation_pending_) &&
             incoming.game.started && original_display_ && !text_details_ && IsWindowVisible(window_)) {
             const bool beginning = !match_intro_->Resuming();
             match_intro_->Resume(OnlineTableState(incoming.game), incoming.game.type);
@@ -1039,7 +1050,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 const auto &s = client_->snapshot();
                 const auto &game = displaying_ ? displayed_.game : s.game;
                 if ((s.phase == LobbyPhase::Game || s.phase == LobbyPhase::MatchComplete) && game.initialized &&
-                    !s.recovering) {
+                    (!s.recovering || s.silent_recovery)) {
                     const int last = static_cast<int>(((game.type & 8u) | 6u) >> 1) - ((game.type & 16u) ? 1 : 0);
                     int index = game.round < last ? (game.round < 4 ? 0 : 1) : game.round == last ? 2 : 3;
                     const auto reaches = std::count_if(game.players.begin(), game.players.end(),
@@ -1105,6 +1116,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
+        if (snapshot.silent_recovery && snapshot.recovering) return;
         if (snapshot.variant_active) {
             if (message.tag == "VGO") {
                 ClearPresentationQueue(); StopSound(); CancelResultTimer();
@@ -1153,14 +1165,16 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (message.tag == "EXITVOTE" || message.tag == "PAUSED") return;
         if (message.tag == "INIT" || message.tag == "REINIT") {
             // ASM 00493133: INIT and REINIT share the preference initialization.
-            preferences_ = ClientPreferences::Load(config_);
-            // User-authorized per-hand defaults. Original INIT clears fa2/fa3
-            // and reloads fa4 from FLAGS0; fa1 originally persists after creation.
-            automatic_ = {true, false, false, false};
-            sort_refresh_pending_ = false;
-            table_.SetAutoSort(true, snapshot.game);
+            if (message.tag == "INIT" || !snapshot.silent_recovery) {
+                preferences_ = ClientPreferences::Load(config_);
+                // User-authorized per-hand defaults. Original INIT clears fa2/fa3
+                // and reloads fa4 from FLAGS0; fa1 originally persists after creation.
+                automatic_ = {true, false, false, false};
+                sort_refresh_pending_ = false;
+                table_.SetAutoSort(true, snapshot.game);
+                log_("ONLINE AUTO RESET sort=1 no_call=0 tsumogiri=0 win=0");
+            }
             table_.CancelAnimation();
-            log_("ONLINE AUTO RESET sort=1 no_call=0 tsumogiri=0 win=0");
         }
         ReceiveActionClock(message, snapshot);
         const auto &tag = message.tag;
@@ -1337,6 +1351,20 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             match_intro_pending_ = true;
             start_barrier_ = false;
             start_sound_pending_ = false;
+        }
+        if (snapshot.official && message.tag == "TAIKYOKU" && match_intro_pending_ && !snapshot.recovering) {
+            match_intro_pending_ = false;
+            if (original_display_ && !text_details_ && IsWindowVisible(window_)) {
+                auto state = OnlineTableState(snapshot.game);
+                state.initialized = true;
+                start_barrier_ = true;
+                RECT area{};
+                GetClientRect(window_, &area);
+                match_intro_->Move(area);
+                match_intro_->Begin(state, snapshot.game.type);
+                table_.Prepare();
+            } else client_->ConfirmMatchStart();
+            return;
         }
         if (message.tag == "PREPARE") {
             start_barrier_ = true;

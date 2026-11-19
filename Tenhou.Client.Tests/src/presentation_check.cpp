@@ -14,6 +14,87 @@ namespace tenhou {
     void RunTextTableChecks(HWND parent, const std::filesystem::path &resources);
     // Exercise the production receive/display boundary with packet bursts and a stalled UI timer.
     struct LobbyPresentationCheck {
+        static void OfficialCalls(HWND parent, const std::filesystem::path &resources) {
+            LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
+            view.ConfigureArtwork(resources, 1440);
+            view.sound_enabled_ = view.animation_enabled_ = false;
+            view.Show(true);
+            LobbySession session;
+            session.official = session.interactive_games = session.recover_games = true;
+            session.Connected("ID00000000-00000000", 'M');
+            const auto receive = [&](const char *wire) {
+                const auto msg = ParseNetworkMessage(wire, session.official);
+                const auto replies = session.Receive(msg);
+                const auto &s = session.snapshot;
+                const_cast<LobbySnapshot &>(view.client_->snapshot()) = s;
+                view.OnGameEvent(msg, s);
+                view.Update(s);
+                return replies;
+            };
+            const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            require(receive("<HELO uname=\"Test&Partner%20Four\" PF4=\"11,500,1700.50\" PF3=\"9,100,1500.00\" "
+                            "expire=\"20991231\" expiredays=\"90\" ratingscale=\"PF4=1&PF3=1\" opt=\"3\" />") ==
+                std::vector<std::string>{"<PXR V=\"1\" />"}, "Official lobby did not accept registered HELO");
+            receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
+            receive("<RANKING />");
+            require(session.snapshot.phase == LobbyPhase::Lobby && session.snapshot.origin_lobby &&
+                session.snapshot.identity == "Test&Partner Four" &&
+                session.snapshot.origin_lobby->profile.membership_days == 90,
+                "Official registered login did not reach the lobby with its profile");
+            require(session.SubmitOriginLobby("join", L"2065").empty() &&
+                session.snapshot.phase == LobbyPhase::Lobby, "Toutenkou changed official lobby state");
+            require(receive("<GO type=\"9\" lobby=\"0\" />") == std::vector<std::string>{"<GOK />"},
+                "Official game did not send GOK");
+            receive("<UN n0=\"A\" n1=\"B\" n2=\"C\" n3=\"D\" />");
+            require(receive("<TAIKYOKU oya=\"3\" />") == std::vector<std::string>{"<NEXTREADY />"},
+                "Official match never acknowledged the first hand");
+            require(view.match_intro_->Active(), "Official first-hand preparation was skipped");
+            view.match_intro_->Finish();
+            receive("<INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"3\" "
+                    "hai=\"4,8,12,16,17,18,20,24,32,36,40,44,48\" />");
+            view.opening_.Cancel();
+            receive("<W />");
+            receive("<G19 t=\"7\" />");
+            view.ClearPresentationQueue();
+            view.Update(session.snapshot);
+            const auto &actions = session.snapshot.actions;
+            const auto interaction = view.Interaction(session.snapshot);
+            require(view.selection_.group == "call" && interaction.selecting && interaction.playable.size() == 7,
+                "Chi and pon candidates were not selectable together without a button");
+            require(std::any_of(actions.choices.begin(), actions.choices.end(), [](const OnlineAction &a) {
+                return a.kind == "open_kan";
+            }), "Direct hand selection removed the open kan button action");
+            view.selection_.Pick(actions, 8);
+            require(view.selection_.Selectable(actions) == std::vector<int>({8, 12}) &&
+                view.selection_.selected == std::vector<int>{8}, "First picked tile did not constrain candidates");
+            const auto chi = view.selection_.Pick(actions, 12);
+            require(chi < actions.choices.size() && actions.choices[chi].kind == "chi",
+                "Two compatible hand tiles did not confirm chi");
+            view.selection_.Open(actions, "call");
+            view.selection_.Pick(actions, 17);
+            const auto pon = view.selection_.Pick(actions, 18);
+            require(pon < actions.choices.size() && actions.choices[pon].kind == "pon",
+                "Two matching hand tiles did not confirm pon");
+            session.SubmitAction(actions.revision, chi);
+            receive("<N who=\"0\" m=\"8583\" />"); // 3m-4m-[5m] from kamicha.
+            view.ClearPresentationQueue();
+            view.Update(session.snapshot);
+            const auto discards = view.Interaction(session.snapshot);
+            require(discards.restrict_discards && std::find(discards.playable.begin(), discards.playable.end(), 20) !=
+                discards.playable.end() && std::none_of(discards.playable.begin(), discards.playable.end(), [](int tile) {
+                    return tile == 4 || tile / 4 == 4;
+                }), "Called tile and suji-kuikae tiles must be unavailable after chi");
+            auto &recovering = const_cast<LobbySnapshot &>(view.client_->snapshot());
+            recovering.recovering = recovering.silent_recovery = true;
+            view.Update(recovering);
+            require(!view.match_intro_->Active() && !view.LocalTableInput(),
+                "In-process recovery exposed a preparation popup or live input");
+            recovering.silent_recovery = false;
+            view.Update(recovering);
+            require(view.match_intro_->Resuming(), "Recovery at login did not show the resume preparation");
+            view.Disconnect();
+        }
+
         static void RecoveredContestReturn(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
@@ -239,6 +320,39 @@ namespace tenhou {
             expire(); require(advanced == 2, "Final hand without continuation had no automatic OK");
             result.Show(false); result.SetRoundFinished(false); result.Show(true);
             require(!result.confirm_deadline_, "History browsing started a live-hand countdown");
+            result.Show(false);
+        }
+
+        static void RiichiEntrance(HWND parent) {
+            SettlementState state;
+            SettlementReceipt win;
+            win.who = 0; win.has_yaku = true; win.dora = {80}; win.yaku = {{23, 1}};
+            state.receipts = {win};
+            for (const int canvas: {1024, 1440}) {
+                SettlementLayout layout; layout.width = canvas; layout.yaku_entrance = .4;
+                const auto one = BuildSettlementScene(state, 0, {}, 0, 0, false, false, layout);
+                state.receipts[0].yaku = {{1,1}, {2,1}, {7,1}, {8,1}, {52,1}, {53,0}, {54,1}};
+                const auto seven = BuildSettlementScene(state, 0, {}, 2, 0, false, false, layout);
+                const auto settled = BuildSettlementScene(state, 0, {}, 7, 0, true, true, layout);
+                if (seven.panel.bottom - seven.panel.top - (one.panel.bottom - one.panel.top) !=
+                    6 * (canvas == 1024 ? 24 : 34) || !EqualRect(&seven.panel, &settled.panel))
+                    throw std::runtime_error("Riichi card does not follow the full receipt's yaku count");
+                if (std::count_if(seven.text.begin(), seven.text.end(), [](const SettlementTextItem &item) {
+                    return (item.role == "yaku" || item.role == "han") && item.entrance == .4;
+                }) != 2) throw std::runtime_error("The current yaku and han must animate together");
+                state.receipts = {win};
+            }
+            SettlementView result(parent);
+            result.SetSoundEnabled(false);
+            result.Set(state, {}, false);
+            result.Show(true);
+            result.Present();
+            for (int frame = 0; frame < 30; ++frame) result.PresentationTick();
+            if (result.shown_yaku_ != 1 || result.yaku_entrance_frame_ != 0)
+                throw std::runtime_error("Riichi entrance did not start at frame zero");
+            for (int frame = 0; frame < 10; ++frame) result.PresentationTick();
+            if (result.yaku_entrance_frame_ != 10 || !result.Animating())
+                throw std::runtime_error("Riichi entrance did not settle before totals");
             result.Show(false);
         }
     };
@@ -580,7 +694,9 @@ int main(int argc, char **argv) {
         parent = CreateWindowExW(0, L"STATIC", L"Presentation checks", WS_POPUP,
             -32000, -32000, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Check(parent != nullptr, "Cannot create test parent"); ShowWindow(parent, SW_SHOWNOACTIVATE);
-        Settlement(parent); SettlementPresentationCheck::Run(parent); Guobiao(parent, argv[1]);
+        Settlement(parent); SettlementPresentationCheck::Run(parent); SettlementPresentationCheck::RiichiEntrance(parent);
+        Guobiao(parent, argv[1]);
+        LobbyPresentationCheck::OfficialCalls(parent, argv[1]);
         LobbyPresentationCheck::RecoveredContestReturn(parent, argv[1]);
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "sichuan-bloodbattle");
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");

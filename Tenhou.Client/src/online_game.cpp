@@ -177,7 +177,7 @@ namespace tenhou {
         }
         if (tag == "TAIKYOKU") {
             if (s.initialized) Fail("TAIKYOKU after INIT");
-            if (m.attributes.count("oya")) (void) Num(m, "oya", 0, 3);
+            if (m.attributes.count("oya")) s.dealer = Num(m, "oya", 0, 3);
             // No seat rotation: network actors/oya are already relative to self=0.
             // Replay-log token and absolute-seat hints are not persisted or logged.
             return;

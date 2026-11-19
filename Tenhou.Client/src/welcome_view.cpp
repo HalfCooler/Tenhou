@@ -267,7 +267,8 @@ namespace tenhou {
     }
 
     bool WelcomeView::HasOfficialId() const {
-        const auto id = EditText(official_id_);
+        const auto id = OfficialIdentity();
+        if (id == L"NoName") return true;
         const auto alphanumeric = [](wchar_t c) {
             return (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z');
         };
@@ -275,6 +276,8 @@ namespace tenhou {
                std::all_of(id.begin() + 2, id.begin() + 10, alphanumeric) &&
                std::all_of(id.begin() + 11, id.end(), alphanumeric);
     }
+
+    std::wstring WelcomeView::OfficialIdentity() const { return EditText(official_id_); }
 
     void WelcomeView::ClearPassword() { SetWindowTextW(password_, L""); }
 
@@ -302,7 +305,8 @@ namespace tenhou {
     void WelcomeView::SetLoginState(bool connecting, const std::wstring &status) {
         connecting_ = connecting;
         login_status_ = status;
-        for (auto field: {server_, edit_, host_, port_, nickname_, password_, controls_[0]->window, controls_[1]->window})
+        for (auto field: {server_, edit_, host_, port_, nickname_, password_, official_id_,
+                          controls_[0]->window, controls_[1]->window})
             EnableWindow(field, !connecting);
         controls_[2]->text = connecting ? L"  取消  " : L"  登录  ";
         SetWindowTextW(controls_[2]->window, controls_[2]->text.c_str());
@@ -329,7 +333,7 @@ namespace tenhou {
         else if (id == 3004) action_(Action::Settings);
         else if (id == 2) action_(Action::Exit);
         else if (id == 3006) {
-            MessageBoxW(panel_, official_server_ ? L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）。官方连接尚未开放。" :
+            MessageBoxW(panel_, official_server_ ? L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName。" :
                         L"填写第三方服务器主机和端口，默认 localhost:10080。\n\n"
                         L"使用注册账号和密码登录，或以 NoName 访客登录。\n\n"
                         L"大厅战等待 10 秒后补齐人机；只有全注册真人对局计入排位。",
@@ -353,7 +357,7 @@ namespace tenhou {
         SetTextColor(dc, RGB(90, 90, 90));
         RECT announcement{30, 29, 698, 66};
         if (error_.empty()) {
-            DrawTextW(dc, official_server_ ? L"官方连接尚未开放" : L"使用注册账号登录，或以 NoName 访客登录",
+            DrawTextW(dc, official_server_ ? L"使用天凤官方 ID 或 NoName 访客登录" : L"使用注册账号登录，或以 NoName 访客登录",
                       -1, &announcement,
                       DT_CENTER | DT_WORDBREAK);
         } else {

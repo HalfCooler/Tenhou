@@ -41,4 +41,4 @@ python -X utf8 -B .\scripts\Capture-OriginSession.py review .\build\origin-captu
 - 自动化覆盖消息来源过滤、字段脱敏、发送短写、启停、带标记裁剪和源文件保留。Python 套件共 18 项通过。
 - 实窗使用同一指纹的原版和隔离的 `NoName` 配置。回环夹具验证双向 `HELO`、分段到达的 `LN`、暂停后跳过后续回包、脱敏文件及带标记裁剪。早期试跑附加时原版已建立官方连接，该次访客入场观察到 `HELO / PXR / LN`。注册账号、正式对局和大会的新增样本仍待按各自场景采集。
 
-已有原版样本见[第 3 阶段官方会话](ORIGIN-STAGE3.md)和[第 4 阶段东天红](ORIGIN-STAGE4.md)。
+已有原版样本见[第 3 阶段官方会话](ORIGIN-STAGE3.md)、[第 4 阶段东天红](ORIGIN-STAGE4.md)和[四麻东南牌局](ORIGIN-RIICHI-SESSION.md)。

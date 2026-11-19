@@ -22,6 +22,7 @@ namespace tenhou {
         int align = 0;
         bool original_font = false;
         std::vector<SettlementTextSpan> spans{};
+        double entrance = 1;
     };
 
     struct SettlementTileItem {
@@ -42,6 +43,7 @@ namespace tenhou {
     struct SettlementLayout {
         int width = 1024, dealer = 0, honba = -1, sticks = -1;
         std::size_t pattern_page = 0;
+        double yaku_entrance = 1;
         // Resource geometry is read by the view/probe, without exposing live hands.
         std::function<RECT(const TableTile &)> tile_bounds;
         std::function<float(const std::string &, float)> text_width;
@@ -65,6 +67,7 @@ namespace tenhou {
                                          std::size_t shown_tiles = std::numeric_limits<std::size_t>::max(),
                                          bool ura = true, bool totals = true,
                                          const SettlementLayout &layout = {});
+    RECT SettlementConfirmRect(const SettlementState &state, std::size_t selected, int width);
 
     std::string SettlementSceneJson(const SettlementScene &scene);
     std::vector<SceneTextRun> LayoutSettlementText(TextRenderer &renderer, const SettlementTextItem &item, bool sd);

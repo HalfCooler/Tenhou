@@ -27,6 +27,7 @@ namespace tenhou {
 
     struct NetworkClient::Impl {
         std::string native_token;
+        std::string official_game_id;
         Observer changed;
         EventObserver accepted_event;
         std::function<void(const std::string &)> log;
@@ -41,6 +42,9 @@ namespace tenhou {
         std::string outgoing;
         std::size_t sent_offset = 0;
         std::uint64_t revision_floor = 0;
+        std::optional<LobbySnapshot> reconnect_view;
+        ULONGLONG retry_at = 0, retry_until = 0;
+        unsigned retry_delay = 1000;
         bool resuming = false;
         bool local_prepare = false;
         ULONGLONG action_start = 0;
@@ -73,7 +77,9 @@ namespace tenhou {
             return phase != LobbyPhase::Error && phase != LobbyPhase::Disconnected;
         }
 
-        void Notify() { changed(session.snapshot); }
+        const LobbySnapshot &Snapshot() const { return reconnect_view ? *reconnect_view : session.snapshot; }
+
+        void Notify() { changed(Snapshot()); }
 
         void Phase(LobbyPhase phase) {
             session.snapshot.phase = phase;
@@ -103,11 +109,44 @@ namespace tenhou {
             framer = {};
             frame_start = 0;
             send_start = 0;
+            local_prepare = false;
             action_start = 0;
             native_request_start = 0;
         }
 
+        void OpenEventWindow() {
+            window = CreateWindowExW(0, kNetworkWindow, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                     GetModuleHandleW(nullptr), this);
+            if (!window || !SetTimer(window, 1, 50, nullptr))
+                throw std::runtime_error("Cannot create network event window/timer");
+        }
+
+        bool ScheduleReconnect() {
+            const auto now = GetTickCount64();
+            if (!reconnect_view) {
+                if ((!session.snapshot.game.started && !session.snapshot.variant_active) ||
+                    session.snapshot.game.complete) return false;
+                reconnect_view = session.snapshot;
+                reconnect_view->recovering = reconnect_view->silent_recovery = true;
+                reconnect_view->actions.choices.clear();
+                reconnect_view->actions.pending.clear();
+                ++reconnect_view->actions.revision;
+                retry_delay = 1000;
+                retry_until = now + 60000;
+            }
+            if (now >= retry_until) return false;
+            Close();
+            retry_at = now + retry_delay;
+            retry_delay = std::min(2 * retry_delay, 5000u);
+            try { OpenEventWindow(); }
+            catch (...) { return false; }
+            Notify();
+            return true;
+        }
+
         void Error(const std::string &error, bool transport = false) {
+            log("NETWORK error=" + error);
+            if (transport && options.auto_reconnect && options.recover_games && ScheduleReconnect()) return;
             const bool available = transport && options.recover_games &&
                                    (((session.snapshot.game.initialized || session.snapshot.variant_active) && !session.snapshot.game.complete) ||
                                     session.snapshot.origin_lobby.has_value() || resuming);
@@ -115,11 +154,12 @@ namespace tenhou {
                                  revision_floor, session.snapshot.actions.revision, session.snapshot.lobby_revision
                              }) + 1;
             Close();
+            reconnect_view.reset();
+            retry_at = 0;
             session = {};
             session.snapshot.error = error;
             session.snapshot.reconnect_available = available;
             session.snapshot.recovering = false;
-            log("NETWORK error=" + error);
             Phase(LobbyPhase::Error);
         }
 
@@ -128,14 +168,18 @@ namespace tenhou {
                                  revision_floor, session.snapshot.actions.revision, session.snapshot.lobby_revision
                              }) + 1;
             resuming = false;
+            reconnect_view.reset();
+            retry_at = 0;
             Close();
             session = {};
             Phase(LobbyPhase::Disconnected);
         }
 
         void Connect(const ConnectionOptions &request, bool resume = false) {
-            if (request.host != options.host || request.port != options.port || request.identity != options.identity)
+            if (request.host != options.host || request.port != options.port || request.identity != options.identity) {
                 native_token.clear();
+                official_game_id.clear();
+            }
             revision_floor = std::max({
                                  revision_floor, session.snapshot.actions.revision, session.snapshot.lobby_revision
                              }) + 1;
@@ -151,6 +195,8 @@ namespace tenhou {
             session.resume_connection = resume;
             session.match_games = options.match_games;
             session.require_native = options.native_service;
+            session.official = options.official;
+            session.silent_recovery = resume;
             session.origin_lobby = options.origin_lobby;
             session.presentation = options.presentation;
             session.native_gender = options.gender;
@@ -166,6 +212,18 @@ namespace tenhou {
                         [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
                         native_token.clear(); // A damaged recovery hint must not block login.
                 }
+                if (options.official && !resume && !options.session_file.empty()) {
+                    const bool same_process = !official_game_id.empty();
+                    wchar_t value[81]{};
+                    GetPrivateProfileStringW(L"OfficialRecovery", options.session_file.filename().c_str(), L"",
+                                             value, ARRAYSIZE(value), options.config_file.c_str());
+                    official_game_id = NetworkUtf8(value);
+                    if (!ValidGameId(official_game_id)) official_game_id.clear();
+                    resuming = resume = !official_game_id.empty();
+                    session.resume_connection = resume;
+                    session.silent_recovery = resume && same_process;
+                }
+                session.official_game_id = official_game_id;
                 session.native_token = native_token;
                 session.snapshot.recovering = resume;
                 if (options.recover_games && !options.observe_games && !options.interactive_games)
@@ -189,10 +247,7 @@ namespace tenhou {
                     idle_ms > 600000 ||
                     options.heartbeat_ms < 50 || options.heartbeat_ms > 60000)
                     throw std::runtime_error("Invalid connection timing");
-                window = CreateWindowExW(0, kNetworkWindow, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                                         GetModuleHandleW(nullptr), this);
-                if (!window || !SetTimer(window, 1, 50, nullptr)) throw std::runtime_error(
-                    "Cannot create network event window/timer");
+                OpenEventWindow();
                 last_receive = last_heartbeat = GetTickCount64();
                 Phase(LobbyPhase::Resolving);
                 IN_ADDR address{};
@@ -200,9 +255,27 @@ namespace tenhou {
                 else {
                     dns = WSAAsyncGetHostByName(window, kDns, options.host.c_str(), host.data(),
                                                 static_cast<int>(host.size()));
-                    if (!dns) throw SocketError("DNS request");
+                    if (!dns) throw TransportFailure(SocketError("DNS request").what());
                 }
-            } catch (const std::exception &error) { Error(error.what()); }
+            } catch (const TransportFailure &error) { Error(error.what(), true); }
+            catch (const std::exception &error) { Error(error.what()); }
+        }
+
+        static bool ValidGameId(const std::string &value) {
+            return !value.empty() && value.size() < 80 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                       c == '_' || c == '-';
+            });
+        }
+
+        void SaveOfficialGameId(std::string value) {
+            if (!value.empty() && !ValidGameId(value)) return;
+            official_game_id = std::move(value);
+            if (options.session_file.empty()) return;
+            const auto key = options.session_file.filename().wstring();
+            if (!WritePrivateProfileStringW(L"OfficialRecovery", key.c_str(),
+                    official_game_id.empty() ? nullptr : NetworkWide(official_game_id).c_str(), options.config_file.c_str()))
+                log("NETWORK unable to save official recovery hint");
         }
 
         void Reconnect(const ConnectionOptions &request) {
@@ -217,7 +290,7 @@ namespace tenhou {
         }
 
         void BeginTcp(IN_ADDR address) {
-            if (!options.native_service && (options.interactive_games || options.recover_games) &&
+            if (!options.native_service && !options.official && (options.interactive_games || options.recover_games) &&
                 (ntohl(address.S_un.S_addr) >> 24) != 127)
                 throw std::runtime_error("Interactive DNS resolved outside loopback");
             socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -230,7 +303,8 @@ namespace tenhou {
             endpoint.sin_port = htons(static_cast<u_short>(options.port));
             Phase(LobbyPhase::Connecting);
             const int result = ::connect(socket, reinterpret_cast<sockaddr *>(&endpoint), sizeof(endpoint));
-            if (result == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) throw SocketError("connect");
+            if (result == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)
+                throw TransportFailure(SocketError("connect").what());
             if (result == 0) Connected();
         }
 
@@ -238,7 +312,7 @@ namespace tenhou {
             if (session.snapshot.phase != LobbyPhase::Connecting) return;
             const auto messages = session.Connected(options.identity, options.gender, revision_floor);
             recovery_start = resuming ? GetTickCount64() : 0;
-            options.identity.clear(); // Do not retain the input ID beyond the handshake.
+            if (!options.auto_reconnect) options.identity.clear();
             last_receive = last_heartbeat = GetTickCount64();
             Phase(LobbyPhase::AwaitHelo);
             for (const auto &message: messages) Queue(message);
@@ -289,7 +363,7 @@ namespace tenhou {
                     throw TransportFailure(SocketError("recv").what());
                 }
                 if (!count) {
-                    if (framer.pending()) throw std::runtime_error("Connection closed with truncated message");
+                    if (framer.pending()) throw TransportFailure("Connection closed with truncated message");
                     throw TransportFailure("Server closed connection");
                 }
                 const bool was_pending = framer.pending();
@@ -298,9 +372,15 @@ namespace tenhou {
                     if (!was_pending || !messages.empty()) frame_start = GetTickCount64();
                 } else frame_start = 0;
                 for (const auto &text: messages) {
-                    const auto message = ParseNetworkMessage(text);
+                    const auto message = ParseNetworkMessage(text, options.official);
                     const auto old_phase = session.snapshot.phase;
                     const auto replies = session.Receive(message);
+                    if (options.official && message.tag == "GO" && session.snapshot.game.started) {
+                        if (const auto id = message.attributes.find("gpid"); id != message.attributes.end())
+                            SaveOfficialGameId(id->second);
+                    }
+                    if (options.official && session.snapshot.game.complete && !official_game_id.empty())
+                        SaveOfficialGameId({});
                     if (message.tag.rfind("REPLAY", 0) == 0) {
                         try {
                             archive.Receive(message);
@@ -317,6 +397,7 @@ namespace tenhou {
                     }
                     if (message.tag == "SESSION" && session.snapshot.native_service) {
                         native_token = session.snapshot.native_token;
+                        options.password.clear();
                         if (!options.session_file.empty()) {
                             std::filesystem::create_directories(options.session_file.parent_path());
                             const auto temporary = options.session_file.wstring() + L".tmp";
@@ -335,18 +416,29 @@ namespace tenhou {
                     if (message.tag == "GO" || message.tag == "REINIT") local_prepare = false;
                     if (message.tag == "PREPARE") local_prepare = true;
                     if (message.tag == "START") local_prepare = false;
-                    if (accepted_event) accepted_event(message, session.snapshot);
-                    if (message.tag == "REINIT" || message.tag == "RESTORED" ||
-                        (message.tag == "CHAT" && session.snapshot.origin_lobby && !session.snapshot.recovering)) {
+                    const bool official_intro = options.official && options.presentation &&
+                        message.tag == "TAIKYOKU" && !replies.empty();
+                    if (official_intro) local_prepare = true;
+                    if (options.official && session.snapshot.recovering && !recovery_start)
+                        recovery_start = GetTickCount64();
+                    if (!session.snapshot.recovering && ((message.tag == "REINIT" && !session.snapshot.native_service) ||
+                        message.tag == "RESTORED" ||
+                        (options.official && message.tag == "INIT") ||
+                        (message.tag == "CHAT" && session.snapshot.origin_lobby) ||
+                        (message.tag == "LN" && session.snapshot.phase == LobbyPhase::Lobby))) {
                         resuming = false;
                         recovery_start = 0;
+                        reconnect_view.reset();
                     }
-                    if (session.snapshot.actions.pending.empty() || session.snapshot.table_paused) action_start = 0;
+                    if (accepted_event && !reconnect_view) accepted_event(message, session.snapshot);
+                    if (socket == INVALID_SOCKET) return;
+                    if (session.snapshot.actions.pending.empty() || session.snapshot.table_paused ||
+                        (options.official && local_prepare)) action_start = 0;
                     else if (!action_start) action_start = GetTickCount64();
                     last_receive = GetTickCount64();
                     log("NETWORK recv tag=" + message.tag);
                     if (old_phase != session.snapshot.phase) Phase(session.snapshot.phase);
-                    for (const auto &reply: replies) Queue(reply);
+                    if (!official_intro) for (const auto &reply: replies) Queue(reply);
                     // Opt in only to the identified local rules service. The
                     // original remote protocol and its GOK handshake stay intact.
                     if (message.tag == "HELO" && message.attributes.count("uname") && message.attributes.at("uname") ==
@@ -371,20 +463,40 @@ namespace tenhou {
         }
 
         void Tick() {
-            if (!Active()) return;
             const auto now = GetTickCount64();
+            if (reconnect_view && now >= retry_until) {
+                Error("Automatic game recovery timed out", true);
+                return;
+            }
+            if (retry_at) {
+                if (now >= retry_at) {
+                    retry_at = 0;
+                    const auto request = options;
+                    Connect(request, true);
+                }
+                return;
+            }
+            if (!Active()) return;
             const auto phase = session.snapshot.phase;
             if (session.snapshot.native_pending.empty() && session.snapshot.origin_pending.empty()) native_request_start = 0;
             else if (!native_request_start) native_request_start = now;
             else if (now - native_request_start >= options.handshake_ms) throw TransportFailure(
                 "Native room request confirmation timed out");
-            if (resuming && recovery_start && now - recovery_start >= options.handshake_ms)
-                throw std::runtime_error("Game recovery snapshot timed out");
+            if (recovery_start && now - recovery_start >= options.handshake_ms) {
+                if (options.official && phase == LobbyPhase::Lobby && !session.snapshot.game.started) {
+                    SaveOfficialGameId({});
+                    session.FinishOfficialRecovery();
+                    reconnect_view.reset();
+                    resuming = false;
+                    recovery_start = 0;
+                    Notify();
+                } else throw TransportFailure("Game recovery snapshot timed out");
+            }
             if (!options.origin_lobby && phase == LobbyPhase::Matching && now - phase_start >= options.matching_ms)
                 throw std::runtime_error("Matchmaking timed out; connect explicitly to retry");
             const bool established = phase == LobbyPhase::Lobby || phase == LobbyPhase::Game || phase ==
                                      LobbyPhase::MatchComplete || phase == LobbyPhase::Matching;
-            if (!established && now - phase_start >= options.handshake_ms) throw std::runtime_error(
+            if (!established && now - phase_start >= options.handshake_ms) throw TransportFailure(
                 "Connection/handshake or recovery timed out");
             if (established && now - last_receive >= options.idle_ms) throw
                     TransportFailure("Server receive timed out");
@@ -394,20 +506,25 @@ namespace tenhou {
                                                                 : 0);
             if (action_start && now - action_start >= action_timeout) throw TransportFailure(
                 "Game action confirmation timed out");
-            if (frame_start && now - frame_start >= options.handshake_ms) throw std::runtime_error(
+            if (frame_start && now - frame_start >= options.handshake_ms) throw TransportFailure(
                 "Incomplete network message timed out");
-            if (send_start && now - send_start >= options.handshake_ms) throw std::runtime_error(
+            if (send_start && now - send_start >= options.handshake_ms) throw TransportFailure(
                 "Network send timed out");
             if ((phase == LobbyPhase::AwaitHelo || phase == LobbyPhase::AwaitLobby || phase == LobbyPhase::AwaitRecovery
                  || established) && now - last_heartbeat >= options.heartbeat_ms) {
                 Queue("<Z />");
+                if (options.official && (phase == LobbyPhase::Lobby || phase == LobbyPhase::Matching))
+                    Queue("<PXR v=\"1\" />");
                 last_heartbeat = now;
                 Notify();
             }
         }
 
         void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
+            if (reconnect_view) return;
+            const auto phase = session.snapshot.phase;
             const auto replies = session.SubmitLobby(revision, command, value);
+            if (replies.empty() && phase != session.snapshot.phase) Phase(session.snapshot.phase);
             SendLobbyReplies(replies);
         }
 
@@ -432,7 +549,8 @@ namespace tenhou {
             try {
                 if (message == kDns && reinterpret_cast<HANDLE>(wparam) == self->dns) {
                     self->dns = nullptr;
-                    if (WSAGETASYNCERROR(lparam)) throw SocketError("DNS", WSAGETASYNCERROR(lparam));
+                    if (WSAGETASYNCERROR(lparam))
+                        throw TransportFailure(SocketError("DNS", WSAGETASYNCERROR(lparam)).what());
                     const auto *entry = reinterpret_cast<const hostent *>(self->host.data());
                     if (entry->h_addrtype != AF_INET || entry->h_length != sizeof(IN_ADDR) || !entry->h_addr_list || !
                         entry->h_addr_list[0])
@@ -506,7 +624,9 @@ namespace tenhou {
     void NetworkClient::ConfirmMatchStart() {
         if (impl_->local_prepare && impl_->Active()) {
             impl_->local_prepare = false;
-            impl_->Queue("<STARTREADY />");
+            if (impl_->options.official) impl_->action_start = GetTickCount64();
+            try { impl_->Queue(impl_->options.official ? "<NEXTREADY />" : "<STARTREADY />"); }
+            catch (const TransportFailure &error) { impl_->Error(error.what(), true); }
         }
     }
 
@@ -515,6 +635,6 @@ namespace tenhou {
         impl_->Notify();
     }
 
-    const LobbySnapshot &NetworkClient::snapshot() const { return impl_->session.snapshot; }
+    const LobbySnapshot &NetworkClient::snapshot() const { return impl_->Snapshot(); }
     bool NetworkClient::active() const { return impl_->Active(); }
 } // namespace tenhou

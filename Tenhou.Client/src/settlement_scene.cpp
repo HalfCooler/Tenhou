@@ -35,6 +35,23 @@ namespace tenhou {
             return std::to_string(value) + " " + std::string(TextUtf8(unit));
         }
 
+        int WinYakuCount(const SettlementReceipt &r) {
+            const auto count = r.yakuman.empty() ? SettlementDisplayYaku(r).size() : r.yakuman.size();
+            return static_cast<int>(std::min(count, kSettlementPatternsPerPage));
+        }
+
+        int WinRows(const SettlementReceipt &r) {
+            const int count = WinYakuCount(r);
+            return count > 10 ? (count + 1) / 2 : count;
+        }
+
+        int WinHeight(const SettlementReceipt &r, double scale) {
+            // The native AGARI window adds one resource-height per yaku row and
+            // reserves separate room for the visible and hidden indicators.
+            return static_cast<int>((370 + (r.dora.empty() ? 0 : 70) + (r.ura.empty() ? 0 : 80)) * scale) +
+                   (scale == 1 ? 24 : 34) * WinRows(r);
+        }
+
         SettlementScene BuildRoundSettlement(const SettlementReceipt &r, const std::array<std::string, 4> &names,
                                              std::size_t shown_yaku, bool ura, bool totals,
                                              const SettlementLayout &layout) {
@@ -43,9 +60,11 @@ namespace tenhou {
             scene.height = layout.width * 3 / 4;
             const double scale = layout.width == 1440 ? 1.4 : 1.0;
             const auto px = [&](double n) { return static_cast<int>(n * scale); };
-            const int left = (scene.width - px(660)) / 2, top = (scene.height - px(640)) / 2;
-            scene.panel = {left, top, left + px(660), top + px(640)};
-            scene.confirm = {left + px(307), top + px(591), left + px(363), top + px(612)};
+            const bool riichi_win = r.who >= 0 && !r.generic;
+            const int height = riichi_win ? WinHeight(r, scale) : px(640);
+            const int payment_shift = height - px(640);
+            const int left = (scene.width - px(660)) / 2, top = (scene.height - height) / 2;
+            scene.panel = {left, top, left + px(660), top + height};
             const auto catalog = [&](std::string role, int x, int y, int w, int h,
                                      std::vector<SettlementTextSpan> spans, int align = 0) {
                 CatalogText(scene, std::move(role), {left + px(x), top + px(y), left + px(x + w), top + px(y + h)},
@@ -176,6 +195,12 @@ namespace tenhou {
                     // 0047eb19..0047eb2f reserves the fixed two-line label width in
                     // the tehai capture. 0047ed86..0047ede4 draws it at bottom right.
                     if (north_count) union_rect.right += static_cast<int>(count_extent[0]);
+                    if (riichi_win) {
+                        const int width = std::min(scene.width, std::max(px(540),
+                            static_cast<int>(union_rect.right - union_rect.left) + px(60)));
+                        scene.panel.left = (scene.width - width) / 2;
+                        scene.panel.right = scene.panel.left + width;
+                    }
                     // Keep normal meld rows in native pixels, including the wider side
                     // sprite. Only exceptional long rows fit the available inset.
                     const double fit = std::min({
@@ -209,10 +234,10 @@ namespace tenhou {
                 }
                 const auto yaku = SettlementDisplayYaku(r);
                 const std::size_t count = r.yakuman.empty() ? yaku.size() : r.yakuman.size();
-                const int columns = count > 7 ? 2 : 1;
-                const int rows = static_cast<int>((std::min<std::size_t>(count, 14) + columns - 1) / columns);
-                const int pitch = rows > 6 ? 20 : 24;
-                ura_y = 194 + std::max(5, rows) * pitch + 8;
+                const int pitch = 24, rows = std::max(1, WinRows(r));
+                const bool two_columns = WinYakuCount(r) > rows;
+                const int yaku_top = r.dora.empty() ? 117 : 185;
+                ura_y = yaku_top + WinRows(r) * pitch + 8;
                 const auto indicators = [&](const std::vector<int> &ids, int y, const char *role, bool reveal) {
                     // Original dora capture consists of n/14,n/13 (backs), followed by
                     // n/(12-i), i=0..4; not just the received indicator count.
@@ -237,22 +262,23 @@ namespace tenhou {
                         scene.tiles.push_back(item);
                     }
                 };
-                if (!r.generic) indicators(r.dora, 110, "dora", true);
+                if (!r.generic && !r.dora.empty()) indicators(r.dora, 110, "dora", true);
                 if (!r.ura.empty()) indicators(r.ura, ura_y, "ura", ura);
                 for (std::size_t i = 0; !r.generic && i < std::min({count, shown_yaku, kSettlementPatternsPerPage}); ++i) {
-                    const int column = static_cast<int>(i) / std::max(1, rows), row =
-                            static_cast<int>(i) % std::max(1, rows);
                     const int id = r.yakuman.empty() ? yaku[i].id : r.yakuman[i];
-                    const int x = columns == 1 ? 190 : 34 + column * 310, y = 194 + row * pitch;
-                    const int name_width = columns == 1 ? 216 : 228;
-                    const int height = pitch - 2;
+                    const int row = static_cast<int>(i) % rows, column = static_cast<int>(i) / rows;
+                    const int x = two_columns ? 34 + column * 310 : 190, y = yaku_top + row * pitch;
+                    const int name_width = two_columns ? 228 : 216;
+                    const int row_height = pitch - 2;
+                    const double entrance = i + 1 == shown_yaku ? layout.yaku_entrance : 1;
                     if (const auto key = SettlementYakuKey(id))
-                        catalog("yaku", x, y, name_width, height, {{{}, *key}});
+                        catalog("yaku", x, y, name_width, row_height, {{{}, *key}});
                     else text("unknown_yaku", SettlementYakuName(id), x, y, name_width, 18);
+                    scene.text.back().entrance = entrance;
                     if (r.yakuman.empty()) {
-                        const int value_x = columns == 1 ? 414 : x + 238;
-                        catalog("han", value_x, y, columns == 1 ? 140 : 66, height,
+                        catalog("han", x + name_width + 8, y, two_columns ? 66 : 140, row_height,
                                 {{WithUnit(yaku[i].han, TextKey::unit_han)}});
+                        scene.text.back().entrance = entrance;
                     }
                 }
                 if (count > 14) text("overflow", "More yaku: F2 / Text details", 210, 170, 350, 14);
@@ -303,7 +329,7 @@ namespace tenhou {
             }
             if (totals) {
                 if (r.who >= 0 && !r.generic) {
-                    const int total_y = std::min(414, ura_y + 80);
+                    const int total_y = ura_y + (r.ura.empty() ? 0 : 80);
                     if (r.has_ten) {
                         std::vector<SettlementTextSpan> spans;
                         if (r.yakuman.empty()) {
@@ -331,7 +357,9 @@ namespace tenhou {
                 for (int seat = 0; seat < 4; ++seat) {
                     if (!SeatPresent(r.seat_mask, seat)) continue;
                     const int x = xs[seat], y = ys[seat], wind = SeatWind(r.seat_mask, layout.dealer, seat);
+                    const auto text_start = scene.text.size();
                     scene.score_panels.push_back({left + px(x), top + px(y), left + px(x + 190), top + px(y + 41)});
+                    OffsetRect(&scene.score_panels.back(), 0, payment_shift);
                     constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
                                               TextKey::seat_neutral_west, TextKey::seat_neutral_north};
                     catalog("score_wind", x + 12, y + 4, 33, 31, {{{}, winds[wind]}}, 1);
@@ -343,14 +371,18 @@ namespace tenhou {
                     // The terminal value remains exported for independent receipt
                     // checks; the original card shows base plus delta, not a third row.
                     text("score", std::to_string(r.base[seat] + r.delta[seat]), x, y, 180, 14, 0xffffffff, 0, false);
+                    for (auto i = text_start; i < scene.text.size(); ++i)
+                        OffsetRect(&scene.text[i].rect, 0, payment_shift);
                 }
                 const int honba = r.ba.empty() ? layout.honba : r.ba[0], sticks =
                         r.ba.empty() ? layout.sticks : r.ba[1];
                 if (!r.generic && honba >= 0 && sticks >= 0) {
-                    image(401, left + px(311), top + px(496));
+                    image(401, left + px(311), top + px(496) + payment_shift);
                     text("honba", std::to_string(honba), 317, 493, 15, 12);
-                    image(402, left + px(334), top + px(496));
+                    OffsetRect(&scene.text.back().rect, 0, payment_shift);
+                    image(402, left + px(334), top + px(496) + payment_shift);
                     text("sticks", std::to_string(sticks), 340, 493, 24, 12);
+                    OffsetRect(&scene.text.back().rect, 0, payment_shift);
                 }
             }
             if (r.who < 0) {
@@ -359,7 +391,6 @@ namespace tenhou {
                 const int compact_top = (scene.height - px(300)) / 2;
                 const int shift = compact_top + px(95) - (top + px(445));
                 scene.panel = {left + px(60), compact_top, left + px(600), compact_top + px(300)};
-                scene.confirm = {left + px(307), compact_top + px(250), left + px(363), compact_top + px(271)};
                 for (auto &panel: scene.score_panels) OffsetRect(&panel, 0, shift);
                 for (auto &item: scene.text) {
                     if (item.role == "reason") OffsetRect(&item.rect, 0, compact_top - top);
@@ -371,12 +402,26 @@ namespace tenhou {
         }
     }
 
+    RECT SettlementConfirmRect(const SettlementState &s, std::size_t selected, int width) {
+        const double scale = width == 1440 ? 1.4 : 1;
+        const auto px = [&](int n) { return static_cast<int>(n * scale); };
+        const bool round = selected < s.receipts.size();
+        const int height = !round ? px(480) : s.receipts[selected].who < 0 ? px(300) :
+                           s.receipts[selected].generic ? px(640) : WinHeight(s.receipts[selected], scale);
+        const int top = (width * 3 / 4 - height) / 2 + height - px(50);
+        const int x = width / 2 - px(28);
+        return {x, top, x + px(56), top + px(21)};
+    }
+
     SettlementScene BuildSettlementScene(const SettlementState &s, std::size_t selected,
                                          const std::array<std::string, 4> &names,
                                          std::size_t shown_yaku, std::size_t /*shown_tiles*/, bool ura, bool totals,
                                          const SettlementLayout &layout) {
-        if (selected < s.receipts.size())
-            return BuildRoundSettlement(s.receipts[selected], names, shown_yaku, ura, totals, layout);
+        if (selected < s.receipts.size()) {
+            auto scene = BuildRoundSettlement(s.receipts[selected], names, shown_yaku, ura, totals, layout);
+            scene.confirm = SettlementConfirmRect(s, selected, layout.width);
+            return scene;
+        }
         SettlementScene scene;
         scene.width = layout.width;
         scene.height = layout.width * 3 / 4;
@@ -478,6 +523,15 @@ namespace tenhou {
                           static_cast<float>(item.rect.top * to_hd + row_height / 2)};
             run.transform = {fit, 0, 0, fit, (run.transform[4] - left) * fit,
                              -(effects.Y + effects.Height / 2) * fit};
+            if (item.entrance < 1) {
+                const double zoom = 2.5 - 1.5 * item.entrance;
+                const double center = (right - left) * fit / 2;
+                run.transform[0] *= zoom;
+                run.transform[3] *= zoom;
+                run.transform[4] = center + (run.transform[4] - center) * zoom;
+                run.transform[5] *= zoom;
+                run.opacity = item.entrance;
+            }
         }
         return runs;
     }

@@ -205,7 +205,7 @@ namespace tenhou {
         table_->ConfigureArtwork(resource_directory_, screen_width_);
         lobby_ = std::make_unique<LobbyView>(window_, config_path_,
                                              [this](const std::string &message) { Log(message); });
-        if (options_.service_lobby) lobby_->EnableServiceLobby([this] { settings_->Open(); },
+        lobby_->EnableServiceLobby([this] { settings_->Open(); },
             [this] { PostMessageW(window_, WM_APP + 27, 0, 0); });
         lobby_->ConfigureArtwork(resource_directory_, screen_width_);
         if (options_.offline_lobby) {
@@ -222,7 +222,9 @@ namespace tenhou {
         }
         lobby_->SetConnectionObserver([this](const LobbySnapshot &s) {
             if (view_ != "welcome") return;
-            if (s.phase == LobbyPhase::Lobby && s.native_service) {
+            if ((s.native_service || s.official) &&
+                (s.phase == LobbyPhase::Lobby || (s.phase == LobbyPhase::AwaitRecovery && s.game.started) ||
+                 s.phase == LobbyPhase::Game)) {
                 welcome_->ClearPassword();
                 welcome_->SetLoginState(false, L"服务已确认登录");
                 SetView("lobby");
@@ -378,12 +380,6 @@ namespace tenhou {
     }
 
     void Application::Login(bool register_account) {
-        if (welcome_->OfficialServer()) {
-            welcome_->SetLoginState(false, welcome_->HasOfficialId()
-                ? L"官方 ID 格式有效，连接尚未开放"
-                : L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）");
-            return;
-        }
         if (welcome_->Connecting()) {
             lobby_->Disconnect();
             welcome_->SetLoginState(false, L"已取消连接");
@@ -394,31 +390,38 @@ namespace tenhou {
             return;
         }
         ConnectionOptions connection;
-        connection.host = NetworkUtf8(welcome_->Host());
-        connection.port = welcome_->Port();
+        connection.official = welcome_->OfficialServer();
+        if (connection.official && !welcome_->HasOfficialId()) {
+            welcome_->SetLoginState(false, L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName");
+            return;
+        }
+        connection.host = connection.official ? "b.tenhou.net" : NetworkUtf8(welcome_->Host());
+        connection.port = connection.official ? 10080 : welcome_->Port();
         if (connection.host.empty() || !connection.port) {
             welcome_->SetLoginState(false, L"请输入服务器主机和 1～65535 之间的端口");
             return;
         }
-        connection.identity = NetworkUtf8(welcome_->Identity());
+        connection.identity = NetworkUtf8(connection.official ? welcome_->OfficialIdentity() : welcome_->Identity());
         connection.gender = welcome_->Gender();
         connection.password = NetworkUtf8(welcome_->Password());
         connection.nickname = NetworkUtf8(welcome_->Nickname());
         connection.register_account = register_account;
         connection.config_file = config_path_;
-        connection.native_service = true;
-        connection.origin_lobby = options_.service_lobby;
+        connection.native_service = !connection.official;
+        connection.origin_lobby = connection.official || options_.service_lobby;
         connection.interactive_games = true;
         connection.match_games = true;
         connection.recover_games = true;
+        connection.auto_reconnect = true;
         connection.presentation = true;
         // The earlier numeric default and localhost identify the same local service.
         const auto session_host = connection.host == "localhost" ? "127.0.0.1" : connection.host;
         const auto session_key = session_host + ":" + connection.identity;
         const auto account_key = Sha256(Bytes(session_key.begin(), session_key.end())).substr(0, 16);
         connection.session_file = config_path_.parent_path() / (
-            L"platform-session-" + std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) + L".txt");
-        welcome_->SetLoginState(true, L"正在连接第三方服务器...");
+            std::wstring(connection.official ? L"official-session-" : L"platform-session-") +
+            std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) + L".txt");
+        welcome_->SetLoginState(true, connection.official ? L"正在连接天凤官方服务器..." : L"正在连接第三方服务器...");
         lobby_->Login(connection);
     }
 
@@ -499,7 +502,7 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
             SetView("welcome");
             return 0;
         }
-        if (message == WM_APP + 27 && view_ == "lobby" && options_.service_lobby) {
+        if (message == WM_APP + 27 && view_ == "lobby") {
             OpenReplay();
             return 0;
         }
