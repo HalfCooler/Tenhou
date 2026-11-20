@@ -4,6 +4,8 @@
 #include <array>
 #include <charconv>
 #include <iomanip>
+#include <limits>
+#include <numeric>
 #include <sstream>
 #include <stdexcept>
 #include <set>
@@ -311,6 +313,7 @@ namespace tenhou {
         snapshot.matchmaking = match_games;
         snapshot.lobby_revision = revision;
         room_ = origin_epoch_ = origin_request_ = 0;
+        official_profile_type_ = -1;
         const auto game_id = official && !official_game_id.empty() ? " gpid=\"" + Escape(official_game_id) + "\"" : "";
         return {"<HELO name=\"" + Escape(identity) + "\"" + game_id + " sx=\"" + gender + "\" tid=\"w0\" />"};
     }
@@ -338,7 +341,13 @@ namespace tenhou {
         }
         if (tag == "BYE" && !message.attributes.count("who")) Fail("Server ended session (BYE)");
         const auto phase = snapshot.phase;
-        if (official && ApplyOfficialLobby(message)) return {};
+        const auto previous_room = official && tag == "CHAT" ? snapshot.lobby : std::string{};
+        if (official && ApplyOfficialLobby(message)) {
+            if (!previous_room.empty() && previous_room != snapshot.lobby)
+                return {RequestOfficialProfile(snapshot.origin_lobby->ranked() ?
+                    static_cast<int>(preferred_monthly_profile) : -1)};
+            return {};
+        }
         if (snapshot.native_service) {
             if (origin_lobby && ApplyOriginLobby(message)) return {};
             if (tag == "READYACK") {
@@ -788,7 +797,7 @@ namespace tenhou {
                 std::vector<std::string> replies;
                 if (message.attributes.count("auth"))
                     replies.push_back("<AUTH val=\"" + AuthenticationResponse(Attribute(message, "auth")) + "\"/>");
-                replies.push_back("<PXR V=\"1\" />");
+                replies.push_back(RequestOfficialProfile(static_cast<int>(preferred_monthly_profile)));
                 return replies;
             }
             if (Attribute(message, "uname") == "TENHOU-PLATFORM" && Attribute(message, "version") == "1") {
@@ -855,6 +864,102 @@ namespace tenhou {
     }
 
     namespace {
+        int ProfileInteger(std::string_view text) {
+            int value = 0;
+            const auto end = text.data() + text.size();
+            const auto parsed = std::from_chars(text.data(), end, value);
+            return parsed.ec == std::errc{} && parsed.ptr == end ? value : 0;
+        }
+
+        double ProfileDecimal(std::string_view text) {
+            double value = 0;
+            const auto end = text.data() + text.size();
+            const auto parsed = std::from_chars(text.data(), end, value);
+            if (parsed.ec != std::errc{} || parsed.ptr != end || !(value >= std::numeric_limits<int>::min() &&
+                value <= std::numeric_limits<int>::max())) return 0;
+            return value;
+        }
+
+        std::int64_t ProfileScoreTenths(std::string_view text) {
+            return static_cast<std::int64_t>(10 * ProfileDecimal(text));
+        }
+
+        std::vector<std::string_view> ProfileFields(std::string_view text, std::size_t max_fields) {
+            std::vector<std::string_view> fields;
+            if (text.empty()) return fields;
+            while (fields.size() < max_fields) {
+                const auto comma = text.find(',');
+                fields.push_back(text.substr(0, comma));
+                if (comma == std::string_view::npos) return fields;
+                text.remove_prefix(comma + 1);
+            }
+            return {};
+        }
+
+        std::int64_t FillPlacements(LobbyStatistics &stats, const std::array<int, 4> &places, double score_hundredths) {
+            const auto games = std::accumulate(places.begin(), places.end(), std::int64_t{0});
+            if (!games) return 0;
+            constexpr auto max_int = std::numeric_limits<int>::max();
+            stats.games = static_cast<int>(std::min<std::int64_t>(games, max_int));
+            std::int64_t weighted_places = 0;
+            for (std::size_t i = 0; i < places.size(); ++i) {
+                weighted_places += static_cast<int>(i + 1) * static_cast<std::int64_t>(places[i]);
+                stats.place_per_mille[i] = static_cast<int>(1000LL * places[i] / games);
+            }
+            stats.average_place_hundredths = static_cast<int>(100 * weighted_places / games);
+            const auto score = score_hundredths / static_cast<double>(games);
+            stats.average_score_hundredths = static_cast<int>(std::clamp(score, -double(max_int), double(max_int)));
+            return games;
+        }
+
+        void FillLifetimeStatistics(LobbyStatistics &stats, const std::vector<std::string_view> &fields,
+                                    std::size_t score_index) {
+            const auto field = [&](std::size_t offset) {
+                const auto index = score_index + offset;
+                return index < fields.size() ? fields[index] : std::string_view{""};
+            };
+            const auto count = [&](std::size_t offset) { return std::max(0, ProfileInteger(field(offset))); };
+            // Origin converts the wire score in points to integer tenths before averaging.
+            const auto games = FillPlacements(stats, {count(1), count(2), count(3), count(4)},
+                                             10.0 * ProfileScoreTenths(field(0)));
+            if (games)
+                stats.bust_per_mille = static_cast<int>(1000LL * std::min<std::int64_t>(count(5), games) / games);
+            stats.hands = count(6);
+            if (stats.hands) {
+                const auto rate = [&](std::size_t offset) {
+                    return static_cast<int>(1000LL * std::min(count(offset), stats.hands) / stats.hands);
+                };
+                stats.win_per_mille = rate(7);
+                stats.deal_in_per_mille = rate(8);
+                stats.call_per_mille = rate(9);
+                stats.reach_per_mille = rate(10);
+            }
+        }
+
+        LobbyRank ReadOfficialLifetime(const std::string &text, LobbyStatistics &stats) {
+            constexpr std::array targets{20, 20, 20, 20, 40, 60, 80, 100, 100, 100, 400, 800,
+                                         1200, 1600, 2000, 2400, 2800, 3200, 3600, 4000};
+            const auto fields = ProfileFields(text, 14);
+            if (fields.size() < 3) return {};
+            const int grade = std::max(0, ProfileInteger(fields[0]));
+            stats.points = ProfileInteger(fields[1]);
+            stats.rating = static_cast<int>(ProfileDecimal(fields[2]));
+            if (static_cast<std::size_t>(grade) < targets.size()) stats.next_points = targets[grade];
+            FillLifetimeStatistics(stats, fields, 3);
+            return {grade, stats.rating};
+        }
+
+        std::optional<LobbyStatistics> ReadOfficialMonthly(const std::string &text) {
+            const auto fields = ProfileFields(text, 21);
+            if (fields.size() != 15 && fields.size() != 21) return std::nullopt;
+            std::array<int, 4> places{};
+            for (std::size_t i = 0; i < places.size(); ++i)
+                places[i] = std::max(0, ProfileInteger(fields[i]));
+            LobbyStatistics stats{};
+            FillPlacements(stats, places, 100 * ProfileDecimal(fields[4]));
+            return stats;
+        }
+
         std::vector<int> DecimalList(const std::string &text, std::size_t limit) {
             std::vector<int> values;
             if (text.empty()) return values;
@@ -900,6 +1005,22 @@ namespace tenhou {
         }
     }
 
+    LobbyStatistics ReadPrivateLobbyStatistics(std::string_view text) {
+        LobbyStatistics stats{};
+        FillLifetimeStatistics(stats, ProfileFields(text, 11), 0);
+        return stats;
+    }
+
+    std::string LobbySession::RequestOfficialProfile(int type) {
+        official_profile_type_ = type;
+        if (snapshot.origin_lobby) snapshot.origin_lobby->profile.monthly.clear();
+        return "<PXR V=\"" + std::to_string(type) + "\" />";
+    }
+
+    std::string LobbySession::OfficialProfilePoll() const {
+        return "<PXR v=\"" + std::to_string(official_profile_type_) + "\" />";
+    }
+
     void LobbySession::ReturnToOriginLobby() {
         const auto revision = snapshot.actions.revision + 1;
         game_ = {};
@@ -922,33 +1043,51 @@ namespace tenhou {
 
     bool LobbySession::ApplyOfficialLobby(const NetworkMessage &message) {
         if (snapshot.phase == LobbyPhase::AwaitHelo) return false;
+        // The official service uses RANKING for both the personal v2 list and contest rankings.
+        if ((message.tag == "RANKING" || message.tag == "RANK") && message.attributes.count("v2")) {
+            if (snapshot.origin_lobby && official_profile_type_ >= 0) {
+                const auto stats = ReadOfficialMonthly(Attribute(message, "v2"));
+                if (stats) snapshot.origin_lobby->profile.monthly[official_profile_type_] = *stats;
+            }
+            return true;
+        }
         if (message.tag == "LN") {
             if (!snapshot.origin_lobby) {
                 OfflineLobbyProfile profile{};
                 profile.name = NetworkWide(snapshot.identity);
                 profile.ranked_allowed = snapshot.identity != "NoName";
-                const auto number = [](const std::string &s) {
-                    int result = 0;
-                    std::from_chars(s.data(), s.data() + s.size(), result);
-                    return result;
-                };
-                const auto field = [&](const char *key) {
+                const auto field = [&](const std::string &key) {
                     const auto it = snapshot.server.find(key);
                     return it == snapshot.server.end() ? std::string{} : it->second;
                 };
                 profile.membership_expiry = NetworkWide(field("expire"));
                 profile.membership_days = field("expiredays").empty() ? !profile.membership_expiry.empty() :
-                                          number(field("expiredays"));
-                profile.light_options = std::max(0, number(field("opt")));
-                for (int i = 0; i < 2; ++i) {
-                    std::istringstream input(field(i ? "PF3" : "PF4"));
-                    std::array<std::string, 15> values;
-                    for (auto &value: values) std::getline(input, value, ',');
-                    auto &stats = profile.lifetime[i];
-                    stats.points = number(values[1]);
-                    stats.rating = number(values[2]);
-                    stats.games = number(values[9]);
-                    (i ? profile.three : profile.four) = {number(values[0]), stats.rating};
+                                          ProfileInteger(field("expiredays"));
+                profile.light_options = std::max(0, ProfileInteger(field("opt")));
+                profile.four = ReadOfficialLifetime(field("PF4"), profile.lifetime[0]);
+                profile.three = ReadOfficialLifetime(field("PF3"), profile.lifetime[1]);
+                constexpr const char *rating_keys[]{"PF01C", "PF02C", "PF03C", "PF11C",
+                                                    "PF12C", "PF13C", "PF23C", "PF33C"};
+                for (std::size_t i = 0; i < kAmberLifetimeProfiles.size(); ++i) {
+                    const auto type = kAmberLifetimeProfiles[i];
+                    const auto record = field("PF" + std::to_string(type));
+                    const auto rating = field(rating_keys[i]);
+                    if (record.empty() && rating.empty()) continue;
+                    LobbyStatistics stats{};
+                    const auto results = ProfileFields(record, 12);
+                    const auto rating_fields = ProfileFields(rating, 3);
+                    if (rating_fields.size() >= 2)
+                        stats.rating = static_cast<int>(ProfileDecimal(rating_fields[1]));
+                    FillLifetimeStatistics(stats, results, 1);
+                    if (results.size() >= 2 && stats.games) {
+                        constexpr int chip_values[]{0, 2, 5, 0, 2, 5, 5, 5};
+                        const auto score = ProfileScoreTenths(results[1]) / 10;
+                        const auto chips = static_cast<std::int64_t>(ProfileInteger(results[0])) * chip_values[i];
+                        constexpr auto max_int = static_cast<std::int64_t>(std::numeric_limits<int>::max());
+                        stats.average_g_hundredths = static_cast<int>(
+                            std::clamp(10000LL * (score + chips) / stats.games, -max_int, max_int));
+                    }
+                    profile.other_lifetime.emplace(type, stats);
                 }
                 snapshot.origin_lobby.emplace(std::move(profile));
                 snapshot.lobby = "L0000";
@@ -1066,6 +1205,16 @@ namespace tenhou {
     }
 
     std::vector<std::string> LobbySession::SubmitOriginLobby(const std::string &command, const std::wstring &value) {
+        if (official && command == "monthly-profile") {
+            const auto type = Integer(NetworkUtf8(value));
+            if (!ValidMonthlyProfile(type)) return {};
+            preferred_monthly_profile = type;
+            const auto phase = snapshot.phase;
+            if (!snapshot.origin_lobby || snapshot.recovering ||
+                (phase != LobbyPhase::Lobby && phase != LobbyPhase::Matching) ||
+                static_cast<int>(type) == official_profile_type_) return {};
+            return {RequestOfficialProfile(static_cast<int>(type))};
+        }
         if (!snapshot.origin_lobby || !snapshot.origin_pending.empty() ||
             (snapshot.phase != LobbyPhase::Lobby && snapshot.phase != LobbyPhase::Matching) || snapshot.recovering)
             return {};

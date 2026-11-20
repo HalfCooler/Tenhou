@@ -3,6 +3,7 @@
 #include "network_protocol.hpp"
 #include "window_layout.hpp"
 #include <commctrl.h>
+#include <shellapi.h>
 #include <cstring>
 #include <stdexcept>
 
@@ -30,10 +31,54 @@ namespace tenhou {
         constexpr Label kParlorRows[]{Label::lobby_parlor_0, Label::lobby_parlor_2, Label::lobby_parlor_5,
                                       Label::lobby_parlor_three};
         constexpr Label kEvents[]{Label::lobby_event_one, Label::lobby_event_two, Label::lobby_event_three};
-        constexpr Label kLifetimeLabels[]{Label::lobby_lifetime_four, Label::lobby_lifetime_three};
-        constexpr Label kMonthLabels[]{Label::lobby_month_four, Label::lobby_month_three};
+        struct ProfileChoice {
+            unsigned type;
+            Label label;
+        };
+        constexpr ProfileChoice kLifetimeChoices[]{
+            {kRankedFourProfile, Label::lobby_lifetime_four}, {kRankedThreeProfile, Label::lobby_lifetime_three},
+            {kPrivateFourProfile, Label::lobby_private_four}, {kPrivateThreeProfile, Label::lobby_private_three},
+            {kAmberRatingProfile, Label::lobby_amber_rating}, {kAmberGProfile, Label::lobby_amber_g}
+        };
+        constexpr Label kRankedMonthlyRules[]{
+            Label::lobby_no_tanyao, Label::lobby_four_tanyao, Label::lobby_red, Label::lobby_three_red
+        };
+        constexpr const wchar_t *kPrivateProfileKeys[]{L"PFPV4", L"PFPV3"};
 
         const wchar_t *Text(Label label) { return kTextLabels[static_cast<std::size_t>(label)].label.data(); }
+
+        std::wstring ProfileCaption(Label period, const std::wstring &category) {
+            return std::wstring(Text(period)) + L"／" + category;
+        }
+
+        std::wstring AmberProfileLabel(std::size_t index) {
+            const auto length = (index < 3 || index == 6) ? Label::lobby_east : Label::lobby_south;
+            return std::wstring(Text(length)) + L" " + Text(kParlorRows[index < 6 ? index % 3 : 3]);
+        }
+
+        std::wstring LifetimeProfileLabel(unsigned type) {
+            for (const auto &choice: kLifetimeChoices)
+                if (type == choice.type) return Text(choice.label);
+            const auto it = std::find(kAmberLifetimeProfiles.begin(), kAmberLifetimeProfiles.end(), type);
+            if (it != kAmberLifetimeProfiles.end())
+                return std::wstring(Text(Label::lobby_amber)) + L" " + AmberProfileLabel(it - kAmberLifetimeProfiles.begin());
+            return {};
+        }
+
+        std::wstring RankedMonthlyLabel(unsigned type) {
+            const auto length = (type & 8) ? Label::lobby_south : Label::lobby_east;
+            const auto rule = (type & 0x10) ? 3 : (type & 4) ? 0 : (type & 2) ? 1 : 2;
+            return std::wstring(Text(length)) + L" " + Text(kRankedMonthlyRules[rule]);
+        }
+
+        std::wstring MonthlyProfileCaption(unsigned type) {
+            const auto amber = std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), type);
+            if (amber != kAmberMonthlyProfiles.end())
+                return ProfileCaption(Label::lobby_month, std::wstring(Text(Label::lobby_amber)) + L" " +
+                                      AmberProfileLabel(amber - kAmberMonthlyProfiles.begin()));
+            const unsigned tier = ((type & 0x80) ? 1 : 0) + ((type & 0x20) ? 2 : 0);
+            return ProfileCaption(Label::lobby_month, std::wstring(Text(kTiers[tier])) + L"桌 " + RankedMonthlyLabel(type));
+        }
 
         void Draw(HDC dc, std::wstring_view text, RECT rect, UINT flags = DT_LEFT, COLORREF color = kInk) {
             SetTextColor(dc, color);
@@ -189,8 +234,9 @@ namespace tenhou {
             AddButton(kMenu, {90, 365, 148, 385}, Label::lobby_menu);
             AddButton(kPractice, {149, 365, 207, 385}, Label::lobby_practice);
             AddButton(kCancel, {208, 365, 255, 385}, Label::lobby_cancel);
-            AddButton(kLifetime, {335, 60, 555, 80}, kLifetimeLabels[0]);
-            AddButton(kMonthly, {335, 195, 555, 215}, kMonthLabels[0]);
+            AddButton(kLifetime, {335, 60, 555, 80}, Label::lobby_lifetime);
+            AddButton(kMonthly, {335, 195, 555, 215}, Label::lobby_month);
+            LoadProfilePreferences();
             toutenkou_ = std::filesystem::is_regular_file(config_.parent_path() / L"toutenkou.test");
             Refresh();
         } catch (...) {
@@ -238,6 +284,7 @@ namespace tenhou {
         if (visible_ == visible) return;
         visible_ = visible;
         if (visible) {
+            LoadProfilePreferences();
             ShowWindow(viewport_, SW_SHOW);
             Tick();
             SetTimer(panel_, kClockTimer, 1000, nullptr);
@@ -403,6 +450,7 @@ namespace tenhou {
         } else if (id >= kTier && id < kTier + std::size(kTiers)) {
             ClearRules();
             tier_ = static_cast<RankedTier>(id - kTier);
+            SetMonthlyProfile(RankedMonthlyProfile(monthly_, tier_));
         } else if (id >= kQueue && id < kQueue + kRankedSlots) {
             if (outer_ == 0) {
                 const auto type = state_.Candidate(tier_, id - kQueue).type;
@@ -493,17 +541,95 @@ namespace tenhou {
     }
 
     void OfflineLobbyView::ChooseProfile(bool monthly) {
+        constexpr UINT help = 3000;
         const auto menu = CreatePopupMenu();
-        auto &selected = monthly ? monthly_ : lifetime_;
-        const auto &labels = monthly ? kMonthLabels : kLifetimeLabels;
-        const auto button = buttons_.at(monthly ? kMonthly : kLifetime);
-        for (unsigned i = 0; i < std::size(labels); ++i)
-            MenuItem(menu, i + 1, labels[i], i == selected ? MF_CHECKED : 0);
-        const auto choice = Popup(menu, button, panel_);
-        if (choice >= 1 && choice <= std::size(labels)) {
-            selected = choice - 1;
-            SetWindowTextW(button, Text(labels[selected]));
+        const auto append = [&](HMENU target, unsigned type, const std::wstring &label) {
+            const bool selected = type == (monthly ? monthly_ : lifetime_);
+            AppendMenuW(target, MF_STRING | (selected ? MF_CHECKED : 0), type, label.c_str());
+        };
+        const auto separator = [](HMENU target) { AppendMenuW(target, MF_SEPARATOR, 0, nullptr); };
+        const auto submenu = [&](HMENU child, const std::wstring &label, bool selected) {
+            AppendMenuW(menu, MF_POPUP | (selected ? MF_CHECKED : 0),
+                        reinterpret_cast<UINT_PTR>(child), label.c_str());
+        };
+        const auto amber = CreatePopupMenu();
+        if (monthly) {
+            for (unsigned tier = 0; tier < std::size(kTiers); ++tier) {
+                const auto ranked = CreatePopupMenu();
+                const auto ranked_tier = static_cast<RankedTier>(tier);
+                for (unsigned i = 0; i < kRankedMonthlyProfiles.size(); ++i) {
+                    if (i == 3 || i == 6) separator(ranked);
+                    const auto type = RankedMonthlyProfile(kRankedMonthlyProfiles[i], ranked_tier);
+                    append(ranked, type, RankedMonthlyLabel(type));
+                }
+                submenu(ranked, std::wstring(Text(Label::lobby_ranked)) + L" " + Text(kTiers[tier]),
+                        RankedMonthlyProfile(monthly_, ranked_tier) == monthly_);
+            }
+            separator(menu);
+            for (unsigned i = 0; i < kAmberMonthlyProfiles.size(); ++i) {
+                if (i == 3 || i == 6) separator(amber);
+                append(amber, kAmberMonthlyProfiles[i], AmberProfileLabel(i));
+            }
+            submenu(amber, Text(Label::lobby_amber), (monthly_ & 0x600) != 0);
+            separator(menu);
+            MenuItem(menu, help, Label::lobby_public_rankings);
+        } else {
+            append(menu, kRankedFourProfile, LifetimeProfileLabel(kRankedFourProfile));
+            append(menu, kRankedThreeProfile, LifetimeProfileLabel(kRankedThreeProfile));
+            separator(menu);
+            append(amber, kAmberRatingProfile, LifetimeProfileLabel(kAmberRatingProfile));
+            append(amber, kAmberGProfile, LifetimeProfileLabel(kAmberGProfile));
+            for (unsigned i = 0; i < kAmberLifetimeProfiles.size(); ++i) {
+                if (i == 0 || i == 3 || i == 6) separator(amber);
+                append(amber, kAmberLifetimeProfiles[i], AmberProfileLabel(i));
+            }
+            submenu(amber, Text(Label::lobby_amber), lifetime_ >= 600);
+            separator(menu);
+            append(menu, kPrivateFourProfile, LifetimeProfileLabel(kPrivateFourProfile));
+            append(menu, kPrivateThreeProfile, LifetimeProfileLabel(kPrivateThreeProfile));
+            separator(menu);
+            MenuItem(menu, help, Label::lobby_private_reset);
         }
+
+        const auto button = buttons_.at(monthly ? kMonthly : kLifetime);
+        const auto choice = Popup(menu, button, panel_);
+        if (choice == help) {
+            if (monthly) {
+                ShellExecuteW(panel_, L"open", L"https://tenhou.net/ranking.html", nullptr, nullptr, SW_SHOWNORMAL);
+            } else if (MessageBoxW(panel_, Text(Label::lobby_private_reset_prompt), Text(Label::lobby_private_reset),
+                                   MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES) {
+                for (unsigned i = 0; i < private_lifetime_.size(); ++i) {
+                    if (WritePrivateProfileStringW(L"STATUS", kPrivateProfileKeys[i], nullptr, config_.c_str()))
+                        private_lifetime_[i] = {};
+                }
+            }
+        } else if (monthly && ValidMonthlyProfile(choice)) {
+            SetMonthlyProfile(choice);
+        } else if (!monthly && choice) {
+            lifetime_ = choice;
+            SetWindowTextW(button, ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(choice)).c_str());
+            WritePrivateProfileStringW(L"REBUILD", L"ProfileLifetime", std::to_wstring(choice).c_str(), config_.c_str());
+        }
+    }
+
+    void OfflineLobbyView::LoadProfilePreferences() {
+        const auto saved_lifetime = GetPrivateProfileIntW(L"REBUILD", L"ProfileLifetime", lifetime_, config_.c_str());
+        if (!LifetimeProfileLabel(saved_lifetime).empty()) lifetime_ = saved_lifetime;
+        const auto saved_monthly = GetPrivateProfileIntW(L"REBUILD", L"ProfileMonthly", monthly_, config_.c_str());
+        if (ValidMonthlyProfile(saved_monthly)) monthly_ = saved_monthly;
+        SetWindowTextW(buttons_.at(kLifetime), ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(lifetime_)).c_str());
+        SetWindowTextW(buttons_.at(kMonthly), MonthlyProfileCaption(monthly_).c_str());
+        for (unsigned i = 0; i < private_lifetime_.size(); ++i)
+            private_lifetime_[i] = ReadPrivateLobbyStatistics(NetworkUtf8(PreferenceString(config_, L"STATUS", kPrivateProfileKeys[i])));
+    }
+
+    void OfflineLobbyView::SetMonthlyProfile(unsigned type) {
+        if (monthly_ != type) {
+            monthly_ = type;
+            SetWindowTextW(buttons_.at(kMonthly), MonthlyProfileCaption(type).c_str());
+            WritePrivateProfileStringW(L"REBUILD", L"ProfileMonthly", std::to_wstring(type).c_str(), config_.c_str());
+        }
+        if (official_ && submit_) submit_("monthly-profile", std::to_wstring(type));
     }
 
     void OfflineLobbyView::PaintViewport(HDC dc) {
@@ -651,37 +777,80 @@ namespace tenhou {
         Draw(dc, profile.name, {335, 27, 555, 45}, DT_CENTER);
         Draw(dc, std::wstring(Text(Label::lobby_membership_expiry)) + L"  " + profile.membership_expiry,
              {335, 43, 555, 58}, DT_CENTER, kMuted);
-        const auto &rank = lifetime_ ? profile.three : profile.four;
-        const auto &all = profile.lifetime[lifetime_];
-        const auto grade = rank.code == 0 ? L"新人" :
-            rank.code < 10 ? std::to_wstring(10 - rank.code) + L"级" : std::to_wstring(rank.code - 9) + L"段";
-        const auto description = grade + L"  " + std::to_wstring(all.points) +
-            L"/" + std::to_wstring(all.next_points) + L"pt  R" + std::to_wstring(rank.rating);
-        Draw(dc, profile.ranked_allowed ? description : L"—", {335, 81, 555, 98}, DT_CENTER);
+        const bool ranked = lifetime_ == kRankedFourProfile || lifetime_ == kRankedThreeProfile;
+        const bool private_room = lifetime_ == kPrivateFourProfile || lifetime_ == kPrivateThreeProfile;
+        const bool three = lifetime_ == kRankedThreeProfile || lifetime_ == kPrivateThreeProfile ||
+                           lifetime_ == kAmberLifetimeProfiles[6] || lifetime_ == kAmberLifetimeProfiles[7];
+        const LobbyStatistics empty{};
+        const auto extra = profile.other_lifetime.find(lifetime_);
+        const auto &all = ranked ? profile.lifetime[three] : private_room ? private_lifetime_[three] :
+                          extra != profile.other_lifetime.end() ? extra->second : empty;
+        if (ranked) {
+            const auto &rank = three ? profile.three : profile.four;
+            const auto grade = rank.code == 0 ? L"新人" :
+                rank.code < 10 ? std::to_wstring(10 - rank.code) + L"级" : std::to_wstring(rank.code - 9) + L"段";
+            const auto target = official_ && !all.next_points ? std::wstring{} : L"/" + std::to_wstring(all.next_points);
+            const auto description = grade + L"  " + std::to_wstring(all.points) + target +
+                L"pt  R" + std::to_wstring(rank.rating);
+            Draw(dc, profile.ranked_allowed ? description : L"—", {335, 81, 555, 98}, DT_CENTER);
+        } else if (all.rating || all.average_g_hundredths) {
+            auto description = all.rating ? L"R" + std::to_wstring(all.rating) : std::wstring{};
+            if (all.average_g_hundredths) description += L"  G" + Decimal(*all.average_g_hundredths, 2);
+            Draw(dc, description, {335, 81, 555, 98}, DT_CENTER);
+        }
         const auto row = [&](int x, int y, int width, Label label, const std::wstring &value) {
-            Draw(dc, Text(label), {x, y, x + width, y + 16});
+            SIZE value_size{};
+            GetTextExtentPoint32W(dc, value.c_str(), static_cast<int>(value.size()), &value_size);
+            Draw(dc, Text(label), {x, y, x + width - value_size.cx - 2, y + 16});
             Draw(dc, value, {x, y, x + width, y + 16}, DT_RIGHT);
             Line(dc, {x, y + 16, x + width, y + 17});
         };
         constexpr Label places[]{Label::lobby_place_1, Label::lobby_place_2, Label::lobby_place_3, Label::lobby_place_4};
-        const auto percentage = [](int value) { return Decimal(value, 1) + L"%"; };
-        const auto statistics = [&](const LobbyStatistics &stats, bool three, int y) {
-            for (int i = 0; i < (three ? 3 : 4); ++i)
-                row(335, y + i * 17, 67, places[i], submit_ && !stats.games ? L"—" : percentage(stats.place_per_mille[i]));
-            row(335, y + 68, 67, Label::lobby_bust, submit_ ? L"—" : percentage(stats.bust_per_mille));
-            row(410, y, 70, Label::lobby_games, std::to_wstring(stats.games));
-            row(410, y + 17, 70, Label::lobby_average_score, submit_ ? L"—" : Decimal(stats.average_score_hundredths, 2));
-            row(410, y + 34, 70, Label::lobby_average_place, submit_ && !stats.games ? L"—" : Decimal(stats.average_place_hundredths, 2));
-            row(487, y, 68, Label::lobby_wins, submit_ ? L"—" : percentage(stats.win_per_mille));
-            row(487, y + 17, 68, Label::lobby_deal_in, submit_ ? L"—" : percentage(stats.deal_in_per_mille));
-            row(487, y + 34, 68, Label::lobby_call, submit_ ? L"—" : percentage(stats.call_per_mille));
-            row(487, y + 51, 68, Label::lobby_reach, submit_ ? L"—" : percentage(stats.reach_per_mille));
+        const auto percentage = [](int value) { return value == 1000 ? L"100%" : Decimal(value, 1) + L"%"; };
+        const auto statistics = [&](const LobbyStatistics &stats, bool three_players, bool monthly, int y) {
+            const bool have_games = stats.games > 0;
+            const bool have_game_rates = have_games && (!submit_ || official_ || private_room);
+            const bool have_hand_rates = stats.hands > 0 || (!submit_ && have_games);
+            for (int i = 0; i < (three_players ? 3 : 4); ++i)
+                row(335, y + i * 17, 73, places[i], have_games ? percentage(stats.place_per_mille[i]) : L"—");
+            if (!official_ || !monthly)
+                row(335, y + 68, 73, Label::lobby_bust, have_game_rates ? percentage(stats.bust_per_mille) : L"—");
+            row(409, y, 73, Label::lobby_games,
+                have_games || (submit_ && !official_ && ranked && !monthly) ? std::to_wstring(stats.games) : L"—");
+            row(409, y + 17, 73, Label::lobby_average_score, have_game_rates ? Decimal(stats.average_score_hundredths, 2) : L"—");
+            row(409, y + 34, 73, Label::lobby_average_place, have_games ? Decimal(stats.average_place_hundredths, 2) : L"—");
+            if (!official_ || !monthly) {
+                row(483, y, 73, Label::lobby_wins, have_hand_rates ? percentage(stats.win_per_mille) : L"—");
+                row(483, y + 17, 73, Label::lobby_deal_in, have_hand_rates ? percentage(stats.deal_in_per_mille) : L"—");
+                row(483, y + 34, 73, Label::lobby_call, have_hand_rates ? percentage(stats.call_per_mille) : L"—");
+                row(483, y + 51, 73, Label::lobby_reach, have_hand_rates ? percentage(stats.reach_per_mille) : L"—");
+            }
         };
-        statistics(all, lifetime_ == 1, 100);
-        if (const auto &month = profile.monthly[monthly_]) {
-            Draw(dc, L"R" + std::to_wstring(month->rating), {335, 220, 555, 239}, DT_CENTER);
-            statistics(*month, monthly_ == 1, 242);
-        } else Draw(dc, Text(Label::lobby_no_stats), {335, 221, 555, 241}, DT_CENTER, kMuted);
+        if (lifetime_ == kAmberRatingProfile || lifetime_ == kAmberGProfile) {
+            for (unsigned i = 0; i < kAmberLifetimeProfiles.size(); ++i) {
+                const auto it = profile.other_lifetime.find(kAmberLifetimeProfiles[i]);
+                std::wstring value = L"—";
+                if (it != profile.other_lifetime.end()) {
+                    const auto &stats = it->second;
+                    if (lifetime_ == kAmberRatingProfile && stats.rating) value = L"R" + std::to_wstring(stats.rating);
+                    if (lifetime_ == kAmberGProfile && stats.average_g_hundredths)
+                        value = L"G" + Decimal(*stats.average_g_hundredths, 2);
+                }
+                const int y = 82 + static_cast<int>(i) * 14;
+                Draw(dc, AmberProfileLabel(i), {335, y, 480, y + 14});
+                Draw(dc, value, {480, y, 555, y + 14}, DT_RIGHT);
+            }
+        } else {
+            statistics(all, three, false, 100);
+        }
+        const auto month = profile.monthly.find(monthly_);
+        if (official_ || month != profile.monthly.end()) {
+            const auto &stats = month == profile.monthly.end() ? empty : month->second;
+            if (stats.rating) Draw(dc, L"R" + std::to_wstring(stats.rating), {335, 220, 555, 239}, DT_CENTER);
+            statistics(stats, (monthly_ & 0x10) != 0, true, 242);
+        } else {
+            Draw(dc, Text(Label::lobby_no_stats), {335, 221, 555, 241}, DT_CENTER, kMuted);
+        }
     }
 
     void OfflineLobbyView::PaintRules(HDC dc) {

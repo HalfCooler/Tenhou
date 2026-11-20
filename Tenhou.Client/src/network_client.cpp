@@ -203,6 +203,11 @@ namespace tenhou {
             session.native_password = options.password;
             session.native_nickname = options.nickname;
             session.native_register = options.register_account && !resume;
+            if (options.official) {
+                const auto type = GetPrivateProfileIntW(L"REBUILD", L"ProfileMonthly",
+                    kDefaultMonthlyProfile, options.config_file.c_str());
+                if (ValidMonthlyProfile(type)) session.preferred_monthly_profile = type;
+            }
             try {
                 if (options.native_service && native_token.empty() && !options.session_file.empty() &&
                     std::filesystem::exists(options.session_file)) {
@@ -514,7 +519,7 @@ namespace tenhou {
                  || established) && now - last_heartbeat >= options.heartbeat_ms) {
                 Queue("<Z />");
                 if (options.official && (phase == LobbyPhase::Lobby || phase == LobbyPhase::Matching))
-                    Queue("<PXR v=\"1\" />");
+                    Queue(session.OfficialProfilePoll());
                 last_heartbeat = now;
                 Notify();
             }

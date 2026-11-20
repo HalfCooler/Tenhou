@@ -28,7 +28,21 @@ namespace tenhou {
         std::array<int, 4> place_per_mille;
         int win_per_mille, deal_in_per_mille, call_per_mille, reach_per_mille, bust_per_mille;
         int average_score_hundredths, average_place_hundredths;
+        int hands = 0;
+        std::optional<int> average_g_hundredths = std::nullopt;
     };
+
+    inline constexpr unsigned kPrivateThreeProfile = 1, kPrivateFourProfile = 2;
+    inline constexpr unsigned kRankedThreeProfile = 3, kRankedFourProfile = 4;
+    inline constexpr unsigned kAmberRatingProfile = 690, kAmberGProfile = 691;
+    inline constexpr unsigned kDefaultMonthlyProfile = 1;
+    inline constexpr std::array<unsigned, 8> kRankedMonthlyProfiles{7, 3, 1, 15, 11, 9, 17, 25};
+    inline constexpr std::array<unsigned, 8> kAmberMonthlyProfiles{0x421, 0x221, 0x621, 0x429,
+                                                                   0x229, 0x629, 0x631, 0x639};
+    inline constexpr std::array<unsigned, 8> kAmberLifetimeProfiles{601, 602, 603, 611, 612, 613, 623, 633};
+
+    unsigned RankedMonthlyProfile(unsigned type, RankedTier tier);
+    bool ValidMonthlyProfile(unsigned type);
 
     struct OfflineLobbyProfile {
         std::wstring name, membership_expiry;
@@ -36,8 +50,9 @@ namespace tenhou {
         unsigned light_options;
         LobbyRank four, three;
         std::array<LobbyStatistics, 2> lifetime;
-        std::array<std::optional<LobbyStatistics>, 2> monthly;
+        std::map<unsigned, LobbyStatistics> monthly;
         bool ranked_allowed = true;
+        std::map<unsigned, LobbyStatistics> other_lifetime;
     };
 
     struct OfflineLobbyCounts {

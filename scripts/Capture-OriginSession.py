@@ -1,6 +1,7 @@
-"""Record and trim redacted messages from the repository's original Windows client."""
+"""Record and trim messages from the repository's original Windows client."""
 
 import argparse
+import base64
 import hashlib
 import json
 import sys
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = Path(__file__).with_name("origin-session-hook.js")
 ORIGIN_SHA256 = "96164cdb63e043541c27572a22b895072a8f9a0a0ee97d877a3cb340e327ffe6"
 FORMAT = "tenhou-origin-session/1"
+RAW_FORMAT = "tenhou-origin-session-raw/1"
 COMMANDS = """\
   mark [@序号] 备注         给指定事件打标。省略序号时标记当前最后一条事件
   show [起始序号 结束序号]    查看闭区间。省略区间时查看最新 20 条
@@ -36,19 +38,22 @@ def write_line(output, record):
 
 
 class Journal:
-    def __init__(self, path, review=False):
+    def __init__(self, path, review=False, *, raw=False):
         self.path = path.resolve()
         self.review = review
+        self.raw = raw
         self.lock = Lock()
         if review:
             with self.path.open(encoding="utf-8") as source:
                 self.header = json.loads(source.readline())
-                if not isinstance(self.header, dict) or self.header.get("format") != FORMAT:
+                if not isinstance(self.header, dict) or self.header.get("format") not in (FORMAT, RAW_FORMAT):
                     raise ValueError("不是原版采集记录")
+                self.raw = self.header["format"] == RAW_FORMAT
                 self.records = [json.loads(line) for line in source if line.strip()]
         else:
             self.header = {
-                "format": FORMAT, "origin_version": "130/0005", "origin_sha256": ORIGIN_SHA256,
+                "format": RAW_FORMAT if raw else FORMAT,
+                "origin_version": "130/0005", "origin_sha256": ORIGIN_SHA256,
                 "created_at": timestamp(), "outbound": "Winsock send", "inbound": "0x415F48 / WM 0x8209",
             }
             self.records = []
@@ -130,11 +135,16 @@ class Capture:
             detached.set()
             self.journal.add("detach", stream=stream, reason=reason)
 
-        def on_message(message, _data):
+        def on_message(message, data):
             if message["type"] != "send":
                 self.journal.add("gap", stream=stream, reason="hook-error")
                 return
             payload = message["payload"]
+            if self.journal.raw and payload["kind"] == "frame":
+                if data is None or len(data) != payload["byte_length"]:
+                    payload = {**payload, "kind": "gap", "reason": "binary-transfer"}
+                else:
+                    payload = {**payload, "data_b64": base64.b64encode(data).decode("ascii")}
             self.journal.add(stream=stream, **payload)
 
         session.on("detached", on_detach)
@@ -142,7 +152,6 @@ class Capture:
             script = session.create_script(HOOK.read_text(encoding="utf-8"))
             script.on("message", on_message)
             script.load()
-            script.exports_sync.set_recording(False)
         except Exception:
             if not session.is_detached:
                 session.detach()
@@ -157,7 +166,7 @@ class Capture:
         if self.recording != enabled:
             if enabled:
                 self.journal.add("start", stream=self.stream)
-            self.script.exports_sync.set_recording(enabled)
+            self.script.exports_sync.set_recording(enabled, self.journal.raw)
             if not enabled:
                 self.journal.add("pause", stream=self.stream)
             self.recording = enabled
@@ -178,8 +187,12 @@ def sequence_range(first, last):
 
 def display(row):
     if row["kind"] == "frame":
-        body = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in row["attrs"].items())
-        message = f'{row["direction"]} {row["tag"]} {body}'
+        if "data_b64" in row:
+            data = base64.b64decode(row["data_b64"], validate=True)
+            message = f'{row["direction"]} [{len(data)} bytes] {data!r}'
+        else:
+            body = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in row["attrs"].items())
+            message = f'{row["direction"]} {row["tag"]} {body}'
         if "send" in row:
             message += f' [send {row["send"]["accepted"]}/{row["send"]["requested"]}]'
     elif row["kind"] == "mark":
@@ -242,6 +255,7 @@ def main():
     live = modes.add_parser("capture", help="attach to the original client and record")
     live.add_argument("--pid", type=int, help="original tenhou.exe process ID")
     live.add_argument("--out", type=Path, help="new JSONL output path")
+    live.add_argument("--raw", action="store_true", help="keep original frame bytes, including credentials")
     review = modes.add_parser("review", help="view, annotate and export a captured interval")
     review.add_argument("path", type=Path)
     args = parser.parse_args()
@@ -259,10 +273,14 @@ def main():
         if args.mode == "review":
             prompt(Journal(args.path, review=True), None, errors)
         else:
-            path = args.out or ROOT / "build" / "origin-capture" / datetime.now().strftime("session-%Y%m%d-%H%M%S-%f.jsonl")
-            journal = Journal(path)
+            prefix = "session-raw" if args.raw else "session"
+            filename = datetime.now().strftime(f"{prefix}-%Y%m%d-%H%M%S-%f.jsonl")
+            path = args.out or ROOT / "build" / "origin-capture" / filename
+            journal = Journal(path, raw=args.raw)
             capture = Capture(frida, journal)
             print(f"记录文件 {journal.path}")
+            if args.raw:
+                print("原始记录可能包含登录 ID 和认证值，分享前请手工脱敏。")
             try:
                 try:
                     capture.attach(args.pid)

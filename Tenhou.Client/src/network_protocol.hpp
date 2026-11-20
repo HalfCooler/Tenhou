@@ -29,6 +29,7 @@ namespace tenhou {
     std::string DecodeNetworkText(const std::string &encoded);
 
     std::string NetworkJson(const std::string &value);
+    LobbyStatistics ReadPrivateLobbyStatistics(std::string_view text);
 
     class NetworkFramer {
     public:
@@ -100,6 +101,7 @@ namespace tenhou {
         bool match_games = false;
         bool require_native = false, presentation = false, origin_lobby = false;
         bool official = false, silent_recovery = false;
+        unsigned preferred_monthly_profile = kDefaultMonthlyProfile;
         std::string official_game_id;
         std::string native_token;
         std::string native_password, native_nickname;
@@ -116,11 +118,13 @@ namespace tenhou {
 
         std::vector<std::string> ExitGame(int choice = -1);
         void FinishOfficialRecovery();
+        std::string OfficialProfilePoll() const;
 
         std::vector<std::string> ConfigureRoom(std::uint64_t revision,
                                                const std::map<std::string, std::string> &settings);
 
     private:
+        std::string RequestOfficialProfile(int type);
         std::vector<std::string> Apply(const NetworkMessage &message);
         bool ApplyOriginLobby(const NetworkMessage &message);
         bool ApplyOfficialLobby(const NetworkMessage &message);
@@ -132,5 +136,6 @@ namespace tenhou {
         bool official_start_ready_ = false;
         unsigned room_ = 0;
         unsigned origin_epoch_ = 0, origin_request_ = 0;
+        int official_profile_type_ = -1;
     };
 } // namespace tenhou

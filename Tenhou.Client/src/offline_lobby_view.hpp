@@ -49,6 +49,8 @@ namespace tenhou {
         void ShowMenu();
         void ShowPractice();
         void ChooseProfile(bool monthly);
+        void LoadProfilePreferences();
+        void SetMonthlyProfile(unsigned type);
 
         std::filesystem::path config_;
         std::function<void(Action)> action_;
@@ -57,7 +59,8 @@ namespace tenhou {
         OfflineLobby state_{FixtureProfile()};
         std::vector<std::wstring> history_;
         RankedTier tier_ = RankedTier::General;
-        unsigned outer_ = 0, lifetime_ = 0, monthly_ = 0;
+        unsigned outer_ = 0, lifetime_ = kRankedFourProfile, monthly_ = kDefaultMonthlyProfile;
+        std::array<LobbyStatistics, 2> private_lifetime_{};
         std::uint64_t seconds_ = 0, move_at_ = 0, rules_at_ = 0;
         std::uint64_t service_clock_ = 0, service_clock_at_ = 0;
         std::string service_pending_, service_error_;

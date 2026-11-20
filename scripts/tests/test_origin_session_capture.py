@@ -1,4 +1,7 @@
+import base64
+import contextlib
 import importlib.util
+import io
 import json
 import shutil
 import subprocess
@@ -14,6 +17,26 @@ SPEC.loader.exec_module(CAPTURE)
 
 
 class OriginSessionCapture(unittest.TestCase):
+    def test_raw_export_can_be_reviewed_without_changing_bytes(self):
+        data = b'<EXTRA value="a&b%2F\x80\xff" />\0'
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "raw.jsonl"
+            trimmed = Path(folder) / "cut.jsonl"
+            journal = CAPTURE.Journal(source, raw=True)
+            sequence = journal.add("frame", direction="in", byte_length=len(data),
+                                   data_b64=base64.b64encode(data).decode("ascii"))
+            review = CAPTURE.Journal(source, review=True)
+            review.mark("资料已显示", sequence)
+            self.assertEqual(review.export(sequence, sequence, trimmed), 2)
+            result = CAPTURE.Journal(trimmed, review=True)
+            self.assertTrue(result.raw)
+            self.assertEqual(result.records[0], journal.records[0])
+            self.assertEqual(result.records[1]["anchor"], sequence)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                CAPTURE.display(result.records[0])
+            self.assertIn(repr(data), output.getvalue())
+
     def test_crop_preserves_anchors_and_original_sequences(self):
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "full.jsonl"
@@ -37,7 +60,7 @@ class OriginSessionCapture(unittest.TestCase):
                 review.export(first, last, source)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js needed to exercise hook callbacks")
-    def test_hook_filters_source_and_redacts_before_emitting(self):
+    def test_hook_filters_sources_and_preserves_bytes_in_raw_mode(self):
         script = r'''
             const fs = require('node:fs');
             const vm = require('node:vm');
@@ -51,11 +74,11 @@ class OriginSessionCapture(unittest.TestCase):
             vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {
                 Process: {mainModule: {base: ptr(0x400000)}, getModuleByName: () => ({getExportByName: n => n})},
                 Interceptor: {attach: (name, handlers) => callbacks[name] = handlers},
-                rpc, send: record => events.push(record),
+                rpc, send: (record, data) => events.push(data ? {...record, data: data.toString('base64')} : record),
             });
             function receive(frame, site = 0x415f4e) {
-                const bytes = Buffer.from(frame, 'latin1');
-                callbacks.SendMessageA.onEnter.call({returnAddress: ptr(site), context: {esi: ptr(bytes.length)}},
+                const bytes = Buffer.from(frame + '\0', 'latin1');
+                callbacks.SendMessageA.onEnter.call({returnAddress: ptr(site), context: {esi: ptr(bytes.length - 1)}},
                     [null, ptr(0x8209), null, {readByteArray: length => bytes.subarray(0, length)}]);
             }
             function transmit(socket, frame, shortWrite = false) {
@@ -81,20 +104,31 @@ class OriginSessionCapture(unittest.TestCase):
             transmit(7, '<N type="3" hai0="8" hai1="12" />');
             transmit(7, '<REACH hai="52" />');
             receive('<BYE who="2" />');
+            receive('<RANKING v2="1,0,0,0,66.8,,0,4726,0,5027,0,0,0,0,29991" rankingcs="ranking-secret" />');
             receive('<UNKNOWN_SECRET id="other-secret" />');
             rpc.exports.setRecording(false);
             receive('<Z />');
-            console.log(JSON.stringify(events));
+            const redacted = events.splice(0);
+            rpc.exports.setRecording(true, true);
+            transmit(8, '<Z />');
+            receive('<Z />', 0x415f4d);
+            transmit(7, '<AUTH val="fixture-token" />', true);
+            receive('<FUTURE x="a&b%2F\x80\xff" x="duplicate" />');
+            receive('<RANK v2="' + '1,'.repeat(33000) + '1" />');
+            rpc.exports.setRecording(false, true);
+            receive('<Z />');
+            console.log(JSON.stringify({redacted, raw: events}));
         '''
         result = subprocess.run(["node", "-e", script, str(SCRIPTS / "origin-session-hook.js")],
                                 capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("secret", result.stdout.casefold())
         self.assertNotIn("20991231", result.stdout)
-        rows = json.loads(result.stdout)
+        events = json.loads(result.stdout)
+        rows = events["redacted"]
         self.assertEqual([row["tag"] for row in rows],
                          ["AUTH", "HELO", "CHAT", "CSREG", "LN", "RANK", "REINIT", "TAIKYOKU",
-                          "GO", "N", "REACH", "BYE", "UNKNOWN"])
+                          "GO", "N", "REACH", "BYE", "RANKING", "UNKNOWN"])
         self.assertEqual(rows[0]["attrs"], {"val": "<present>"})
         self.assertEqual(rows[0]["send"]["requested"] - rows[0]["send"]["accepted"], 1)
         self.assertEqual(rows[1]["attrs"]["PF4"], "1,2,3")
@@ -107,3 +141,18 @@ class OriginSessionCapture(unittest.TestCase):
         self.assertEqual(rows[9]["attrs"], {"type": "3", "hai0": "8", "hai1": "12"})
         self.assertEqual(rows[10]["attrs"], {"hai": "52"})
         self.assertEqual(rows[11]["attrs"], {"who": "2"})
+        self.assertEqual(rows[12]["attrs"],
+                         {"v2": "1,0,0,0,66.8,,0,4726,0,5027,0,0,0,0,29991", "rankingcs": "<present>"})
+        raw = events["raw"]
+        self.assertEqual([row["direction"] for row in raw], ["out", "in", "in"])
+        expected_frames = [
+            b'<AUTH val="fixture-token" />\0',
+            b'<FUTURE x="a&b%2F\x80\xff" x="duplicate" />\0',
+            b'<RANK v2="' + b"1," * 33000 + b'1" />\0',
+        ]
+        for row, expected in zip(raw, expected_frames, strict=True):
+            self.assertEqual(row["kind"], "frame")
+            self.assertEqual(row["byte_length"], len(expected))
+            self.assertEqual(base64.b64decode(row["data"]), expected)
+        self.assertEqual(raw[0]["send"],
+                         {"requested": len(expected_frames[0]), "accepted": len(expected_frames[0]) - 1})

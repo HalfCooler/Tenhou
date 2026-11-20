@@ -7,7 +7,7 @@ const room = /^(?:\d{1,4}|L\d{4}|C\d{8})$/;
 const tileTag = /^[TUVWDEFGdefg]\d{0,3}$/;
 const numericFields = {
     HELO: 'PF4 PF3 expiredays ratingscale opt',
-    RANK: 'v2', PXR: 'V v', CS: 'players premiumonly joinfee rule csrule join',
+    RANK: 'v2', RANKING: 'v2', PXR: 'V v', CS: 'players premiumonly joinfee rule csrule join',
     CSREG: 'code', JOIN: 't type', REJOIN: 't', ERR: 'code',
     GO: 'type', TAIKYOKU: 'oya', SAIKAI: 'oya t', UN: 'dan rate',
     INIT: 'seed ten oya hai hai0 hai1 hai2 hai3',
@@ -85,14 +85,23 @@ const base = Process.mainModule.base;
 const gameSocket = base.add(0xf4e3c);
 const dispatchReturn = base.add(0x15f4e);
 let recording = false;
+let raw = false;
 
 function observe(direction, buffer, length) {
-    const tick = Date.now();
-    if (length < 1 || length > maxFrame) return {kind: 'gap', direction, tick, reason: 'frame-size'};
+    const metadata = {direction, tick: Date.now()};
+    // Both call sites supply a length that includes the original NUL.
+    const contentLength = raw ? length : length - 1;
+    if (contentLength < 1 || (!raw && contentLength > maxFrame)) {
+        return {record: {...metadata, kind: 'gap', reason: 'frame-size'}};
+    }
     try {
-        return {kind: 'frame', direction, tick, ...readFrame(buffer, length)};
+        if (raw) {
+            const bytes = buffer.readByteArray(length);
+            return {record: {...metadata, kind: 'frame', byte_length: length}, bytes};
+        }
+        return {record: {...metadata, kind: 'frame', ...readFrame(buffer, contentLength)}};
     } catch (_) {
-        return {kind: 'gap', direction, tick, reason: 'frame-read'};
+        return {record: {...metadata, kind: 'gap', reason: 'frame-read'}};
     }
 }
 
@@ -101,22 +110,27 @@ Interceptor.attach(Process.getModuleByName('ws2_32.dll').getExportByName('send')
         const socket = args[0].toUInt32();
         if (!recording || socket === 0xffffffff || socket !== gameSocket.readU32()) return;
         this.length = args[2].toInt32();
-        this.record = observe('out', args[1], this.length - 1); // The original includes the NUL in send's length.
+        this.observation = observe('out', args[1], this.length);
     },
     onLeave(result) {
-        if (!this.record) return;
+        if (!this.observation) return;
+        const {record, bytes} = this.observation;
         const sent = result.toInt32();
-        if (sent !== this.length) this.record.send = {requested: this.length, accepted: sent};
-        send(this.record);
+        if (raw || sent !== this.length) record.send = {requested: this.length, accepted: sent};
+        send(record, bytes);
     },
 });
 
 Interceptor.attach(Process.getModuleByName('user32.dll').getExportByName('SendMessageA'), {
     onEnter(args) {
         if (!recording || !this.returnAddress.equals(dispatchReturn) || args[1].toUInt32() !== 0x8209) return;
-        // 0x415F52 uses ESI as the original NUL-delimited frame length.
-        send(observe('in', args[3], this.context.esi.toUInt32()));
+        // At 0x415F48, ESI is the offset of the NUL in lParam.
+        const {record, bytes} = observe('in', args[3], this.context.esi.toUInt32() + 1);
+        send(record, bytes);
     },
 });
 
-rpc.exports.setRecording = enabled => { recording = enabled; };
+rpc.exports.setRecording = (enabled, rawMode = false) => {
+    raw = rawMode;
+    recording = enabled;
+};

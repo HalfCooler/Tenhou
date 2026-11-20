@@ -21,6 +21,7 @@ namespace tenhou {
             view.Show(true);
             LobbySession session;
             session.official = session.interactive_games = session.recover_games = true;
+            session.preferred_monthly_profile = 9;
             session.Connected("ID00000000-00000000", 'M');
             const auto receive = [&](const char *wire) {
                 const auto msg = ParseNetworkMessage(wire, session.official);
@@ -32,15 +33,72 @@ namespace tenhou {
                 return replies;
             };
             const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
-            require(receive("<HELO uname=\"Test&Partner%20Four\" PF4=\"11,500,1700.50\" PF3=\"9,100,1500.00\" "
-                            "expire=\"20991231\" expiredays=\"90\" ratingscale=\"PF4=1&PF3=1\" opt=\"3\" />") ==
-                std::vector<std::string>{"<PXR V=\"1\" />"}, "Official lobby did not accept registered HELO");
+            require(receive("<HELO uname=\"Test&Partner%20Four\" "
+                            "PF4=\"11,505,1674.45,-385.5,40,35,30,25,9,1000,212,147,348,206\" "
+                            "PF3=\"12,125,1513.80,1234.9,85,75,40,0,15,1550,450,250,700,300\" "
+                            "expire=\"20991231\" expiredays=\"90\" ratingscale=\"PF4=1.000000&PF3=1.000000\" "
+                            "PF602=\"7,350,2,2,1,0,1,43,12,11,14,8\" PF02C=\"800,1672.46,4\" "
+                            "rr=\"PF3=0,0&PF4=15000,0\" opt=\"3\" />") ==
+                std::vector<std::string>{"<PXR V=\"9\" />"}, "Official lobby did not request the saved monthly category");
             receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
             receive("<RANKING />");
             require(session.snapshot.phase == LobbyPhase::Lobby && session.snapshot.origin_lobby &&
                 session.snapshot.identity == "Test&Partner Four" &&
                 session.snapshot.origin_lobby->profile.membership_days == 90,
                 "Official registered login did not reach the lobby with its profile");
+            const auto &profile = session.snapshot.origin_lobby->profile;
+            const auto &four = profile.lifetime[0];
+            const auto &three = profile.lifetime[1];
+            require(profile.four.code == 11 && profile.four.rating == 1674 && four.points == 505 &&
+                four.next_points == 800 && four.games == 130 && four.hands == 1000 &&
+                four.place_per_mille == std::array<int, 4>{307, 269, 230, 192} && four.bust_per_mille == 69 &&
+                four.average_score_hundredths == -296 && four.average_place_hundredths == 230 &&
+                four.win_per_mille == 212 && four.deal_in_per_mille == 147 &&
+                four.call_per_mille == 348 && four.reach_per_mille == 206,
+                "Official PF4 did not decode rank, game results and hand rates");
+            require(profile.three.code == 12 && profile.three.rating == 1513 && three.points == 125 &&
+                three.next_points == 1200 && three.games == 200 && three.hands == 1550 &&
+                three.place_per_mille == std::array<int, 4>{425, 375, 200, 0} && three.bust_per_mille == 75 &&
+                three.average_score_hundredths == 617 && three.average_place_hundredths == 177 &&
+                three.win_per_mille == 290 && three.deal_in_per_mille == 161 &&
+                three.call_per_mille == 451 && three.reach_per_mille == 193 &&
+                profile.monthly.empty(),
+                "Official PF3 did not decode rank, game results and hand rates");
+            const auto &amber = profile.other_lifetime.at(602);
+            require(amber.games == 5 && amber.rating == 1672 && amber.average_g_hundredths == 728000 &&
+                amber.average_score_hundredths == 7000,
+                "Amber lifetime results did not use their own placement, rating and chip values");
+            const auto private_room = ReadPrivateLobbyStatistics("-450,1,0,0,1,0,20,4,2,6,8");
+            require(private_room.games == 2 && private_room.average_score_hundredths == -22500 &&
+                private_room.win_per_mille == 200 && private_room.reach_per_mille == 400,
+                "Private-room configuration did not decode its own stats");
+            require(session.OfficialProfilePoll() == "<PXR v=\"9\" />",
+                "General four-player south selection did not set the polling type");
+            // The production login capture contains an empty sixth field.
+            receive("<RANKING v2=\"1,0,0,0,66.8,,0,4726,0,5027,0,0,0,0,29991\" />");
+            receive("<RANKING rankingcs=\"fixture\" />");
+            const auto &south = session.snapshot.origin_lobby->profile.monthly.at(9);
+            require(south.games == 1 && south.place_per_mille[0] == 1000 &&
+                south.average_score_hundredths == 6680 && south.average_place_hundredths == 100,
+                "Official RANKING v2 did not populate the saved category or was overwritten by a contest ranking");
+            require(session.SubmitOriginLobby("monthly-profile", L"9").empty(),
+                "Selecting the current monthly category sent a redundant request");
+            const auto phoenix = RankedMonthlyProfile(25, RankedTier::Phoenix);
+            require(phoenix == 185 && session.SubmitOriginLobby("monthly-profile", L"185") ==
+                    std::vector<std::string>{"<PXR V=\"185\" />"} &&
+                session.snapshot.origin_lobby->profile.monthly.empty(),
+                "Changing tier did not discard the earlier monthly result");
+            receive("<RANK v2=\"4,6,0,0,-6.5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\" />");
+            receive("<RANK v2=\"9,9,9\" />");
+            const auto &three_south = session.snapshot.origin_lobby->profile.monthly.at(phoenix);
+            require(three_south.games == 10 && three_south.average_score_hundredths == -65 &&
+                three_south.average_place_hundredths == 160 &&
+                session.SubmitOriginLobby("monthly-profile", L"65").empty(),
+                "21-field or malformed monthly result handling differs");
+            require(receive("<CHAT lobby=\"8141\" />") == std::vector<std::string>{"<PXR V=\"-1\" />"} &&
+                session.OfficialProfilePoll() == "<PXR v=\"-1\" />" &&
+                receive("<CHAT lobby=\"0000\" />") == std::vector<std::string>{"<PXR V=\"185\" />"},
+                "Monthly subscription did not follow lobby changes");
             require(session.SubmitOriginLobby("join", L"2065").empty() &&
                 session.snapshot.phase == LobbyPhase::Lobby, "Toutenkou changed official lobby state");
             require(receive("<GO type=\"9\" lobby=\"0\" />") == std::vector<std::string>{"<GOK />"},

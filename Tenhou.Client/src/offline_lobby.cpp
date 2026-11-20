@@ -41,12 +41,24 @@ namespace tenhou {
         return false;
     }
 
+    unsigned RankedMonthlyProfile(unsigned type, RankedTier tier) {
+        const auto rule = (type & 0x600) ? (type & 0x8) | 1 : type & 0x1F;
+        return rule | kTierMask[static_cast<unsigned>(tier)];
+    }
+
+    bool ValidMonthlyProfile(unsigned type) {
+        if (std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), type) != kAmberMonthlyProfiles.end())
+            return true;
+        const auto rule = type & ~0xA0u;
+        return std::find(kRankedMonthlyProfiles.begin(), kRankedMonthlyProfiles.end(), rule) != kRankedMonthlyProfiles.end();
+    }
+
     OfflineLobbyProfile FixtureProfile() {
         return {L"OfflineDemo", L"2027/02/17", 90, 0x05, {11, 1656}, {13, 1842},
             {{{153, 1656, 475, 800, {254, 252, 247, 247}, 222, 147, 357, 175, 71, -53, 249},
               {98, 1842, 210, 1600, {363, 330, 307, 0}, 289, 135, 302, 223, 83, 215, 194}}},
-            {{LobbyStatistics{16, 1668, 0, 0, {312, 250, 250, 188}, 250, 125, 312, 188, 62, 312, 231},
-              std::nullopt}}};
+            {{kDefaultMonthlyProfile,
+              {16, 1668, 0, 0, {312, 250, 250, 188}, 250, 125, 312, 188, 62, 312, 231}}}, true, {}};
     }
 
     OfflineLobbyCounts FixtureCounts(const std::wstring &room, std::uint64_t seconds) {
