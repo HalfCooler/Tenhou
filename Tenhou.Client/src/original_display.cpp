@@ -448,23 +448,34 @@ namespace tenhou {
         }
     }
 
-    void DisplayArtwork::AppendChrome(FinalScene &scene, unsigned type, const std::array<bool, 4> &automatic, bool variant) {
+    std::vector<TextKey> OriginalInfoKeys(unsigned type, bool variant) {
         constexpr TextKey levels[]{TextKey::info_general, TextKey::info_advanced, TextKey::info_expert, TextKey::info_phoenix};
+        constexpr TextKey parlor_levels[]{TextKey::info_wakaba, TextKey::info_silver, TextKey::info_amber, TextKey::info_peacock};
+        constexpr TextKey parlor_bonuses[]{TextKey::info_no_bonus, TextKey::info_bonus_2000, TextKey::info_bonus_5000};
         constexpr TextKey rules[]{TextKey::info_east, TextKey::info_fast_east, TextKey::info_east_south, TextKey::info_fast_east_south};
-        const TextKey keys[]{(type & 0x800) ? TextKey::info_toutenkou : levels[(((type >> 3 & 0x10) | (type & 0x20)) >> 4)],
-            rules[((type >> 6) & 1) + ((type >> 2) & 2)],
-            (type >> 2 & 1) ? TextKey::info_no_open_tanyao : TextKey::info_open_tanyao,
-            (type >> 1 & 1) ? TextKey::info_no_red : TextKey::info_red};
+        const unsigned tier = (((type >> 3) & 0x10u) | (type & 0x20u)) >> 4;
+        if (variant) return {(type & 0x800u) ? TextKey::info_toutenkou : levels[tier]};
+        if (!(type & 0x800u) && (type & 0x600u)) {
+            const unsigned bonus = (type & 0x200u) ? (((type & 0x400u) != 0u) + 1u) : 0u;
+            return {parlor_levels[tier], (type & 8u) ? TextKey::info_east_south : TextKey::info_fast_east,
+                    parlor_bonuses[bonus]};
+        }
+        return {(type & 0x800u) ? TextKey::info_toutenkou : levels[tier],
+                rules[((type >> 6) & 1u) + ((type >> 2) & 2u)],
+                (type >> 2 & 1u) ? TextKey::info_no_open_tanyao : TextKey::info_open_tanyao,
+                (type >> 1 & 1u) ? TextKey::info_no_red : TextKey::info_red};
+    }
+
+    void DisplayArtwork::AppendChrome(FinalScene &scene, unsigned type, const std::array<bool, 4> &automatic, bool variant) {
         {
             float y = 0;
-            for (auto key : keys) {
+            for (auto key : OriginalInfoKeys(type, variant)) {
                 auto layout = Text().Layout(key);
                 const float hd = width_ == 1024 ? 1.4f : 1.f;
                 SceneTextRun run; run.layout = layout;
                 run.anchor = {width_ * hd - static_cast<float>(layout.metrics.advance), y};
                 scene.Text(run);
                 y += layout.metrics.effects.GetBottom();
-                if (variant) break;
             }
         }
         constexpr TextKey checked[]{TextKey::option_checked_auto_sort, TextKey::option_checked_no_call,
@@ -481,7 +492,9 @@ namespace tenhou {
 
     void DisplayArtwork::AppendStatus(FinalScene &scene, const ReplayState &state) {
         const float hd = width_ == 1024 ? 1.4f : 1.f;
-        float y = Text().Layout(TextKey::info_general).metrics.effects.GetBottom();
+        float y = 0;
+        for (auto key : OriginalInfoKeys(state.type, state.variant))
+            y += Text().Layout(key).metrics.effects.GetBottom();
         if (state.variant) {
             const auto key = state.variant_rule.rfind("sichuan", 0) == 0 ? TextKey::info_sichuan : TextKey::info_guobiao;
             auto layout = Text().Layout(key);
@@ -489,8 +502,6 @@ namespace tenhou {
             run.anchor = {width_ * hd - static_cast<float>(layout.metrics.advance), y};
             scene.Text(run);
             y += layout.metrics.effects.GetBottom();
-        } else {
-            y = Text().Layout(TextKey::info_general).metrics.effects.GetBottom() * 4;
         }
         const int last = state.total_hands > 0 ? state.total_hands - 1 : (state.variant_rule.rfind("sichuan", 0) == 0 ? 7 : 15);
         const int riichi_last = static_cast<int>(((state.type & 8 | 6) >> 1) - (state.type >> 4 & 1));

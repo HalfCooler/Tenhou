@@ -26,7 +26,7 @@ namespace tenhou {
         artwork_.SetRedTiles(online.red_tiles);
         if (!artwork_.width()) artwork_.Load(directory_, width_);
         POINT anchor{};
-        for (const auto &t: BuildTableScene(Project(online), auto_sort_))
+        for (const auto &t: BuildTableScene(Project(online), false))
             if (t.direction == 0 && std::string(t.role) == "hand") {
                 const auto &im = artwork_.Get(t, (online.type & 2) == 0);
                 anchor.x = std::max(anchor.x, static_cast<LONG>(im.x));
@@ -77,32 +77,42 @@ namespace tenhou {
                                 const auto &im = artwork_.Get(t, red);
                                 const auto offset = artwork_.Offset(t);
                                 return std::make_pair(im.x + offset.x, im.y + offset.y);
-                            }, now, auto_sort_, &artwork_, red);
+                            }, now, false, &artwork_, red);
     }
 
     ReplayState OnlineTable::Project(const OnlineState &online) {
         auto state = OnlineTableState(online);
         const auto &hand = online.players[0].known_hand;
-        if (auto_sort_ || online.events < hand_events_ || (online.events != hand_events_ &&
-                                                           (online.last_event == "INIT" || online.last_event ==
-                                                            "REINIT"))) {
+        const int drawn = online.players[0].drawn_tile;
+        const bool new_hand = online.events < hand_events_ ||
+                              (online.events != hand_events_ &&
+                               (online.last_event == "INIT" || online.last_event == "REINIT"));
+        if (new_hand) suit_order_ = {0, 1, 2};
+        if (drawn != reordered_draw_) reordered_draw_ = -1;
+        if (auto_sort_ || new_hand) {
             hand_order_ = hand;
             reordered_draw_ = -1;
+            if (drawn >= 0) {
+                const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
+                if (it != hand_order_.end()) hand_order_.erase(it);
+            }
+            if (!online.variant) UpdateOriginSuitOrder(suit_order_, hand_order_);
+            SortOriginHand(hand_order_, suit_order_);
+            if (drawn >= 0 && std::find(hand.begin(), hand.end(), drawn) != hand.end())
+                hand_order_.push_back(drawn);
         } else {
             hand_order_.erase(std::remove_if(hand_order_.begin(), hand_order_.end(), [&](int t) {
                 return std::find(hand.begin(), hand.end(), t) == hand.end();
             }), hand_order_.end());
             for (int t: hand) if (std::find(hand_order_.begin(), hand_order_.end(), t) == hand_order_.end()) hand_order_
                     .push_back(t);
-        }
-        // Retain the actual visible order, including the separated draw at the end.
-        // Otherwise disabling sort would move a retained low draw back into sorted order.
-        const int drawn = online.players[0].drawn_tile;
-        const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
-        if (drawn != reordered_draw_) reordered_draw_ = -1;
-        if (it != hand_order_.end() && reordered_draw_ < 0) {
-            hand_order_.erase(it);
-            hand_order_.push_back(drawn);
+            // Retain the actual visible order, including the separated draw at the end.
+            // Otherwise disabling sort would move a retained low draw back into sorted order.
+            const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
+            if (it != hand_order_.end() && reordered_draw_ < 0) {
+                hand_order_.erase(it);
+                hand_order_.push_back(drawn);
+            }
         }
         hand_events_ = online.events;
         if (!online.players[0].retired) state.players[0].hand = hand_order_;
@@ -148,7 +158,7 @@ namespace tenhou {
             const auto &image = artwork_.Get(tile, (online.type & 2) == 0);
             const auto offset = artwork_.Offset(tile);
             return std::make_pair(image.x + offset.x, image.y + offset.y);
-        }, AnimationNow());
+        }, AnimationNow(), false);
     }
 
     void OnlineTable::Paint(HDC dc, RECT bounds, const OnlineState &online, bool interactive,
@@ -183,7 +193,7 @@ namespace tenhou {
         if (opening && opening->Active()) tiles = opening->Scene(artwork_, red);
         else if (presentation_.Active()) tiles = presentation_.Frame(now);
         else
-            for (const auto &tile: BuildTableScene(state, auto_sort_)) {
+            for (const auto &tile: BuildTableScene(state, false)) {
                 const auto &item = artwork_.Get(tile, red);
                 const auto offset = artwork_.Offset(tile);
                 tiles.push_back({tile, item.x + offset.x, item.y + offset.y});
@@ -471,7 +481,7 @@ namespace tenhou {
         std::vector<PositionedTile> scene;
         if (presentation_.Active()) scene = presentation_.Frame(AnimationNow());
         else
-            for (const auto &t: BuildTableScene(Project(online), auto_sort_))
+            for (const auto &t: BuildTableScene(Project(online), false))
                 if (t.direction == 0 && std::string(t.role) == "hand") {
                     const auto &item = artwork_.Get(t, red);
                     const auto offset = artwork_.Offset(t);

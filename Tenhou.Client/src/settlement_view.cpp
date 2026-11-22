@@ -241,6 +241,13 @@ namespace tenhou {
         CancelPresentation();
         if (!visible_ || !IsWindowVisible(window_)) return;
         confirm_ready_ = true;
+        if (FinalPage()) {
+            // Origin tenhou.exe.c:115556-115560 plays SE_GAMEEND (0x73/115) and switches to BGM_GAME9.
+            if (sound_enabled_ && play_sound_) play_sound_(115);
+            PostMessageW(GetParent(window_), WM_APP + 18, 0, 0);
+            Arrange();
+            return;
+        }
         if ((!animation_enabled_ && !sound_enabled_) || selected_ >= state_.receipts.size()) {
             Arrange();
             return;

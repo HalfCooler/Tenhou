@@ -136,6 +136,53 @@ namespace tenhou {
                             (round < last || runs.back().layout == all_last), "Variant rule label or All Last text is incorrect");
                     }
                 }
+
+                // Origin FUN_0049c900 (0049c900..0049ca75): parlor/shugi types (type & 0x600, !(type & 0x800))
+                // draw 3 top-right info rows (parlor level, fast-east/south, bonus) and place All Last on row 4.
+                Require(OriginalInfoKeys(1024) == std::vector<TextKey>{
+                    TextKey::info_wakaba, TextKey::info_fast_east, TextKey::info_no_bonus},
+                    "Parlor type 1024 (若東祝0) info keys mismatch");
+                Require(OriginalInfoKeys(512) == std::vector<TextKey>{
+                    TextKey::info_wakaba, TextKey::info_fast_east, TextKey::info_bonus_2000},
+                    "Parlor type 512 (若東祝2) info keys mismatch");
+                Require(OriginalInfoKeys(1552) == std::vector<TextKey>{
+                    TextKey::info_wakaba, TextKey::info_fast_east, TextKey::info_bonus_5000},
+                    "Parlor type 1552 (三若東祝5) info keys mismatch");
+                Require(OriginalInfoKeys(1560) == std::vector<TextKey>{
+                    TextKey::info_wakaba, TextKey::info_east_south, TextKey::info_bonus_5000},
+                    "Parlor hanchan type 1560 info keys mismatch");
+                Require(OriginalInfoKeys(0x480) == std::vector<TextKey>{
+                    TextKey::info_silver, TextKey::info_fast_east, TextKey::info_no_bonus},
+                    "Parlor Silver tier info keys mismatch");
+                Require(OriginalInfoKeys(0x420) == std::vector<TextKey>{
+                    TextKey::info_amber, TextKey::info_fast_east, TextKey::info_no_bonus},
+                    "Parlor Amber tier info keys mismatch");
+                Require(OriginalInfoKeys(0x4a0) == std::vector<TextKey>{
+                    TextKey::info_peacock, TextKey::info_fast_east, TextKey::info_no_bonus},
+                    "Parlor Peacock tier info keys mismatch");
+                Require(OriginalInfoKeys(0x09) == std::vector<TextKey>{
+                    TextKey::info_general, TextKey::info_east_south, TextKey::info_open_tanyao, TextKey::info_red},
+                    "Standard type 9 info keys mismatch");
+                Require(OriginalInfoKeys(0x800 | 0x600) == std::vector<TextKey>{
+                    TextKey::info_toutenkou, TextKey::info_east, TextKey::info_open_tanyao, TextKey::info_red},
+                    "Toutenkou (0x800) must take precedence over parlor 0x600 bits");
+
+                ReplayState parlor; parlor.initialized = true; parlor.type = 1552; parlor.round = 2; // 3P East All Last
+                FinalScene parlor_scene(artwork.Text(), native == 1024);
+                artwork.AppendChrome(parlor_scene, parlor.type);
+                artwork.AppendStatus(parlor_scene, parlor);
+                const auto parlor_runs = parlor_scene.Snapshot(native, native * 3 / 4, surface.width, surface.height);
+                const auto wakaba = artwork.Text().Layout(TextKey::info_wakaba).data;
+                const auto fast_east = artwork.Text().Layout(TextKey::info_fast_east).data;
+                const auto bonus_5000 = artwork.Text().Layout(TextKey::info_bonus_5000).data;
+                const auto all_last_layout = artwork.Text().Layout(TextKey::info_all_last).data;
+                Require(parlor_runs.size() == 8 && parlor_runs[0].layout == wakaba &&
+                    parlor_runs[1].layout == fast_east && parlor_runs[2].layout == bonus_5000 &&
+                    parlor_runs[7].layout == all_last_layout &&
+                    parlor_runs[7].bounds.top > parlor_runs[2].bounds.top &&
+                    (parlor_runs[7].bounds.top - parlor_runs[2].bounds.top) <=
+                    (parlor_runs[2].bounds.top - parlor_runs[1].bounds.top) + 4,
+                    "Parlor chrome/All-Last row placement is incorrect");
             }
         }
         void SettlementScores(const std::filesystem::path &resources, const std::filesystem::path &output) {

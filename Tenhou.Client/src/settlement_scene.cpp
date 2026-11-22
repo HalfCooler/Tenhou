@@ -1,6 +1,7 @@
 #include "settlement_scene.hpp"
 #include "network_protocol.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
@@ -354,20 +355,34 @@ namespace tenhou {
                 // Native screen positions are relative to the viewer: 0 below, 1
                 // right, 2 above, 3 left. Seat wind depends on the current dealer.
                 constexpr int xs[]{235, 407, 235, 63}, ys[]{515, 480, 445, 480};
+                const int card_height = r.has_chips ? 57 : 41;
                 for (int seat = 0; seat < 4; ++seat) {
                     if (!SeatPresent(r.seat_mask, seat)) continue;
-                    const int x = xs[seat], y = ys[seat], wind = SeatWind(r.seat_mask, layout.dealer, seat);
+                    const int x = xs[seat], y = ys[seat] - (r.has_chips ? (seat == 2 ? 16 : seat == 1 || seat == 3 ? 8 : 0) : 0);
+                    const int wind = SeatWind(r.seat_mask, layout.dealer, seat);
                     const auto text_start = scene.text.size();
-                    scene.score_panels.push_back({left + px(x), top + px(y), left + px(x + 190), top + px(y + 41)});
+                    scene.score_panels.push_back({left + px(x), top + px(y), left + px(x + 190), top + px(y + card_height)});
                     OffsetRect(&scene.score_panels.back(), 0, payment_shift);
                     constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
                                               TextKey::seat_neutral_west, TextKey::seat_neutral_north};
-                    catalog("score_wind", x + 12, y + 4, 33, 31, {{{}, winds[wind]}}, 1);
+                    catalog("score_wind", x + 12, y + (card_height - 31) / 2, 33, 31, {{{}, winds[wind]}}, 1);
                     text("score_name", names[seat].empty() ? "Seat " + std::to_string(seat) : names[seat], x + 55,
                          y + 2, 112, 14, 0xffffffff, 1);
                     text("base", std::to_string(r.base[seat]), x + 48, y + 17, 62, 14, 0xffffffff, 2);
                     text("delta", Number(r.delta[seat], true), x + 114, y + 17, 72, 14,
                          r.delta[seat] > 0 ? 0xff00ffff : 0xffff0000, 0, r.delta[seat] != 0);
+                    if (r.has_chips) {
+                        const auto chip_str = [](int value) {
+                            return (value > 0 ? "+" : "") + std::to_string(value) + "枚";
+                        };
+                        if (r.chip_delta[seat] == 0) {
+                            text("chip_base", chip_str(r.chip_base[seat]), x + 55, y + 34, 112, 14, 0xffffffff, 1);
+                        } else {
+                            text("chip_base", chip_str(r.chip_base[seat]), x + 48, y + 34, 62, 14, 0xffffffff, 2);
+                            text("chip_delta", chip_str(r.chip_delta[seat]), x + 114, y + 34, 72, 14,
+                                 r.chip_delta[seat] > 0 ? 0xff00ffff : 0xffff0000, 0);
+                        }
+                    }
                     // The terminal value remains exported for independent receipt
                     // checks; the original card shows base plus delta, not a third row.
                     text("score", std::to_string(r.base[seat] + r.delta[seat]), x, y, 180, 14, 0xffffffff, 0, false);
@@ -447,8 +462,9 @@ namespace tenhou {
             std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
                 return s.final_points[a] > s.final_points[b];
             });
-            std::array<std::string, 4> scores, points;
-            int score_width = 0, point_width = 0;
+            std::array<std::string, 4> scores, points, chips, gold;
+            std::array<long long, 4> gold_value{};
+            int score_width = 0, point_width = 0, chip_width = 0, gold_width = 0;
             const auto measure = [&](const std::string &value) {
                 return layout.text_width
                            ? static_cast<int>(layout.text_width(value, static_cast<float>(14 * scale)))
@@ -463,22 +479,53 @@ namespace tenhou {
                 points[seat] = p.str();
                 score_width = std::max(score_width, measure(scores[seat]));
                 point_width = std::max(point_width, measure(points[seat]));
+                if (s.has_final_chips) {
+                    chips[seat] = (s.final_chips[seat] > 0 ? "+" : "") + std::to_string(s.final_chips[seat]) + "枚";
+                    chip_width = std::max(chip_width, measure(chips[seat]));
+                }
+                if (s.has_ratio) {
+                    gold_value[seat] = s.has_final_chips
+                        ? std::llround((s.final_points[seat] * 1000.0 +
+                                        static_cast<double>(s.ratio[0]) * s.final_chips[seat]) * s.ratio[1] * 0.01)
+                        : std::llround(s.final_points[seat] * s.ratio[1] * 10.0);
+                    gold[seat] = (gold_value[seat] > 0 ? "+" : "") + std::to_string(gold_value[seat]) + "G";
+                    gold_width = std::max(gold_width, measure(gold[seat]));
+                }
             }
-            const int start = -(score_width + point_width + 24) / 2;
+            const int gap = px(8);
+            int total_width = score_width + gap + point_width;
+            if (s.has_final_chips) total_width += gap + chip_width;
+            if (s.has_ratio) total_width += gap + gold_width;
+            const int start = -total_width / 2;
+            const int panel_half = std::max(px(140), total_width / 2 + px(24));
             const auto label = [&](const char *role, const std::string &value, int x, int y, int width, float em,
                                    unsigned color, int align) {
                 scene.text.push_back({role, value, {x, y, x + width, y + px(24)}, em, color, true, align, true});
             };
             for (int rank = 0; rank < static_cast<int>(order.size()); ++rank) {
                 const int seat = order[rank], y = top + px(190 + rank * 60);
-                scene.score_panels.push_back({center + px(-140), y + px(-27), center + px(140), y + px(27)});
-                label("name", name(seat), center - px(140), y + px(-21), px(280),
+                scene.score_panels.push_back({center - panel_half, y + px(-27), center + panel_half, y + px(27)});
+                label("name", name(seat), center - panel_half, y + px(-21), panel_half * 2,
                       static_cast<float>((44.0 / 3) * scale), 0xffffffff, 1);
-                label("final_score", scores[seat], center + start, y + px(2), score_width,
+                int cursor = center + start;
+                label("final_score", scores[seat], cursor, y + px(2), score_width,
                       static_cast<float>(14 * scale), 0xffffffff, 2);
-                label("final_points", points[seat], center + start + score_width + 8, y + px(2), point_width,
+                cursor += score_width + gap;
+                label("final_points", points[seat], cursor, y + px(2), point_width,
                       static_cast<float>(14 * scale),
                       s.final_points[seat] > 0 ? 0xff00ffff : s.final_points[seat] < 0 ? 0xffff0000 : 0xffffffff, 2);
+                cursor += point_width + gap;
+                if (s.has_final_chips) {
+                    label("final_chips", chips[seat], cursor, y + px(2), chip_width,
+                          static_cast<float>(14 * scale),
+                          s.final_chips[seat] > 0 ? 0xff00ffff : s.final_chips[seat] < 0 ? 0xffff0000 : 0xffffffff, 2);
+                    cursor += chip_width + gap;
+                }
+                if (s.has_ratio) {
+                    label("final_gold", gold[seat], cursor, y + px(2), gold_width,
+                          static_cast<float>(14 * scale),
+                          gold_value[seat] > 0 ? 0xff00ffff : gold_value[seat] < 0 ? 0xffff0000 : 0xffffffff, 2);
+                }
             }
             return scene;
         }

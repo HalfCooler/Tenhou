@@ -141,14 +141,22 @@ namespace tenhou {
         next.seat_mask = seat_mask;
         if (tag != "AGARI" && tag != "RYUUKYOKU") Fail("unsupported receipt");
         if (next.receipts.size() >= 4) Fail("too many round receipts");
-        const auto scores = List(a, "sc", -1000000, 1000000, 8, true);
-        if (scores.size() != 8) Fail("sc needs four base/delta pairs");
+        const auto scores = List(a, "sc", -1000000, 1000000, 16, true);
+        if (scores.size() != 8 && scores.size() != 16) Fail("sc needs four score pairs or four score+chip pairs");
         for (int i = 0; i < 4; ++i) {
             r.base[i] = scores[i * 2] * 100;
             r.delta[i] = scores[i * 2 + 1] * 100;
         }
-        for (int i = 0; i < 4; ++i) if (!SeatPresent(seat_mask, i) && (r.base[i] || r.delta[i])) Fail(
-            "absent seat has settlement scores");
+        if (scores.size() == 16) {
+            r.has_chips = true;
+            for (int i = 0; i < 4; ++i) {
+                r.chip_base[i] = scores[8 + i * 2];
+                r.chip_delta[i] = scores[8 + i * 2 + 1];
+            }
+        }
+        for (int i = 0; i < 4; ++i)
+            if (!SeatPresent(seat_mask, i) && (r.base[i] || r.delta[i] || r.chip_base[i] || r.chip_delta[i]))
+                Fail("absent seat has settlement scores");
         r.ba = List(a, "ba", 0, 1000000, 2);
         if (!r.ba.empty() && r.ba.size() != 2) Fail("ba needs two values");
         if (tag == "AGARI") {
@@ -183,6 +191,12 @@ namespace tenhou {
             if (r.has_ten && r.ten.size() != 3) Fail("AGARI ten needs fu/points/limit");
             r.dora = List(a, "doraHai", 0, 135, 5);
             r.ura = List(a, "doraHaiUra", 0, 135, 5);
+            if (a.count("chip")) {
+                const auto chip_yaku = List(a, "chip", 0, 65535, 128);
+                if (chip_yaku.size() % 2) Fail("chip needs id/count pairs");
+                for (std::size_t i = 0; i < chip_yaku.size(); i += 2)
+                    r.chip_yaku.push_back({chip_yaku[i], chip_yaku[i + 1]});
+            }
             auto physical = r.hand;
             std::size_t groups = 0, extracted = 0;
             for (int code: r.melds) {
@@ -243,19 +257,33 @@ namespace tenhou {
                     Fail("invalid owari number");
                 values.push_back(value);
             }
-            if (values.size() != 8 || text.back() == ',') Fail("owari needs four score/point pairs");
-            if (next.has_final)
+            if ((values.size() != 8 && values.size() != 16) || text.back() == ',')
+                Fail("owari needs four score/point pairs or score/point+chip pairs");
+            const bool has_chips = values.size() == 16;
+            if (next.has_final) {
+                if (next.has_final_chips != has_chips) Fail("conflicting owari");
                 for (int i = 0; i < 4; ++i)
-                    if (next.final_scores[i] != values[i * 2] * 100 || next.final_points[i] != values[i * 2 + 1]) Fail(
-                        "conflicting owari");
+                    if (next.final_scores[i] != values[i * 2] * 100 || next.final_points[i] != values[i * 2 + 1] ||
+                        (has_chips && next.final_chips[i] != static_cast<int>(std::lround(values[8 + i * 2]))))
+                        Fail("conflicting owari");
+            }
             for (int i = 0; i < 4; ++i) {
                 next.final_scores[i] = values[i * 2] * 100;
                 next.final_points[i] = values[i * 2 + 1];
+                if (has_chips) next.final_chips[i] = static_cast<int>(std::lround(values[8 + i * 2]));
             }
-            for (int i = 0; i < 4; ++i) if (!SeatPresent(seat_mask, i) && (
-                                                next.final_scores[i] || next.final_points[i])) Fail(
-                "absent final score");
+            for (int i = 0; i < 4; ++i)
+                if (!SeatPresent(seat_mask, i) &&
+                    (next.final_scores[i] || next.final_points[i] || (has_chips && next.final_chips[i])))
+                    Fail("absent final score");
             next.has_final = true;
+            next.has_final_chips = has_chips;
+            if (a.count("ratio")) {
+                const auto ratio = List(a, "ratio", -1000000, 1000000, 2);
+                if (ratio.size() != 2) Fail("ratio needs two values");
+                next.has_ratio = true;
+                next.ratio = {ratio[0], ratio[1]};
+            }
         }
         next.receipts.push_back(std::move(r));
         state = std::move(next);
@@ -354,9 +382,19 @@ namespace tenhou {
         std::ostringstream out;
         if (selection == s.receipts.size() && s.has_final) {
             out << "MATCH RESULTS | supplied scores / points\r\n";
-            for (int i = 0; i < 4; ++i) if (SeatPresent(s.seat_mask, i))
+            for (int i = 0; i < 4; ++i) if (SeatPresent(s.seat_mask, i)) {
                 out << Seat(i, names) << " | Score " << s.final_scores[i] << " | Points " << std::showpos << s.
-                        final_points[i] << std::noshowpos << "\r\n";
+                        final_points[i] << std::noshowpos;
+                if (s.has_final_chips) out << " | Chips " << std::showpos << s.final_chips[i] << std::noshowpos;
+                if (s.has_ratio) {
+                    const long long gold = s.has_final_chips
+                        ? std::llround((s.final_points[i] * 1000.0 + static_cast<double>(s.ratio[0]) * s.final_chips[i]) *
+                                       s.ratio[1] * 0.01)
+                        : std::llround(s.final_points[i] * s.ratio[1] * 10.0);
+                    out << " | " << std::showpos << gold << std::noshowpos << "G";
+                }
+                out << "\r\n";
+            }
             return out.str();
         }
         if (selection >= s.receipts.size()) return "No settlement received.";
@@ -420,9 +458,14 @@ namespace tenhou {
         if (!r.ba.empty()) out << "Honba / sticks supplied: " << r.ba[0] << " / " << r.ba[1] << "\r\n";
         if (!totals) return out.str();
         out << "\r\nSCORE CHANGES (this receipt)\r\n";
-        for (int i = 0; i < 4; ++i) if (SeatPresent(r.seat_mask, i))
+        for (int i = 0; i < 4; ++i) if (SeatPresent(r.seat_mask, i)) {
             out << Seat(i, names) << ": " << r.base[i] << "  " << std::showpos << r.delta[i] << std::noshowpos << "  = "
-                    << r.base[i] + r.delta[i] << "\r\n";
+                    << r.base[i] + r.delta[i];
+            if (r.has_chips)
+                out << "  | Chips " << r.chip_base[i] << "  " << std::showpos << r.chip_delta[i] << std::noshowpos
+                        << "  = " << r.chip_base[i] + r.chip_delta[i];
+            out << "\r\n";
+        }
         out << "\r\nSupplied results only; no local scoring or hidden-hand inference.";
         return out.str();
     }

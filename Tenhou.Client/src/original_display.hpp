@@ -58,6 +58,8 @@ namespace tenhou {
 
     RECT OriginalAutoButtonRect(int width, int index);
     std::optional<TextKey> ActionButtonText(unsigned control, bool hot);
+    // FUN_0049c900 (0049c900..0049ca75): top-right table info rows before オーラス.
+    std::vector<TextKey> OriginalInfoKeys(unsigned type, bool variant = false);
 
     // 004aa250: n/0/254 maps to the standing-back rectangle, then odd
     // directions swap measured text extents before the count window is placed.

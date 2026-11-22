@@ -8,7 +8,11 @@
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <cmath>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace tenhou {
@@ -196,6 +200,7 @@ namespace tenhou {
             session.match_games = options.match_games;
             session.require_native = options.native_service;
             session.official = options.official;
+            session.snapshot.official = options.official;
             session.silent_recovery = resume;
             session.origin_lobby = options.origin_lobby;
             session.presentation = options.presentation;
@@ -283,6 +288,48 @@ namespace tenhou {
                 log("NETWORK unable to save official recovery hint");
         }
 
+        void AccumulatePrivateProfile(const NetworkMessage &message) {
+            // Origin tenhou.exe.c:92620-92706 accumulates non-zero lobby PROF add=11 fields into [STATUS] PFPV3/PFPV4.
+            if (options.config_file.empty()) return;
+            const auto lobby_it = message.attributes.find("lobby");
+            const auto add_it = message.attributes.find("add");
+            if (lobby_it == message.attributes.end() || add_it == message.attributes.end()) return;
+            int lobby_num = 0;
+            const auto parsed_lobby = std::from_chars(
+                lobby_it->second.data(), lobby_it->second.data() + lobby_it->second.size(), lobby_num);
+            if (parsed_lobby.ec != std::errc{} || parsed_lobby.ptr != lobby_it->second.data() + lobby_it->second.size() ||
+                lobby_num == 0)
+                return;
+            auto parse11 = [](const std::string &text, std::array<double, 11> &out) {
+                out.fill(0.0);
+                std::istringstream in(text);
+                in.imbue(std::locale::classic());
+                std::string token;
+                std::size_t i = 0;
+                while (i < out.size() && std::getline(in, token, ',')) {
+                    double v = 0.0;
+                    const auto res = std::from_chars(token.data(), token.data() + token.size(), v);
+                    if (res.ec == std::errc{} && res.ptr == token.data() + token.size() && std::isfinite(v))
+                        out[i] = v;
+                    ++i;
+                }
+                return i;
+            };
+            std::array<double, 11> delta{};
+            if (parse11(add_it->second, delta) == 0) return;
+            const wchar_t *key = (session.snapshot.game.type & 16) ? L"PFPV3" : L"PFPV4";
+            wchar_t existing[256]{};
+            GetPrivateProfileStringW(L"STATUS", key, L"", existing, ARRAYSIZE(existing), options.config_file.c_str());
+            std::array<double, 11> total{};
+            parse11(NetworkUtf8(existing), total);
+            for (std::size_t i = 0; i < total.size(); ++i) total[i] += delta[i];
+            std::ostringstream out;
+            out.imbue(std::locale::classic());
+            out << std::fixed << std::setprecision(1) << total[0];
+            for (std::size_t i = 1; i < total.size(); ++i) out << ',' << static_cast<long long>(std::llround(total[i]));
+            WritePrivateProfileStringW(L"STATUS", key, NetworkWide(out.str()).c_str(), options.config_file.c_str());
+        }
+
         void Reconnect(const ConnectionOptions &request) {
             if (Active() || !session.snapshot.reconnect_available) throw std::runtime_error(
                 "No recoverable disconnected game");
@@ -317,9 +364,11 @@ namespace tenhou {
             if (session.snapshot.phase != LobbyPhase::Connecting) return;
             const auto messages = session.Connected(options.identity, options.gender, revision_floor);
             recovery_start = resuming ? GetTickCount64() : 0;
-            if (!options.auto_reconnect) options.identity.clear();
+            if (!options.auto_reconnect && !options.official) options.identity.clear();
             last_receive = last_heartbeat = GetTickCount64();
             Phase(LobbyPhase::AwaitHelo);
+            // Origin tenhou.exe.c:62067 transmits <Z /> immediately on FD_CONNECT before <HELO .../>.
+            if (options.official) Queue("<Z />");
             for (const auto &message: messages) Queue(message);
         }
 
@@ -376,16 +425,28 @@ namespace tenhou {
                 if (framer.pending()) {
                     if (!was_pending || !messages.empty()) frame_start = GetTickCount64();
                 } else frame_start = 0;
+                bool close_after_owari = false;
                 for (const auto &text: messages) {
                     const auto message = ParseNetworkMessage(text, options.official);
                     const auto old_phase = session.snapshot.phase;
                     const auto replies = session.Receive(message);
+                    if (options.official && message.tag == "HELO") {
+                        if (!official_game_id.empty()) SaveOfficialGameId({});
+                        resuming = false;
+                        recovery_start = 0;
+                        reconnect_view.reset();
+                    }
                     if (options.official && message.tag == "GO" && session.snapshot.game.started) {
                         if (const auto id = message.attributes.find("gpid"); id != message.attributes.end())
                             SaveOfficialGameId(id->second);
                     }
-                    if (options.official && session.snapshot.game.complete && !official_game_id.empty())
-                        SaveOfficialGameId({});
+                    if (options.official && message.tag == "PROF") AccumulatePrivateProfile(message);
+                    if (options.official && session.snapshot.game.complete) {
+                        if (!official_game_id.empty()) SaveOfficialGameId({});
+                        // Origin tenhou.exe.c:97928-97932 closes WC_CLIENT immediately on owari;
+                        // END opens a fresh TCP connection to return to the lobby.
+                        close_after_owari = true;
+                    }
                     if (message.tag.rfind("REPLAY", 0) == 0) {
                         try {
                             archive.Receive(message);
@@ -451,6 +512,10 @@ namespace tenhou {
                         Queue("<PRESENTATION />");
                     Notify();
                 }
+                if (close_after_owari) {
+                    Close();
+                    return;
+                }
             }
             PostMessageW(window, kRead, 0, 0);
         }
@@ -487,7 +552,10 @@ namespace tenhou {
             else if (!native_request_start) native_request_start = now;
             else if (now - native_request_start >= options.handshake_ms) throw TransportFailure(
                 "Native room request confirmation timed out");
-            if (recovery_start && now - recovery_start >= options.handshake_ms) {
+            const bool official_saikai_wait = options.official && session.snapshot.game.started &&
+                                              phase == LobbyPhase::AwaitRecovery;
+            const auto recovery_limit = official_saikai_wait ? options.idle_ms : options.handshake_ms;
+            if (recovery_start && now - recovery_start >= recovery_limit) {
                 if (options.official && phase == LobbyPhase::Lobby && !session.snapshot.game.started) {
                     SaveOfficialGameId({});
                     session.FinishOfficialRecovery();
@@ -501,7 +569,7 @@ namespace tenhou {
                 throw std::runtime_error("Matchmaking timed out; connect explicitly to retry");
             const bool established = phase == LobbyPhase::Lobby || phase == LobbyPhase::Game || phase ==
                                      LobbyPhase::MatchComplete || phase == LobbyPhase::Matching;
-            if (!established && now - phase_start >= options.handshake_ms) throw TransportFailure(
+            if (!established && now - phase_start >= recovery_limit) throw TransportFailure(
                 "Connection/handshake or recovery timed out");
             if (established && now - last_receive >= options.idle_ms) throw
                     TransportFailure("Server receive timed out");
@@ -528,6 +596,15 @@ namespace tenhou {
         void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
             if (reconnect_view) return;
             const auto phase = session.snapshot.phase;
+            if (options.official && command == "return" && phase == LobbyPhase::MatchComplete) {
+                (void) session.SubmitLobby(revision, command, value);
+                if (!official_game_id.empty()) SaveOfficialGameId({});
+                // Origin tenhou.exe.c:62821-62826 & 62067-62075: after owari closed WC_CLIENT,
+                // END posts CONNECT to open a fresh TCP socket and sends <Z /> + <HELO .../>.
+                const auto request = options;
+                Connect(request, false);
+                return;
+            }
             const auto replies = session.SubmitLobby(revision, command, value);
             if (replies.empty() && phase != session.snapshot.phase) Phase(session.snapshot.phase);
             SendLobbyReplies(replies);
@@ -636,8 +713,16 @@ namespace tenhou {
     }
 
     void NetworkClient::ExitGame(int choice) {
-        for (const auto &reply: impl_->session.ExitGame(choice)) impl_->Queue(reply);
-        impl_->Notify();
+        const auto replies = impl_->session.ExitGame(choice);
+        if (impl_->options.official && !replies.empty()) {
+            impl_->local_prepare = false;
+            impl_->action_start = 0;
+            if (!impl_->official_game_id.empty()) impl_->SaveOfficialGameId({});
+            impl_->SendLobbyReplies(replies);
+        } else {
+            for (const auto &reply: replies) impl_->Queue(reply);
+            impl_->Notify();
+        }
     }
 
     const LobbySnapshot &NetworkClient::snapshot() const { return impl_->Snapshot(); }

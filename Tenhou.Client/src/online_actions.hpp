@@ -23,6 +23,7 @@ namespace tenhou {
     class OnlineActions {
     public:
         ActionSnapshot snapshot;
+        bool official = false;
 
         void Receive(const NetworkMessage &message, const OnlineState &before, const OnlineState &after);
 

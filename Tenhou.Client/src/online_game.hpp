@@ -13,7 +13,7 @@ namespace tenhou {
         bool connected = true;
         std::vector<int> known_hand;
         std::vector<int> deal_hand;
-        int hidden_count = 0, score = 25000, reach = 0, drawn_tile = -1;
+        int hidden_count = 0, score = 25000, chips = 0, reach = 0, drawn_tile = -1;
         bool draw_pending = false;
         bool retired = false;
         int missing_suit = -1, winning_tile = -1;
@@ -26,8 +26,10 @@ namespace tenhou {
     struct OnlineState {
         WallState wall;
         bool started = false, initialized = false, ended = false, complete = false;
+        bool has_dealer = false;
         bool awaiting_context = false; // REINIT does not identify the next actor/draw.
         bool furiten = false;
+        bool has_chips = false;
         bool variant = false;
         std::string variant_rule;
         int total_hands = 0;

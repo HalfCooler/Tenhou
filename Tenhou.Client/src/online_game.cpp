@@ -56,9 +56,17 @@ namespace tenhou {
         }
 
         void Scores(OnlineState &s, const NetworkMessage &m) {
-            const auto values = List(Attr(m, "sc"), -1000000, 1000000, 8);
-            if (values.size() != 8) Fail("sc needs four base/delta pairs");
+            const auto values = List(Attr(m, "sc"), -1000000, 1000000, 16);
+            if (values.size() != 8 && values.size() != 16) Fail("sc needs four score pairs or four score+chip pairs");
             for (int i = 0; i < 4; ++i) s.players[i].score = 100 * (values[i * 2] + values[i * 2 + 1]);
+            if (values.size() == 16) {
+                s.has_chips = true;
+                for (int i = 0; i < 4; ++i) {
+                    if (!SeatPresent(s.seat_mask, i) && (values[8 + i * 2] || values[8 + i * 2 + 1]))
+                        Fail("absent seat has chip scores");
+                    s.players[i].chips = values[8 + i * 2] + values[8 + i * 2 + 1];
+                }
+            }
         }
 
         void Final(OnlineState &s, const NetworkMessage &m) {
@@ -76,7 +84,7 @@ namespace tenhou {
                     Fail("invalid final score value");
                 ++count;
             }
-            if (count != 8 || text.back() == ',') Fail("owari needs eight values");
+            if ((count != 8 && count != 16) || text.back() == ',') Fail("owari needs eight or sixteen values");
             s.final_scores = text;
             s.complete = true;
         }
@@ -90,8 +98,8 @@ namespace tenhou {
     }
 
     bool OnlineGame::Handles(const std::string &tag) {
-        return TileTag(tag) || tag == "GO" || tag == "UN" || tag == "BYE" || tag == "TAIKYOKU" || tag == "INIT" || tag
-               == "REINIT" ||
+        return TileTag(tag) || tag == "GO" || tag == "UN" || tag == "BYE" || tag == "TAIKYOKU" || tag == "SAIKAI" ||
+               tag == "INIT" || tag == "REINIT" ||
                tag == "N" || tag == "DORA" || tag == "REACH" || tag == "FURITEN" || tag == "AGARI" || tag == "RYUUKYOKU"
                || tag == "PROF";
     }
@@ -175,9 +183,21 @@ namespace tenhou {
             s.furiten = Num(m, "show", 0, 1) != 0;
             return;
         }
-        if (tag == "TAIKYOKU") {
-            if (s.initialized) Fail("TAIKYOKU after INIT");
-            if (m.attributes.count("oya")) s.dealer = Num(m, "oya", 0, 3);
+        if (tag == "TAIKYOKU" || tag == "SAIKAI") {
+            if (s.initialized) Fail(tag + " after INIT");
+            if (m.attributes.count("oya")) {
+                s.dealer = Num(m, "oya", 0, 3);
+                s.has_dealer = true;
+            }
+            if (tag == "SAIKAI") {
+                if (m.attributes.count("ba")) {
+                    const auto ba = List(Attr(m, "ba"), 0, 1000, 2);
+                    if (ba.size() != 2) Fail("SAIKAI ba needs honba and sticks");
+                    s.honba = ba[0];
+                    s.sticks = ba[1];
+                }
+                if (m.attributes.count("sc")) Scores(s, m);
+            }
             // No seat rotation: network actors/oya are already relative to self=0.
             // Replay-log token and absolute-seat hints are not persisted or logged.
             return;
@@ -191,6 +211,8 @@ namespace tenhou {
             if (restore && s.complete) Fail("REINIT after match end");
             const auto seed = List(Attr(m, "seed"), 0, 10000, restore ? 10 : 6);
             const auto scores = List(Attr(m, "ten"), -1000000, 1000000, 4);
+            const auto chips = m.attributes.count("chip") ? List(Attr(m, "chip"), -1000000, 1000000, 4) : std::vector<int>{};
+            if (!chips.empty() && chips.size() != 4) Fail("invalid INIT chip list");
             if (seed.size() < 6 || (!restore && seed.size() != 6) || scores.size() != 4 || seed[0] > 15 || seed[5] >
                 135) Fail("invalid INIT seed/ten");
             for (int i = 0; i < 4; ++i)
@@ -215,7 +237,7 @@ namespace tenhou {
             const auto wait = s.local_action_wait_ms;
             const auto reds = s.red_tiles;
             s = {};
-            s.started = s.initialized = true;
+            s.started = s.initialized = s.has_dealer = true;
             s.events = events;
             s.type = type;
             s.open_hands = open_hands;
@@ -228,17 +250,19 @@ namespace tenhou {
             s.dealer = Num(m, "oya", 0, 3);
             s.turn = s.dealer;
             s.dora_indicators = {seed[5]};
+            s.has_chips = !chips.empty();
             if (!SeatPresent(seats, s.dealer)) Fail("absent dealer");
             if (!restore) s.wall.Init(s.dealer, seed[3], seed[4], type);
             for (int i = 0; i < 4; ++i) {
                 auto &p = s.players[i];
                 p.name = names[i];
                 p.score = scores[i] * 100;
+                p.chips = chips.empty() ? 0 : chips[i];
                 p.gender = genders[i];
                 p.rank = ranks[i];
                 p.connected = connected[i];
                 if (!SeatPresent(seats, i)) {
-                    if (scores[i]) Fail("absent seat has a score");
+                    if (scores[i] || p.chips) Fail("absent seat has a score");
                     p.connected = false;
                     continue;
                 }
@@ -333,8 +357,9 @@ namespace tenhou {
         }
         if (!s.initialized) Fail("event before INIT");
         if (tag == "PROF") {
-            if (!s.ended) Fail("PROF before round end");
-            s.complete = true;
+            // Official Tenhou sends PROF immediately before the final AGARI/RYUUKYOKU(owari).
+            // Self-hosted servers send PROF after the final round receipt.
+            if (s.ended) s.complete = true;
             return;
         }
         if (tag == "AGARI" || tag == "RYUUKYOKU") {

@@ -4,14 +4,18 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from queue import Empty, Queue
 from threading import Event, Lock
 
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK = Path(__file__).with_name("origin-session-hook.js")
+ORIGIN_EXE = ROOT / "Tenhou.Client.Origin" / "tenhou" / "tenhou.exe"
+ORIGIN_LAUNCHER = ROOT / "Tenhou.Client.Origin" / "launcher.exe"
 ORIGIN_SHA256 = "96164cdb63e043541c27572a22b895072a8f9a0a0ee97d877a3cb340e327ffe6"
 FORMAT = "tenhou-origin-session/1"
 RAW_FORMAT = "tenhou-origin-session-raw/1"
@@ -23,9 +27,105 @@ COMMANDS = """\
 """
 LIVE_COMMANDS = """\
   attach [PID]            附加到原版。省略 PID 时选择唯一运行的 tenhou.exe
+  spawn [启动器路径]      启动原版 launcher.exe 并在 tenhou.exe 首条指令前开启记录（适合采集断线再开）
   detach                  解除附加
   start / pause           开始 / 暂停记录消息
 """
+SENSITIVE_ATTR = re.compile(
+    r'(\s(?:name|uname|auth|expire|gpid|n0|n1|n2|n3|log|seed|rankingcs)\s*=\s*)(?:"([^"]*)"|\'([^\']*)\')'
+)
+CHAT_TEXT_ATTR = re.compile(
+    r'(\stext\s*=\s*)(?:"([^"]*)"|\'([^\']*)\')'
+)
+
+
+def verify_origin_exe(image_path):
+    path = Path(image_path)
+    if not path.is_file() or path.name.casefold() != "tenhou.exe":
+        raise ValueError("指定路径不是有效的 tenhou.exe")
+    with path.open("rb") as binary:
+        if hashlib.file_digest(binary, "sha256").hexdigest() != ORIGIN_SHA256:
+            raise ValueError("原版 EXE 的 SHA-256 与仓库取证版本不符")
+    return path.resolve()
+
+
+def verify_launcher_exe(image_path):
+    path = Path(image_path)
+    if path.name.casefold() == "tenhou.exe":
+        raise ValueError("spawn 需启动 launcher.exe；原版 tenhou.exe 必须由启动器拉起")
+    if not path.is_file() or path.name.casefold() != "launcher.exe":
+        raise ValueError("指定路径不是有效的 launcher.exe")
+    return path.resolve()
+
+
+def redact_raw_text(text):
+    def replace_sensitive(match):
+        value = match.group(2) if match.group(2) is not None else match.group(3)
+        if value == "NoName":
+            return match.group(0)
+        return f'{match.group(1)}"{"<empty>" if value == "" else "<present>"}"'
+
+    redacted = SENSITIVE_ATTR.sub(replace_sensitive, text)
+    if redacted.startswith("<CHAT "):
+        def replace_chat_text(match):
+            value = match.group(2) if match.group(2) is not None else match.group(3)
+            if re.fullmatch(r"%2Flobby%20\d{1,4}", value, re.IGNORECASE):
+                return match.group(0)
+            return f'{match.group(1)}"<present>"'
+
+        redacted = CHAT_TEXT_ATTR.sub(replace_chat_text, redacted)
+    return redacted
+
+
+def format_decoded_row(row, *, redact=False):
+    if row["kind"] == "frame" and "data_b64" in row:
+        raw_bytes = base64.b64decode(row["data_b64"], validate=True)
+        has_nul = raw_bytes.endswith(b"\x00")
+        body = raw_bytes[:-1] if has_nul else raw_bytes
+        text = body.decode("utf-8", errors="backslashreplace")
+        if redact:
+            text = redact_raw_text(text)
+        nul_suffix = " +NUL" if has_nul else " (no-NUL)"
+        send_info = f' [send {row["send"]["accepted"]}/{row["send"]["requested"]}]' if "send" in row else ""
+        return f'#{row["seq"]} {row["at"]} {row["direction"]} [{len(raw_bytes)}B{nul_suffix}]{send_info} {text}'
+    if row["kind"] == "frame":
+        body = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in row["attrs"].items())
+        return f'#{row["seq"]} {row["at"]} {row["direction"]} {row["tag"]} {body}'.rstrip()
+    if row["kind"] == "mark":
+        return f'#{row["seq"]} {row["at"]} 标记 @{row["anchor"]} {row["note"]}'
+    meta = " ".join(str(row[key]) for key in ("kind", "pid", "reason") if key in row)
+    return f'#{row["seq"]} {row["at"]} {meta}'.rstrip()
+
+
+def decode_journal(journal, *, out_path=None, bin_dir=None, redact=False):
+    lines = [format_decoded_row(row, redact=redact) for row in journal.records]
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    else:
+        for line in lines:
+            print(line)
+    extracted = 0
+    if bin_dir is not None:
+        if not journal.raw:
+            raise ValueError("仅原始采集记录（tenhou-origin-session-raw/1）包含可导出的二进制帧")
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        in_stream = bytearray()
+        out_stream = bytearray()
+        for row in journal.records:
+            if row["kind"] != "frame" or "data_b64" not in row:
+                continue
+            raw_bytes = base64.b64decode(row["data_b64"], validate=True)
+            frame_file = bin_dir / f'{row["seq"]:05d}-{row["direction"]}.bin'
+            frame_file.write_bytes(raw_bytes)
+            if row["direction"] == "in":
+                in_stream.extend(raw_bytes)
+            else:
+                out_stream.extend(raw_bytes)
+            extracted += 1
+        (bin_dir / "in.bin").write_bytes(bytes(in_stream))
+        (bin_dir / "out.bin").write_bytes(bytes(out_stream))
+    return len(lines), extracted
 
 
 def timestamp(tick=None):
@@ -108,25 +208,7 @@ class Capture:
         self.script = None
         self.recording = False
 
-    def attach(self, pid=None):
-        if self.session and not self.session.is_detached:
-            raise ValueError("当前原版进程仍在运行。可用 detach 解除后再附加")
-        if pid is None:
-            clients = [p for p in self.device.enumerate_processes() if p.name.casefold() == "tenhou.exe"]
-            if len(clients) != 1:
-                pids = ", ".join(str(p.pid) for p in clients)
-                raise ValueError(f"请启动原版并停在登录页。多个客户端时使用 attach PID（当前候选 {pids or '无'}）")
-            pid = clients[0].pid
-        processes = self.device.enumerate_processes(pids=[pid], scope="metadata")
-        if not processes:
-            raise ValueError(f"PID {pid} 已退出或不存在")
-        image = processes[0].parameters.get("path")
-        if not image or Path(image).name.casefold() != "tenhou.exe":
-            raise ValueError("指定进程不是 tenhou.exe 或无法读取进程镜像路径")
-        with Path(image).open("rb") as binary:
-            if hashlib.file_digest(binary, "sha256").hexdigest() != ORIGIN_SHA256:
-                raise ValueError("原版 EXE 的 SHA-256 与仓库取证版本不符")
-
+    def _attach_pid(self, pid, *, start_recording=False):
         session = self.device.attach(pid)
         detached = Event()
         stream = self.journal.add("attach", pid=pid)
@@ -152,13 +234,112 @@ class Capture:
             script = session.create_script(HOOK.read_text(encoding="utf-8"))
             script.on("message", on_message)
             script.load()
+            self.session, self.script, self.stream, self.detached = session, script, stream, detached
+            self.recording = False
+            if start_recording:
+                self.record(True)
         except Exception:
             if not session.is_detached:
                 session.detach()
+            self.session = None
+            self.script = None
+            self.recording = False
             raise
-        self.session, self.script, self.stream, self.detached = session, script, stream, detached
-        self.recording = False
+
+    def attach(self, pid=None):
+        if self.session and not self.session.is_detached:
+            raise ValueError("当前原版进程仍在运行。可用 detach 解除后再附加")
+        if pid is None:
+            clients = [p for p in self.device.enumerate_processes() if p.name.casefold() == "tenhou.exe"]
+            if len(clients) != 1:
+                pids = ", ".join(str(p.pid) for p in clients)
+                raise ValueError(f"请启动原版并停在登录页，或用 spawn 启动。多个客户端时使用 attach PID（当前候选 {pids or '无'}）")
+            pid = clients[0].pid
+        processes = self.device.enumerate_processes(pids=[pid], scope="metadata")
+        if not processes:
+            raise ValueError(f"PID {pid} 已退出或不存在")
+        image = processes[0].parameters.get("path")
+        if not image:
+            raise ValueError("指定进程不是 tenhou.exe 或无法读取进程镜像路径")
+        verify_origin_exe(image)
+        self._attach_pid(pid, start_recording=False)
         print(f"已附加 PID {pid}，输入 start 开始记录")
+
+    def _child_image_path(self, child):
+        path = getattr(child, "path", None)
+        if path and Path(path).is_absolute() and Path(path).is_file():
+            return path
+        processes = self.device.enumerate_processes(pids=[child.pid], scope="metadata")
+        if processes:
+            resolved = processes[0].parameters.get("path")
+            if resolved:
+                return resolved
+        return path
+
+    def spawn(self, exe=None):
+        if self.session and not self.session.is_detached:
+            raise ValueError("当前原版进程仍在运行。可用 detach 解除后再启动")
+        target = verify_launcher_exe(exe or ORIGIN_LAUNCHER)
+        events = Queue()
+
+        def on_child_added(child):
+            events.put(("child", child))
+
+        launcher_pid = None
+        launcher_session = None
+        child_pid = None
+        self.device.on("child-added", on_child_added)
+        try:
+            launcher_pid = self.device.spawn([str(target)], cwd=str(target.parent))
+            launcher_session = self.device.attach(launcher_pid)
+            launcher_session.on("detached", lambda reason, _crash: events.put(("detached", reason)))
+            launcher_session.enable_child_gating()
+            self.device.resume(launcher_pid)
+            print(f"已启动启动器 PID {launcher_pid}，等待拉起 tenhou.exe...")
+            while True:
+                try:
+                    kind, payload = events.get(timeout=0.2)
+                except Empty:
+                    continue
+                if kind == "detached":
+                    raise ValueError(f"启动器已退出（{payload}），未拉起 tenhou.exe")
+                if payload.parent_pid != launcher_pid:
+                    continue
+                image = self._child_image_path(payload)
+                if not image or Path(image).name.casefold() != "tenhou.exe":
+                    self.device.resume(payload.pid)
+                    continue
+                child_pid = payload.pid
+                verify_origin_exe(image)
+                self._attach_pid(child_pid, start_recording=True)
+                self.device.resume(child_pid)
+                print(f"已由启动器拉起并从首条指令开始记录 PID {child_pid}")
+                return
+        except BaseException:
+            if child_pid is not None:
+                if self.session is not None and not self.session.is_detached:
+                    self.close()
+                try:
+                    self.device.kill(child_pid)
+                except Exception:
+                    pass
+            if launcher_pid is not None:
+                try:
+                    self.device.kill(launcher_pid)
+                except Exception:
+                    pass
+            raise
+        finally:
+            self.device.off("child-added", on_child_added)
+            if launcher_session is not None and not launcher_session.is_detached:
+                try:
+                    launcher_session.disable_child_gating()
+                except Exception:
+                    pass
+                try:
+                    launcher_session.detach()
+                except Exception:
+                    pass
 
     def record(self, enabled):
         if not self.session or self.session.is_detached or self.detached.is_set():
@@ -214,6 +395,8 @@ def prompt(journal, capture, errors):
                 print((LIVE_COMMANDS if capture else "") + COMMANDS, end="")
             elif command == "attach" and capture:
                 capture.attach(int(argument) if argument else None)
+            elif command == "spawn" and capture:
+                capture.spawn(Path(argument.strip('"')) if argument else None)
             elif command == "detach" and capture:
                 capture.close()
                 print("已解除附加")
@@ -252,15 +435,24 @@ def prompt(journal, capture, errors):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="mode", required=True)
-    live = modes.add_parser("capture", help="attach to the original client and record")
+    live = modes.add_parser("capture", help="attach to or spawn the original client and record")
     live.add_argument("--pid", type=int, help="original tenhou.exe process ID")
+    live.add_argument("--spawn", action="store_true", help="spawn launcher.exe and start recording tenhou.exe before entry")
+    live.add_argument("--exe", type=Path, help="path to launcher.exe for --spawn (default: repository origin launcher)")
     live.add_argument("--out", type=Path, help="new JSONL output path")
     live.add_argument("--raw", action="store_true", help="keep original frame bytes, including credentials")
     review = modes.add_parser("review", help="view, annotate and export a captured interval")
     review.add_argument("path", type=Path)
+    decode = modes.add_parser("decode", help="decode raw Base64 JSONL frames to readable text and/or binary files")
+    decode.add_argument("path", type=Path)
+    decode.add_argument("--out", type=Path, help="write decoded text transcript to file instead of stdout")
+    decode.add_argument("--bin-dir", type=Path, help="extract decoded per-frame .bin files and in.bin/out.bin streams")
+    decode.add_argument("--redact", action="store_true", help="redact credentials and personal fields in decoded text")
     args = parser.parse_args()
     errors = (OSError, ValueError)
     if args.mode == "capture":
+        if args.spawn and args.pid is not None:
+            parser.error("--spawn 与 --pid 不能同时使用")
         try:
             import frida
         except ImportError:
@@ -272,6 +464,16 @@ def main():
     try:
         if args.mode == "review":
             prompt(Journal(args.path, review=True), None, errors)
+        elif args.mode == "decode":
+            journal = Journal(args.path, review=True)
+            lines, extracted = decode_journal(journal, out_path=args.out, bin_dir=args.bin_dir, redact=args.redact)
+            if args.out is not None or args.bin_dir is not None:
+                summary = f"已解码 {lines} 条事件"
+                if args.out is not None:
+                    summary += f"，文本写入 {args.out.resolve()}"
+                if args.bin_dir is not None:
+                    summary += f"，导出 {extracted} 个二进制帧及双向流至 {args.bin_dir.resolve()}"
+                print(summary)
         else:
             prefix = "session-raw" if args.raw else "session"
             filename = datetime.now().strftime(f"{prefix}-%Y%m%d-%H%M%S-%f.jsonl")
@@ -283,7 +485,10 @@ def main():
                 print("原始记录可能包含登录 ID 和认证值，分享前请手工脱敏。")
             try:
                 try:
-                    capture.attach(args.pid)
+                    if args.spawn:
+                        capture.spawn(args.exe)
+                    else:
+                        capture.attach(args.pid)
                 except errors as error:
                     print(error, file=sys.stderr)
                 prompt(journal, capture, errors)

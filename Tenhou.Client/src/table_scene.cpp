@@ -79,6 +79,39 @@ namespace tenhou {
         return kind < 27 ? kind / 9 * 10 + kind % 9 + 1 : 30 + kind % 9;
     }
 
+    void UpdateOriginSuitOrder(std::array<int, 3> &suit_order, const std::vector<int> &tiles) {
+        std::array<int, 3> present{0, 0, 0};
+        for (int tile: tiles)
+            if (tile >= 0 && tile < 108) ++present[static_cast<std::size_t>(tile / 36)];
+        if (present[0] + present[1] + present[2] == 0) return;
+        if (present[0] != 0 && present[1] != 0 && present[2] != 0) return;
+        for (int &count: present) count = count > 0 ? 1 : 0;
+        std::array<int, 3> by_rank{0, 1, 2};
+        for (int suit = 0; suit < 3; ++suit) {
+            const int rank = suit_order[static_cast<std::size_t>(suit)];
+            if (rank >= 0 && rank < 3) by_rank[static_cast<std::size_t>(rank)] = suit;
+        }
+        int r0 = by_rank[0], r1 = by_rank[1], r2 = by_rank[2];
+        if (present[static_cast<std::size_t>(r0)] < present[static_cast<std::size_t>(r1)]) std::swap(r0, r1);
+        if (present[static_cast<std::size_t>(r0)] < present[static_cast<std::size_t>(r2)]) std::swap(r0, r2);
+        if (present[static_cast<std::size_t>(r1)] < present[static_cast<std::size_t>(r2)]) std::swap(r1, r2);
+        suit_order[static_cast<std::size_t>(r0)] = 0;
+        suit_order[static_cast<std::size_t>(r1)] = 1;
+        suit_order[static_cast<std::size_t>(r2)] = 2;
+    }
+
+    void SortOriginHand(std::vector<int> &tiles, const std::array<int, 3> &suit_order) {
+        const auto key = [&](int tile) {
+            return tile >= 0 && tile < 108
+                       ? (tile % 36) + suit_order[static_cast<std::size_t>(tile / 36)] * 36
+                       : tile;
+        };
+        std::sort(tiles.begin(), tiles.end(), [&](int a, int b) {
+            const int ka = key(a), kb = key(b);
+            return ka != kb ? ka < kb : a < b;
+        });
+    }
+
     std::vector<TableTile> BuildTableScene(const ReplayState &state, bool sort_self, bool sort_opponents) {
         std::vector<TableTile> result;
         if (!state.initialized) return result;

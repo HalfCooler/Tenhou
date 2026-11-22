@@ -5,9 +5,10 @@
 ```powershell
 python -m pip install frida==17.27.1
 python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw
+python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw --spawn
 ```
 
-有多个 `tenhou.exe` 时可加 `--pid 1234`，或在提示符输入 `attach 1234`。`--raw` 默认写入 `build/origin-capture/session-raw-*.jsonl`，可用 `--out` 指定新文件。省略 `--raw` 即使用原有的脱敏模式。附加时核对原版 EXE 的 SHA-256，客户端更新后需要重新核对观察点。
+有多个 `tenhou.exe` 时可加 `--pid 1234`，或在提示符输入 `attach 1234`。采集断线重连（再开）时，原版在收到含 `gpid` 的 `GO` 后会把 `[STATUS] GPID` 写入 `config.ini`；下次启动时若读到该键，会立即清除它并跳过欢迎页自动发起 `<HELO ... gpid="..." .../>`（见 `tenhou.exe.c` 第 62849–63042 行、第 63570–63585 行）。此外，原版 `tenhou.exe` 启动入口会先通过 `FindWindowA("WC_TENHOU_WIN_APP_LAUNCHER", NULL)` 检查启动器窗口，缺失时会直接退出（见 `tenhou.exe.c` 第 61435–61439 行），必须由 `launcher.exe` 拉起（见 `launcher.exe.c` 第 1317–1321 行、第 2692–2696 行）。使用 `--spawn` 或在提示符中输入 `spawn` 会启动原版 `launcher.exe`（仓库内 SHA-256 `5214d0cd37f7a61c5d82962f2f2314b0215e95a47a4ed979d82c8f41c8b0a44c`）并开启 Frida 子进程门控，在启动器拉起 `tenhou.exe` 后核对 `tenhou.exe` 的 SHA-256、于首条指令执行前加载钩子并自动开启记录，再恢复 `tenhou.exe` 运行，从而完整记录再开开头。`--raw` 默认写入 `build/origin-capture/session-raw-*.jsonl`，可用 `--out` 指定新文件。省略 `--raw` 即使用原有的脱敏模式。附加或启动时都会核对原版 `tenhou.exe` 的 SHA-256，客户端更新后需要重新核对观察点。
 
 核对个人资料时，在 `start` 后登录，等大厅资料出现，再切换需要比较的全期间和月间类别。用 `mark` 记录画面和操作，用 `pause` 或 `quit` 结束采集。原始记录及其裁剪件可能含登录 ID 和认证值，分享前请在副本中手工脱敏。
 
@@ -21,13 +22,16 @@ python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw
 | `mark 已点击预约` | 给当时最后一条事件加备注。 |
 | `mark @18 已显示大会报名失败` | 把备注锚定到第 18 条事件。 |
 | `export 12 34 .\build\origin-capture\contest-cut.jsonl` | 把区间和对应备注保存为新文件，保留原序号和时间。 |
-| `detach` / `attach [PID]` | 切换观察进程。原版重启后，在新进程登录前重新附加并输入 `start`，继续写同一份记录。 |
+| `detach` / `attach [PID]` | 切换观察进程。原版停在登录页时可重新附加并输入 `start`。 |
+| `spawn [启动器路径]` | 启动原版 `launcher.exe` 并通过子进程门控拦截其拉起的 `tenhou.exe`，在首条指令前开启记录并恢复运行，避免再开自动登录时漏采开头。省略路径默认使用仓库内原版 `launcher.exe`。 |
 | `quit` | 结束采集，解除附加。 |
 
-采集结束后可以重新打开源文件或裁剪件。审阅时新增的备注随 `export` 写入新文件。
+采集结束后可以重新打开源文件或裁剪件，或直接把原始 `data_b64` 记录解码为可读文本与二进制帧文件。审阅时新增的备注随 `export` 写入新文件。
 
 ```powershell
 python -X utf8 -B .\scripts\Capture-OriginSession.py review .\build\origin-capture\contest-cut.jsonl
+python -X utf8 -B .\scripts\Capture-OriginSession.py decode .\docs\Tenhou.Client.Origin\origin-capture\一般\ 三食断赤速\ 东风战.jsonl --redact
+python -X utf8 -B .\scripts\Capture-OriginSession.py decode .\build\origin-capture\capture-raw.jsonl --out .\build\origin-capture\decoded.txt --bin-dir .\build\origin-capture\frames
 ```
 
 复现场景时，记录原版窗口上的动作和结果，例如「提交报名」「出现拒绝」「断线后重启」「恢复后可以出牌」。将关键画面或牌谱另存，并在备注里写入文件名。分享前复核备注、截图及另存牌谱中的身份信息。

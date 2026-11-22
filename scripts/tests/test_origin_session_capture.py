@@ -59,6 +59,208 @@ class OriginSessionCapture(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 review.export(first, last, source)
 
+    def test_spawn_launches_launcher_and_arms_child_tenhou_before_resume(self):
+        events = []
+
+        class FakeChild:
+            def __init__(self, pid, parent_pid, path):
+                self.pid = pid
+                self.parent_pid = parent_pid
+                self.path = str(path)
+
+        class FakeExports:
+            def set_recording(self, enabled, raw):
+                events.append(("set_recording", enabled, raw))
+
+        class FakeScript:
+            exports_sync = FakeExports()
+
+            def on(self, name, _cb):
+                events.append(("script.on", name))
+
+            def load(self):
+                events.append(("script.load",))
+
+        class FakeSession:
+            def __init__(self, pid):
+                self.pid = pid
+                self.is_detached = False
+
+            def on(self, name, _cb):
+                events.append(("session.on", self.pid, name))
+
+            def enable_child_gating(self):
+                events.append(("enable_child_gating", self.pid))
+
+            def disable_child_gating(self):
+                events.append(("disable_child_gating", self.pid))
+
+            def create_script(self, _source):
+                events.append(("create_script", self.pid))
+                return FakeScript()
+
+            def detach(self):
+                self.is_detached = True
+                events.append(("detach", self.pid))
+
+        class FakeProcess:
+            def __init__(self, path):
+                self.parameters = {"path": str(path)}
+
+        class FakeDevice:
+            def __init__(self):
+                self.child_handlers = []
+
+            def on(self, name, cb):
+                events.append(("device.on", name))
+                if name == "child-added":
+                    self.child_handlers.append(cb)
+
+            def off(self, name, cb):
+                events.append(("device.off", name))
+                if name == "child-added" and cb in self.child_handlers:
+                    self.child_handlers.remove(cb)
+
+            def spawn(self, argv, cwd=None):
+                events.append(("spawn", Path(argv[0]).name, Path(cwd).name))
+                return 1001
+
+            def attach(self, pid):
+                events.append(("attach", pid))
+                return FakeSession(pid)
+
+            def enumerate_processes(self, pids=None, scope=None):
+                events.append(("enumerate_processes", tuple(pids or ()), scope))
+                if pids == [4321]:
+                    return [FakeProcess(CAPTURE.ORIGIN_EXE)]
+                return []
+
+            def resume(self, pid):
+                events.append(("resume", pid))
+                if pid == 1001:
+                    for handler in list(self.child_handlers):
+                        handler(FakeChild(4321, 1001, "tenhou.exe"))
+
+            def kill(self, pid):
+                events.append(("kill", pid))
+
+        class FakeFrida:
+            def get_local_device(self):
+                return FakeDevice()
+
+        with tempfile.TemporaryDirectory() as folder:
+            journal = CAPTURE.Journal(Path(folder) / "spawn-raw.jsonl", raw=True)
+            capture = CAPTURE.Capture(FakeFrida(), journal)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                capture.spawn(CAPTURE.ORIGIN_LAUNCHER)
+            self.assertTrue(capture.recording)
+            self.assertEqual(
+                events,
+                [
+                    ("device.on", "child-added"),
+                    ("spawn", "launcher.exe", "Tenhou.Client.Origin"),
+                    ("attach", 1001),
+                    ("session.on", 1001, "detached"),
+                    ("enable_child_gating", 1001),
+                    ("resume", 1001),
+                    ("enumerate_processes", (4321,), "metadata"),
+                    ("attach", 4321),
+                    ("session.on", 4321, "detached"),
+                    ("create_script", 4321),
+                    ("script.on", "message"),
+                    ("script.load",),
+                    ("set_recording", True, True),
+                    ("resume", 4321),
+                    ("device.off", "child-added"),
+                    ("disable_child_gating", 1001),
+                    ("detach", 1001),
+                ],
+            )
+            self.assertEqual([row["kind"] for row in journal.records], ["attach", "start"])
+            self.assertEqual(journal.records[0]["pid"], 4321)
+            capture.close()
+
+    def test_spawn_rejects_tenhou_exe_and_reports_early_launcher_exit(self):
+        class FakeSession:
+            is_detached = False
+
+            def on(self, name, cb):
+                if name == "detached":
+                    self.on_detached = cb
+
+            def enable_child_gating(self):
+                pass
+
+            def disable_child_gating(self):
+                pass
+
+            def detach(self):
+                self.is_detached = True
+
+        class FakeDevice:
+            def on(self, _name, _cb):
+                pass
+
+            def off(self, _name, _cb):
+                pass
+
+            def spawn(self, _argv, cwd=None):
+                return 2002
+
+            def attach(self, _pid):
+                self.session = FakeSession()
+                return self.session
+
+            def resume(self, _pid):
+                self.session.is_detached = True
+                self.session.on_detached("process-terminated", None)
+
+            def kill(self, _pid):
+                pass
+
+        class FakeFrida:
+            def get_local_device(self):
+                return FakeDevice()
+
+        with tempfile.TemporaryDirectory() as folder:
+            journal = CAPTURE.Journal(Path(folder) / "spawn-fail.jsonl", raw=True)
+            capture = CAPTURE.Capture(FakeFrida(), journal)
+            with self.assertRaisesRegex(ValueError, "launcher.exe"):
+                capture.spawn(CAPTURE.ORIGIN_EXE)
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(ValueError, "未拉起 tenhou.exe"):
+                capture.spawn(CAPTURE.ORIGIN_LAUNCHER)
+
+    def test_decode_outputs_readable_text_redaction_and_binary_streams(self):
+        frames = [
+            ("out", b'<HELO name="ID12345678-12345678" gpid="secret-gpid" sx="M" tid="w0" />\0'),
+            ("in", b'<CHAT uname="alice" text="%2Flobby%204409" lobby="4409" />\0'),
+            ("in", b'<CHAT uname="alice" text="private-chat" lobby="4409" />\0'),
+            ("in", b'<GO type="17" lobby="4409" gpid="secret-gpid" />\0'),
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "raw.jsonl"
+            journal = CAPTURE.Journal(source, raw=True)
+            for direction, payload in frames:
+                journal.add("frame", direction=direction, byte_length=len(payload),
+                            data_b64=base64.b64encode(payload).decode("ascii"))
+            review = CAPTURE.Journal(source, review=True)
+            txt = root / "decoded.txt"
+            bin_dir = root / "bins"
+            lines, extracted = CAPTURE.decode_journal(review, out_path=txt, bin_dir=bin_dir, redact=True)
+            self.assertEqual((lines, extracted), (4, 4))
+            decoded = txt.read_text(encoding="utf-8")
+            self.assertNotIn("ID12345678", decoded)
+            self.assertNotIn("secret-gpid", decoded)
+            self.assertNotIn("alice", decoded)
+            self.assertNotIn("private-chat", decoded)
+            self.assertIn("%2Flobby%204409", decoded)
+            self.assertIn('type="17"', decoded)
+            self.assertEqual((bin_dir / "00001-out.bin").read_bytes(), frames[0][1])
+            self.assertEqual((bin_dir / "out.bin").read_bytes(), frames[0][1])
+            self.assertEqual((bin_dir / "in.bin").read_bytes(), b"".join(p for d, p in frames if d == "in"))
+
     @unittest.skipUnless(shutil.which("node"), "Node.js needed to exercise hook callbacks")
     def test_hook_filters_sources_and_preserves_bytes_in_raw_mode(self):
         script = r'''

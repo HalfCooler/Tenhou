@@ -65,7 +65,7 @@ namespace tenhou {
         std::uint64_t service_clock_ = 0, service_clock_at_ = 0;
         std::string service_pending_, service_error_;
         int hovered_ = -1, rule_slot_ = -1;
-        bool visible_ = false, move_declined_ = false, toutenkou_ = false, official_ = false;
+        bool visible_ = false, move_declined_ = false, toutenkou_ = false, official_ = false, service_ready_ = true;
         HWND parent_, viewport_ = nullptr, panel_ = nullptr;
         HFONT font_ = nullptr, title_font_ = nullptr;
         std::map<unsigned, HWND> buttons_;

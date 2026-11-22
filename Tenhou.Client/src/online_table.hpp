@@ -86,6 +86,7 @@ namespace tenhou {
         ReplayState Project(const OnlineState &state);
 
         std::vector<int> hand_order_;
+        std::array<int, 3> suit_order_{0, 1, 2};
         std::vector<int> raised_;
         std::uint64_t hand_events_ = 0;
         int reordered_draw_ = -1;

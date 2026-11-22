@@ -309,6 +309,8 @@ namespace tenhou {
     void OfflineLobbyView::SetServiceSnapshot(const LobbySnapshot &snapshot) {
         if (!snapshot.origin_lobby) return;
         official_ = snapshot.official;
+        service_ready_ = !snapshot.recovering &&
+                         (snapshot.phase == LobbyPhase::Lobby || snapshot.phase == LobbyPhase::Matching);
         const bool moved = state_.room() != snapshot.origin_lobby->room();
         state_ = *snapshot.origin_lobby;
         service_pending_ = snapshot.origin_pending;
@@ -321,7 +323,7 @@ namespace tenhou {
 
     void OfflineLobbyView::Refresh() {
         const HWND old_focus = GetFocus();
-        const bool pending = state_.pending().has_value() || !service_pending_.empty();
+        const bool pending = state_.pending().has_value() || !service_pending_.empty() || (submit_ && !service_ready_);
         const bool busy = pending || state_.reservations() != 0;
         const auto control = [&](unsigned id, bool show, bool enable) {
             const HWND button = buttons_.at(id);
@@ -533,11 +535,17 @@ namespace tenhou {
         for (auto label: {Label::lobby_practice_riichi_fast, Label::lobby_practice_riichi, Label::lobby_practice_riichi_three})
             MenuItem(menu, 0, label, MF_GRAYED);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        for (auto label: {Label::lobby_practice_parlor_0, Label::lobby_practice_parlor_2, Label::lobby_practice_parlor_three})
-            MenuItem(menu, 0, label, MF_GRAYED);
+        const UINT parlor_state = official_ && submit_ && state_.ranked() ? MF_ENABLED : MF_GRAYED;
+        MenuItem(menu, 1024, Label::lobby_practice_parlor_0, parlor_state);
+        MenuItem(menu, 0, Label::lobby_practice_parlor_2, MF_GRAYED);
+        MenuItem(menu, 1552, Label::lobby_practice_parlor_three, parlor_state);
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         MenuItem(menu, 1, Label::lobby_practice_toutenkou, official_ ? MF_ENABLED : MF_GRAYED);
-        Popup(menu, buttons_.at(kPractice), panel_);
+        const UINT pick = Popup(menu, buttons_.at(kPractice), panel_);
+        if (pick) log_("SERVICE LOBBY practice pick=" + std::to_string(pick) +
+                       " ready=" + std::to_string(service_ready_));
+        if ((pick == 1024 || pick == 1552) && official_ && submit_)
+            submit_("join", std::to_wstring(pick));
     }
 
     void OfflineLobbyView::ChooseProfile(bool monthly) {

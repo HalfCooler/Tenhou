@@ -354,10 +354,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         const bool game = Snapshot().game.initialized;
         const auto &session = client_->snapshot();
         const bool service = service_lobby_ && session.origin_lobby.has_value();
+        const bool lobby_ready = session.phase == LobbyPhase::Lobby || session.phase == LobbyPhase::Matching ||
+                                 session.phase == LobbyPhase::Cancelling || session.phase == LobbyPhase::ChangingLobby;
         matching_->Move(r);
-        matching_->Show(!game && !service);
+        matching_->Show(!game && !service && (!session.official || session.phase == LobbyPhase::Error));
         if (service_lobby_) service_lobby_->Show(service && !session.game.started && !session.recovering &&
-                                               IsWindowVisible(window_));
+                                               lobby_ready && IsWindowVisible(window_));
         for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
         const auto board = BoardBounds();
         settlement_view_->Move(board);
@@ -906,6 +908,21 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             CancelResultTimer();
             show_results_ = false;
         }
+        // Leaving a table (including official EXIT/END without a TABLEEND frame) must
+        // stop opening wall animations, tile motion, deferred cues and active sound effects.
+        if (!incoming.recovering && !incoming.game.started && !incoming.game.initialized &&
+            (opening_.Active() || table_.Animating() || match_intro_->Active() ||
+             !deferred_sounds_.empty() || audio_.Active() || start_barrier_ || start_sound_pending_)) {
+            ClearPresentationQueue();
+            CancelSelection();
+            CancelResultTimer();
+            show_results_ = false;
+            suppress_self_reach_ = false;
+            start_barrier_ = false;
+            start_sound_pending_ = false;
+            match_intro_pending_ = true;
+            StopSound();
+        }
         if (incoming.variant_active && (incoming.table_paused || incoming.recovering)) {
             hover_point_ = {-1, -1}; CancelHandDrag(); CancelSelection();
         }
@@ -992,7 +1009,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (incoming.recovering && !incoming.silent_recovery && (!incoming.native_service || resume_preparation_pending_) &&
             incoming.game.started && original_display_ && !text_details_ && IsWindowVisible(window_)) {
             const bool beginning = !match_intro_->Resuming();
-            match_intro_->Resume(OnlineTableState(incoming.game), incoming.game.type);
+            auto state = OnlineTableState(incoming.game);
+            if (incoming.official && incoming.game.has_dealer) state.initialized = true;
+            match_intro_->Resume(state, incoming.game.type);
             if (beginning) log_("ONLINE RESUME PREPARATION BEGIN");
         }
         InvalidateRect(window_, nullptr, FALSE);
@@ -1502,6 +1521,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     void LobbyView::OpeningTick(double now) {
+        if (!client_ || !client_->snapshot().game.initialized) {
+            opening_timer_.Stop();
+            opening_.Cancel();
+            return;
+        }
         if (match_intro_->Active() || start_barrier_ || client_->snapshot().table_paused) {
             opening_.ResumeClock(now);
             return;

@@ -45,9 +45,12 @@ namespace tenhou {
         bool has_hand = false, has_melds = false, has_yaku = false, has_yakuman = false, has_ten = false;
         std::vector<int> hand, melds, dora, ura, yakuman, ten, ba;
         std::vector<SettlementYaku> yaku;
+        std::vector<SettlementYaku> chip_yaku;
         std::array<std::vector<int>, 4> revealed;
         std::array<bool, 4> has_revealed{};
         std::array<int, 4> base{}, delta{}; // points, converted once from sc's hundreds.
+        bool has_chips = false;
+        std::array<int, 4> chip_base{}, chip_delta{};
     };
 
     struct SettlementState {
@@ -56,6 +59,10 @@ namespace tenhou {
         std::vector<SettlementReceipt> receipts;
         bool has_final = false;
         std::array<double, 4> final_scores{}, final_points{};
+        bool has_final_chips = false;
+        std::array<int, 4> final_chips{};
+        bool has_ratio = false;
+        std::array<int, 2> ratio{};
     };
 
     // Keep immediate transfers (e.g. Sichuan kongs), hiding only receipt payments.

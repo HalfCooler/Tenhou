@@ -154,7 +154,18 @@ namespace tenhou {
                     if (!Waits(Without(hand, tile), static_cast<int>(p.melds.size()), locked).empty())
                         add("riichi", {tile}, {One("REACH", "hai", tile), One("D", "p", tile)});
             }
-            if (hint & 2) {
+            int total_kans = 0;
+            for (const auto &player: s.players)
+                for (const auto &meld: player.melds)
+                    if (meld.kind == MeldKind::OpenKan || meld.kind == MeldKind::ClosedKan ||
+                        meld.kind == MeldKind::AddedKan)
+                        ++total_kans;
+            const bool has_live_tile = !s.wall.known ||
+                                       136 - s.wall.replacement_limit - 10 - s.wall.front - s.wall.replacements > 0;
+            // Official Tenhou does not set hint bit 2 on self draws for closed/added kan;
+            // self-hosted servers advertise bit 2 explicitly.
+            const bool kan_allowed = official ? (p.draw_pending && total_kans < 4 && has_live_tile) : ((hint & 2) != 0);
+            if (kan_allowed) {
                 for (int kind = 0; kind < 34; ++kind) {
                     std::vector<int> same;
                     for (int tile: hand) if (tile / 4 == kind) same.push_back(tile);
@@ -184,11 +195,19 @@ namespace tenhou {
             }
             if (hint & 16) add("tsumo", {}, {"<N type=\"7\" />"});
             if (hint & 64) add("draw", {}, {"<N type=\"9\" />"});
-            // Original hint 0x80 -> n%d; request type 10 with the physical entity.
-            if ((hint & 128) && (s.type & 16) && p.draw_pending)
-                for (int tile: hand)
-                    if (tile / 4 == 30 && (!p.reach || tile == p.drawn_tile))
-                        add("nuki", {tile}, {"<N type=\"10\" hai=\"" + std::to_string(tile) + "\" />"});
+            // Original standard sanma button 0xFB1 sends <N type="10" />; self-hosted servers accept hai.
+            if ((hint & 128) && (s.type & 16) && p.draw_pending) {
+                if (official) {
+                    if (std::any_of(hand.begin(), hand.end(), [&](int tile) {
+                        return tile / 4 == 30 && (!p.reach || tile == p.drawn_tile);
+                    }))
+                        add("nuki", {}, {"<N type=\"10\" />"});
+                } else {
+                    for (int tile: hand)
+                        if (tile / 4 == 30 && (!p.reach || tile == p.drawn_tile))
+                            add("nuki", {tile}, {"<N type=\"10\" hai=\"" + std::to_string(tile) + "\" />"});
+                }
+            }
             return;
         }
         if (!hint) return;
@@ -239,6 +258,8 @@ namespace tenhou {
             pending_ = {};
             return;
         }
+        // Official Tenhou sends PROF before the final AGARI/RYUUKYOKU(owari); keep pending action intact until result.
+        if (tag == "PROF" && !after.complete) return;
         if (!snapshot.pending.empty() && Decisive(tag)) {
             const auto &kind = pending_.kind;
             // Additional winners keep Next locked; INIT confirms it and final results cancel it.

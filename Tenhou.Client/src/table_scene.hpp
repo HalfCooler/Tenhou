@@ -51,6 +51,12 @@ namespace tenhou {
 
     int TileVariant(int tile, bool red = true);
 
+    // Origin tenhou.exe.c:90593-90661 (FUN_00488220 "od eat 0") & 109604-109653 (FUN_004a3500):
+    // Move absent suits behind present suits when fewer than three suits are held;
+    // keep suit order unchanged when all three suits are present.
+    void UpdateOriginSuitOrder(std::array<int, 3> &suit_order, const std::vector<int> &tiles);
+    void SortOriginHand(std::vector<int> &tiles, const std::array<int, 3> &suit_order);
+
     TileOffset TableTileOffset(const TableTile &tile, int width);
 
     std::vector<TableTile> BuildTableScene(const ReplayState &state, bool sort_self = true, bool sort_opponents = true);

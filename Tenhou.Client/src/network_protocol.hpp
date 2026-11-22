@@ -133,7 +133,9 @@ namespace tenhou {
         OnlineGame game_;
         OnlineActions actions_;
         bool rejoin_received_ = false, recovery_go_ = false;
-        bool official_start_ready_ = false;
+        bool official_start_ready_ = false, official_profile_dirty_ = false;
+        std::string official_identity_;
+        char official_gender_ = 'M';
         unsigned room_ = 0;
         unsigned origin_epoch_ = 0, origin_request_ = 0;
         int official_profile_type_ = -1;

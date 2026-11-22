@@ -300,11 +300,15 @@ namespace tenhou {
         snapshot = {};
         game_ = {};
         actions_ = {};
+        actions_.official = official;
         actions_.snapshot.enabled = interactive_games;
         snapshot.actions = actions_.snapshot;
         snapshot.phase = LobbyPhase::AwaitHelo;
         rejoin_received_ = recovery_go_ = false;
         official_start_ready_ = false;
+        official_profile_dirty_ = official;
+        official_identity_ = identity;
+        official_gender_ = gender;
         actions_.snapshot.revision = revision;
         snapshot.actions = actions_.snapshot;
         snapshot.recovering = resume_connection;
@@ -644,35 +648,39 @@ namespace tenhou {
             }
         }
         if (tag == "REJOIN") {
+            const bool official_phase = official &&
+                (phase == LobbyPhase::AwaitLobby || phase == LobbyPhase::Lobby || phase == LobbyPhase::Matching);
             if (!recover_games || (!resume_connection && !official) || !interactive_games || rejoin_received_ ||
-                recovery_go_ || (phase != LobbyPhase::Lobby && !(official && phase == LobbyPhase::AwaitLobby)))
+                recovery_go_ || (!official_phase && phase != LobbyPhase::Lobby))
                 Fail("Unexpected or disabled REJOIN");
             const auto type = Attribute(message, "t");
-            if (type.empty() || type.size() > 64) Fail("Invalid REJOIN t");
-            std::size_t start = 0;
-            int fields = 0;
-            for (;;) {
-                const auto end = type.find(',', start);
-                if (Integer(type.substr(start, end == std::string::npos ? end : end - start)) > 65535 || ++fields > 4)
-                    Fail("Invalid REJOIN t range");
-                if (end == std::string::npos) break;
-                start = end + 1;
+            if (official) {
+                if (type.empty() || type.size() > 128 || !std::all_of(type.begin(), type.end(), [](unsigned char c) {
+                    return c >= 33 && c <= 126 && c != '"' && c != '\'' && c != '<' && c != '>' && c != '&';
+                })) Fail("Invalid REJOIN t");
+            } else {
+                if (type.empty() || type.size() > 64) Fail("Invalid REJOIN t");
+                std::size_t start = 0;
+                int fields = 0;
+                for (;;) {
+                    const auto end = type.find(',', start);
+                    if (Integer(type.substr(start, end == std::string::npos ? end : end - start)) > 65535 || ++fields > 4)
+                        Fail("Invalid REJOIN t range");
+                    if (end == std::string::npos) break;
+                    start = end + 1;
+                }
             }
             rejoin_received_ = true;
-            if (official) {
+            if (official && phase != LobbyPhase::Matching) {
                 resume_connection = snapshot.recovering = true;
                 snapshot.phase = LobbyPhase::AwaitRecovery;
             }
             return {"<JOIN t=\"" + type + "\" />"};
         }
-        if (official && tag == "SAIKAI") {
-            if (!game_.state.started || game_.state.initialized || recovery_go_) return {};
-            resume_connection = snapshot.recovering = recovery_go_ = true;
-            snapshot.phase = LobbyPhase::AwaitRecovery;
-            return {"<REINIT />"};
-        }
         if (tag == "REINIT" && !recover_games) Fail("Online rejoin is not supported in this stage");
         if ((observe_games || interactive_games) && OnlineGame::Handles(tag)) {
+            // After official mid-game <BYE />, ignore stale in-flight game frames until <HELO> reopens the lobby.
+            if (official && phase == LobbyPhase::AwaitReturn) return {};
             if (tag == "GO") { snapshot.variant_active = false; snapshot.variant_state.clear(); }
             if (official && tag == "GO" && (Integer(Attribute(message, "type")) & 0x810) == 0x810) return {};
             if (match_games && !snapshot.recovering) {
@@ -688,7 +696,7 @@ namespace tenhou {
                         "GO rule differs from requested match");
                     snapshot.target_lobby.clear();
                     ++snapshot.lobby_revision;
-                } else if (tag == "UN" || tag == "TAIKYOKU") {
+                } else if (tag == "UN" || tag == "TAIKYOKU" || tag == "SAIKAI") {
                     if (phase != LobbyPhase::Matching && phase != LobbyPhase::Cancelling && phase != LobbyPhase::Game &&
                         phase != LobbyPhase::AwaitRecovery)
                         Fail("Game identity outside matchmaking/game");
@@ -705,10 +713,11 @@ namespace tenhou {
                 LobbyPhase::Cancelling &&
                 snapshot.phase != LobbyPhase::MatchComplete && snapshot.phase != LobbyPhase::AwaitRecovery && snapshot.
                 phase != LobbyPhase::Game &&
-                !(official && snapshot.recovering && snapshot.phase == LobbyPhase::AwaitLobby))
+                !(official && snapshot.recovering && (snapshot.phase == LobbyPhase::AwaitLobby ||
+                                                      (snapshot.phase == LobbyPhase::AwaitHelo && tag == "GO"))))
                 Fail("Game message before lobby confirmation");
             if (!snapshot.native_service && resume_connection && snapshot.recovering && tag != "GO" && tag != "UN" &&
-                tag != "TAIKYOKU" && tag != "REINIT" && !(official && tag == "INIT"))
+                tag != "TAIKYOKU" && tag != "SAIKAI" && tag != "REINIT" && !(official && (tag == "INIT" || tag == "BYE")))
                 Fail("Expected REINIT before resumed game events");
             if (tag == "REINIT" && (!game_.state.started || (resume_connection && !recovery_go_ && !official))) Fail(
                 "REINIT before recovery GO");
@@ -717,8 +726,17 @@ namespace tenhou {
             if (snapshot.native_service) game_message.attributes.erase("window");
             if (official && tag == "GO") {
                 if (snapshot.origin_lobby) snapshot.origin_lobby->Cancel();
+                if (snapshot.lobby.empty() && message.attributes.count("lobby")) {
+                    if (const auto room = LobbyNumber(NetworkWide(Attribute(message, "lobby"))))
+                        snapshot.lobby = NetworkUtf8(*room);
+                }
                 snapshot.match_type = Integer(Attribute(message, "type"));
+                snapshot.exit_allowed = !message.attributes.count("gpid");
+                rejoin_received_ = false;
                 official_start_ready_ = false;
+            }
+            if (official && tag == "SAIKAI") {
+                resume_connection = snapshot.recovering = recovery_go_ = true;
             }
             if (snapshot.native_service && tag == "GO") {
                 if (snapshot.origin_lobby) {
@@ -786,7 +804,8 @@ namespace tenhou {
         if (tag == "GO" || tag == "TAIKYOKU" || tag == "INIT" || tag == "REINIT")
             Fail("Online game/rejoin is not supported in this stage");
         if (tag == "HELO") {
-            if (snapshot.phase != LobbyPhase::AwaitHelo) Fail("Unexpected repeated HELO");
+            if (snapshot.phase != LobbyPhase::AwaitHelo && !(official && snapshot.phase == LobbyPhase::AwaitReturn))
+                Fail("Unexpected repeated HELO");
             if (!Attribute(message, "closing").empty()) Fail("Server is closing");
             snapshot.server = message.attributes;
             snapshot.server.erase("auth");
@@ -794,6 +813,11 @@ namespace tenhou {
             if (snapshot.identity.size() > 1024) Fail("Server identity exceeds limit");
             snapshot.phase = LobbyPhase::AwaitLobby;
             if (official) {
+                // Receiving HELO means the server opened the lobby instead of resuming a saved gpid
+                // (live gpid replies directly with GO; confirmed in tenhou.exe.c:63830-63957).
+                official_game_id.clear();
+                FinishOfficialRecovery();
+                official_profile_dirty_ = true;
                 std::vector<std::string> replies;
                 if (message.attributes.count("auth"))
                     replies.push_back("<AUTH val=\"" + AuthenticationResponse(Attribute(message, "auth")) + "\"/>");
@@ -1025,12 +1049,14 @@ namespace tenhou {
         const auto revision = snapshot.actions.revision + 1;
         game_ = {};
         actions_ = {};
+        actions_.official = official;
         actions_.snapshot.enabled = interactive_games;
         actions_.snapshot.revision = revision;
         snapshot.game = {};
         snapshot.actions = actions_.snapshot;
         snapshot.exit_table.clear();
         snapshot.exit_allowed = snapshot.table_paused = snapshot.recovering = false;
+        rejoin_received_ = recovery_go_ = official_start_ready_ = false;
         snapshot.native_window = 0;
         snapshot.target_lobby.clear();
         snapshot.phase = LobbyPhase::Lobby;
@@ -1052,7 +1078,7 @@ namespace tenhou {
             return true;
         }
         if (message.tag == "LN") {
-            if (!snapshot.origin_lobby) {
+            if (!snapshot.origin_lobby || official_profile_dirty_) {
                 OfflineLobbyProfile profile{};
                 profile.name = NetworkWide(snapshot.identity);
                 profile.ranked_allowed = snapshot.identity != "NoName";
@@ -1089,8 +1115,13 @@ namespace tenhou {
                     }
                     profile.other_lifetime.emplace(type, stats);
                 }
-                snapshot.origin_lobby.emplace(std::move(profile));
+                if (!snapshot.origin_lobby) snapshot.origin_lobby.emplace(std::move(profile));
+                else {
+                    snapshot.origin_lobby->profile = std::move(profile);
+                    snapshot.origin_lobby->Enter(kRankedLobby);
+                }
                 snapshot.lobby = "L0000";
+                official_profile_dirty_ = false;
             }
             auto &lobby = *snapshot.origin_lobby;
             auto counts = lobby.counts();
@@ -1223,7 +1254,8 @@ namespace tenhou {
             if (command == "join") {
                 const auto type = Integer(NetworkUtf8(value));
                 if ((type & 0x810) == 0x810 || lobby.contest() || lobby.Reserved(type)) return {};
-                bool reserved = false;
+                const bool verified_practice = lobby.ranked() && (type == 1024 || type == 1552);
+                bool reserved = verified_practice;
                 for (unsigned tier = 0; tier < 4 && !reserved; ++tier)
                     for (unsigned slot = 0; slot < kRankedSlots && !reserved; ++slot)
                         if (lobby.Candidate(static_cast<RankedTier>(tier), slot).type == type)
@@ -1277,6 +1309,13 @@ namespace tenhou {
         if (revision != snapshot.lobby_revision) Fail("Stale lobby revision");
         if (official && command == "return" && snapshot.phase == LobbyPhase::MatchComplete) {
             ReturnToOriginLobby();
+            official_game_id.clear();
+            official_profile_type_ = -1;
+            if (!official_identity_.empty()) {
+                snapshot.phase = LobbyPhase::AwaitReturn;
+                official_profile_dirty_ = true;
+                return {"<HELO name=\"" + Escape(official_identity_) + "\" sx=\"" + official_gender_ + "\" tid=\"w0\" />"};
+            }
             return {};
         }
         const auto roomName = [](unsigned room) {
@@ -1406,6 +1445,20 @@ namespace tenhou {
     }
 
     std::vector<std::string> LobbySession::ExitGame(int choice) {
+        if (official) {
+            if (choice >= 0 || !snapshot.exit_allowed || snapshot.recovering || snapshot.phase != LobbyPhase::Game ||
+                official_identity_.empty())
+                return {};
+            ReturnToOriginLobby();
+            official_game_id.clear();
+            official_profile_type_ = -1;
+            snapshot.phase = LobbyPhase::AwaitReturn;
+            official_profile_dirty_ = true;
+            return {
+                "<BYE />",
+                "<HELO name=\"" + Escape(official_identity_) + "\" sx=\"" + official_gender_ + "\" tid=\"w0\" />"
+            };
+        }
         if (!snapshot.native_service || !snapshot.exit_allowed || snapshot.exit_table.empty() || snapshot.recovering ||
             snapshot.phase != LobbyPhase::Game)
             return {};

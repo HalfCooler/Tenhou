@@ -153,6 +153,67 @@ namespace tenhou {
             view.Disconnect();
         }
 
+        static void OfficialPracticeExitStopsOpening(HWND parent, const std::filesystem::path &resources) {
+            LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
+            view.EnableServiceLobby([] {}, [] {});
+            view.ConfigureArtwork(resources, 1440);
+            view.sound_enabled_ = false;
+            view.animation_enabled_ = true;
+            view.Show(true);
+            LobbySession session;
+            session.official = session.origin_lobby = session.interactive_games = session.match_games = true;
+            session.Connected("ID00000000-00000000", 'M');
+            const auto receive = [&](const char *wire) {
+                const auto msg = ParseNetworkMessage(wire, true);
+                (void) session.Receive(msg);
+                const_cast<LobbySnapshot &>(view.client_->snapshot()) = session.snapshot;
+                view.OnGameEvent(msg, session.snapshot);
+                view.Update(session.snapshot);
+            };
+            const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            receive("<HELO uname=\"Test\" PF4=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
+                    "PF3=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" opt=\"3\" />");
+            receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
+            const HWND service_viewport = FindWindowExW(view.window_, nullptr, L"TENHOU_REBUILD_OFFLINE_VIEW", nullptr);
+            require(service_viewport && IsWindowVisible(service_viewport),
+                    "Official service lobby viewport was not shown in Lobby phase");
+
+            receive("<GO type=\"1024\" lobby=\"0\" />");
+            receive("<UN n0=\"Test\" n1=\"COM\" n2=\"COM\" n3=\"COM\" />");
+            receive("<TAIKYOKU oya=\"0\" />");
+            if (view.match_intro_->Active()) view.match_intro_->Finish();
+            receive("<INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"0\" "
+                    "hai=\"0,4,8,12,16,20,24,28,32,36,40,44,48\" />");
+            require(view.opening_.Active() && !IsWindowVisible(service_viewport),
+                    "Practice opening wall animation did not start cleanly");
+
+            // Pressing EXIT during 码牌 enters AwaitReturn; opening animation must stop immediately,
+            // and the service lobby must stay hidden until <HELO> + <LN> finishes returning to Lobby.
+            const auto exit_replies = session.ExitGame();
+            require(exit_replies.size() == 2 && exit_replies[0] == "<BYE />" &&
+                    exit_replies[1].rfind("<HELO ", 0) == 0,
+                    "Official practice exit did not emit BYE + HELO");
+            const_cast<LobbySnapshot &>(view.client_->snapshot()) = session.snapshot;
+            view.Update(session.snapshot);
+            view.OpeningTick(AnimationNow() + 100);
+            require(!view.opening_.Active() && view.deferred_sounds_.empty(),
+                    "Pressing EXIT during wall setup did not stop opening animation/audio cues");
+            require(!IsWindowVisible(service_viewport),
+                    "Service lobby became clickable before AwaitReturn completed");
+
+            // Stale in-flight game frames during AwaitReturn must be ignored, then HELO + LN restores lobby.
+            receive("<U />");
+            receive("<e55 />");
+            require(session.snapshot.phase == LobbyPhase::AwaitReturn && !IsWindowVisible(service_viewport),
+                    "Stale game frames during AwaitReturn corrupted return transition");
+            receive("<HELO uname=\"Test\" PF4=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
+                    "PF3=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" opt=\"3\" />");
+            receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
+            require(session.snapshot.phase == LobbyPhase::Lobby && IsWindowVisible(service_viewport),
+                    "Official lobby did not reopen after EXIT return completed");
+            view.Disconnect();
+        }
+
         static void RecoveredContestReturn(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
@@ -755,6 +816,7 @@ int main(int argc, char **argv) {
         Settlement(parent); SettlementPresentationCheck::Run(parent); SettlementPresentationCheck::RiichiEntrance(parent);
         Guobiao(parent, argv[1]);
         LobbyPresentationCheck::OfficialCalls(parent, argv[1]);
+        LobbyPresentationCheck::OfficialPracticeExitStopsOpening(parent, argv[1]);
         LobbyPresentationCheck::RecoveredContestReturn(parent, argv[1]);
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "sichuan-bloodbattle");
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
