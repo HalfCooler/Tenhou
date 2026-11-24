@@ -18,7 +18,7 @@ namespace tenhou {
                          std::function<void(const std::string &)> log, Submit submit = {});
         ~OfflineLobbyView();
 
-        void ConfigureArtwork(const std::filesystem::path &resources);
+        void ConfigureArtwork(const std::filesystem::path &resources, int canvas_width = 1440);
         void Resize(int width, int height);
         void Show(bool visible);
         void SetServiceSnapshot(const LobbySnapshot &snapshot);
@@ -39,6 +39,10 @@ namespace tenhou {
         void Tick();
         void Hover(int slot);
         void ClearRules();
+        void SetCertificationVisible(bool show);
+        void ConfirmCertification();
+        void PaintCertification(HDC dc);
+        void PaintLobby(HDC dc);
         void PaintViewport(HDC dc);
         void PaintPanel(HDC dc);
         void PaintCandidates(HDC dc);
@@ -48,6 +52,10 @@ namespace tenhou {
         void PaintButton(const DRAWITEMSTRUCT &item);
         void ShowMenu();
         void ShowPractice();
+        void ShowProfileExportMenu();
+        std::wstring FormatProfileClipboardText() const;
+        void CopyProfileText();
+        void SaveProfileImage();
         void ChooseProfile(bool monthly);
         void LoadProfilePreferences();
         void SetMonthlyProfile(unsigned type);
@@ -67,7 +75,15 @@ namespace tenhou {
         int hovered_ = -1, rule_slot_ = -1;
         bool visible_ = false, move_declined_ = false, toutenkou_ = false, official_ = false, service_ready_ = true;
         HWND parent_, viewport_ = nullptr, panel_ = nullptr;
-        HFONT font_ = nullptr, title_font_ = nullptr;
+        HFONT font_ = nullptr;
+        HWND certificate_ = nullptr, certificate_ok_ = nullptr;
+        std::uint64_t certificate_receipt_ = 0;
+        std::wstring certificate_body_;
+        ULONGLONG certificate_start_ = 0, certificate_close_ = 0;
+        int certificate_width_ = 812, certificate_height_ = 658;
+        float certificate_scale_ = 1.4f;
+        std::unique_ptr<Gdiplus::Bitmap> certificate_image_;
+        PaintBuffer certificate_buffer_;
         std::map<unsigned, HWND> buttons_;
         DisplayArtwork artwork_;
         Image background_;

@@ -45,7 +45,7 @@ namespace tenhou {
         constexpr int kReset = 3105, kStatus = 3106, kEnd = 3107, kOpen = 3108;
         constexpr int kPlayback = 3110, kSpeed = 3111, kRounds = 3112;
         constexpr int kAnimate = 3115, kSound = 3116;
-        constexpr int kResults = 3117;
+        constexpr int kResults = 3117, kBack = 3118;
         constexpr UINT_PTR kPlaybackTimer = 4;
         constexpr UINT_PTR kEffectsTimer = 5;
         constexpr UINT_PTR kMotionTimer = 6;
@@ -134,6 +134,7 @@ namespace tenhou {
         animate_control_ = control(L"BUTTON", L"动画", kAnimate, WS_TABSTOP | BS_AUTOCHECKBOX);
         sound_control_ = control(L"BUTTON", L"声音", kSound, WS_TABSTOP | BS_AUTOCHECKBOX);
         results_control_ = control(L"BUTTON", L"结算", kResults, WS_TABSTOP | BS_AUTOCHECKBOX);
+        back_ = control(L"BUTTON", L"返回", kBack, WS_TABSTOP);
         settlement_view_ = std::make_unique<SettlementView>(viewport_);
         settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
             if (session_ &&session_->state().initialized) PaintTable(dc, r);
@@ -230,6 +231,7 @@ namespace tenhou {
         MoveWindow(rounds_, 198, 112, 210, 240, TRUE);
         MoveWindow(animate_control_, 526, 112, 78, 27, TRUE);
         MoveWindow(sound_control_, 608, 112, 68, 27, TRUE);
+        MoveWindow(back_, 682, 112, 74, 27, TRUE);
         MoveWindow(results_control_, width - 100, 148, 84, 27, TRUE);
         settlement_view_->Move({16, 204, width - 16, std::max(254, height - 48)});
         const bool compact = Compact();
@@ -246,6 +248,7 @@ namespace tenhou {
             x += 66;
             MoveWindow(rounds_, x, 8, std::max(80, width - x - 12), 240, TRUE);
             MoveWindow(open_, 12, 42, 74, 26, TRUE);
+            MoveWindow(back_, 92, 42, 74, 26, TRUE);
             MoveWindow(animate_control_, 210, 42, 80, 26, TRUE);
             MoveWindow(sound_control_, 298, 42, 76, 26, TRUE);
             MoveWindow(results_control_, width - 100, 42, 88, 26, TRUE);
@@ -448,6 +451,11 @@ namespace tenhou {
     }
 
     void TableView::Command(int id) {
+        if (id == kBack) {
+            Stop();
+            PostMessageW(parent_, WM_APP + 25, 0, 0);
+            return;
+        }
         if (id == kResults) {
             Stop();
             show_results_ = SendMessageW(results_control_, BM_GETCHECK, 0, 0) == BST_CHECKED;
@@ -1017,7 +1025,7 @@ namespace tenhou {
         ClientToScreen(viewport_, &origin);
         for (HWND control: {
                  path_, load_, open_, previous_, next_, reset_, end_, status_, playback_, speed_, rounds_,
-                 animate_control_, sound_control_, results_control_
+                 animate_control_, sound_control_, results_control_, back_
              }) {
             if (!IsWindowVisible(control)) continue;
             RECT position{};

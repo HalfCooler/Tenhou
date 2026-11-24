@@ -1,5 +1,6 @@
 #include "lobby_view.hpp"
 #include "offline_lobby_view.hpp"
+#include "original_button.hpp"
 #include "settings_view.hpp"
 #include "music_preferences.hpp"
 #include "matchmaking_view.hpp"
@@ -30,7 +31,7 @@ namespace tenhou {
             lobby_background_ = {};
             table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
             InvalidateRect(window_, nullptr, FALSE);
-            if (service_lobby_ && !resource_directory_.empty()) service_lobby_->ConfigureArtwork(resource_directory_);
+            if (service_lobby_ && !resource_directory_.empty()) service_lobby_->ConfigureArtwork(resource_directory_, canvas_width_);
         }
         if (change == PreferenceChange::Sound) {
             // The original sound-volume control is the online mute switch. The
@@ -126,11 +127,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         add(5137, L"BUTTON", L"返回大厅", WS_TABSTOP | BS_PUSHBUTTON);
         add(0xbc6, L"BUTTON", L"EXIT", WS_TABSTOP | BS_OWNERDRAW);
         SetWindowSubclass(controls_[0xbc6], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
-        LOGFONTW exit_font{};
-        GetObjectW(GetStockObject(DEFAULT_GUI_FONT), sizeof(exit_font), &exit_font);
-        exit_font.lfHeight = -12;
-        lstrcpyW(exit_font.lfFaceName, L"MS UI Gothic");
-        exit_font_ = CreateFontIndirectW(&exit_font);
+        exit_font_ = CreateOriginalUiFont();
         WNDCLASSEXW vote_class{sizeof(vote_class)};
         vote_class.hInstance = wc.hInstance;
         vote_class.lpfnWndProc = ExitVoteProcedure;
@@ -333,7 +330,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         settlement_view_->Configure(directory, width);
         action_artwork_.Configure(directory, width);
         matching_->ConfigureArtwork(directory);
-        if (service_lobby_) service_lobby_->ConfigureArtwork(directory);
+        if (service_lobby_) service_lobby_->ConfigureArtwork(directory, width);
         action_artwork_error_.clear();
         resource_directory_ = directory;
         UpdateLobbyMusic(true);
@@ -1737,41 +1734,6 @@ LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM 
         return DefWindowProcW(window, message, wp, lp);
     }
 
-    void LobbyView::PaintExit(const DRAWITEMSTRUCT &item) {
-        // WC_ITEM_BTN (004a7920): white upper half, gray lower gradient,
-        // disabled gray, text extent +16/+8. Font/rasterization is a rebuild adapter.
-        const auto r = item.rcItem;
-        const bool enabled = IsWindowEnabled(item.hwndItem) != FALSE;
-        const int width = r.right - r.left, height = r.bottom - r.top;
-        for (int y = 0; y < height; ++y) {
-            int value = enabled
-                            ? (y < height / 2
-                                   ? 255
-                                   : 221 + 34 * (y - height / 2) / std::max(1, height - height / 2 - 1))
-                            : 204;
-            RECT line{0, y, width, y + 1};
-            const auto brush = CreateSolidBrush(RGB(value, value, value));
-            FillRect(item.hDC, &line, brush);
-            DeleteObject(brush);
-        }
-        RECT text = r;
-        if (item.itemState & ODS_SELECTED) OffsetRect(&text, 1, 1);
-        const auto old = SelectObject(item.hDC, exit_font_);
-        SetBkMode(item.hDC, TRANSPARENT);
-        SetTextColor(item.hDC, enabled ? RGB(34, 34, 34) : RGB(102, 102, 102));
-        DrawTextW(item.hDC, L"EXIT", 4, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(item.hDC, old);
-        POINT point{};
-        GetCursorPos(&point);
-        ScreenToClient(item.hwndItem, &point);
-        const auto border = CreateSolidBrush(enabled && PtInRect(&r, point) ? RGB(51, 153, 255) : RGB(136, 136, 136));
-        FrameRect(item.hDC, &r, border);
-        DeleteObject(border);
-        if (item.itemState & ODS_FOCUS) {
-            InflateRect(&text, -2, -2);
-            DrawFocusRect(item.hDC, &text);
-        }
-    }
 
     void LobbyView::Capture(HDC dc) {
         Paint(dc);
@@ -1821,7 +1783,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                 if (message == WM_DRAWITEM) {
                     const auto &item = *reinterpret_cast<DRAWITEMSTRUCT *>(lparam);
                     if (item.CtlID == 0xbc6) {
-                        self->PaintExit(item);
+                        PaintOriginalButton(item, self->exit_font_, L"EXIT");
                         return TRUE;
                     }
                     if (item.CtlType == ODT_BUTTON && (

@@ -46,6 +46,7 @@ namespace tenhou {
         std::string outgoing;
         std::size_t sent_offset = 0;
         std::uint64_t revision_floor = 0;
+        std::uint64_t server_error_sequence = 0;
         std::optional<LobbySnapshot> reconnect_view;
         ULONGLONG retry_at = 0, retry_until = 0;
         unsigned retry_delay = 1000;
@@ -148,7 +149,8 @@ namespace tenhou {
             return true;
         }
 
-        void Error(const std::string &error, bool transport = false) {
+        void Error(const std::string &error, bool transport = false, int server_code = -1,
+                   const std::string &server_text = {}, bool server_rejected = false) {
             log("NETWORK error=" + error);
             if (transport && options.auto_reconnect && options.recover_games && ScheduleReconnect()) return;
             const bool available = transport && options.recover_games &&
@@ -164,6 +166,12 @@ namespace tenhou {
             session.snapshot.error = error;
             session.snapshot.reconnect_available = available;
             session.snapshot.recovering = false;
+            if (server_rejected) {
+                session.snapshot.server_error_receipt = ++server_error_sequence;
+                session.snapshot.server_error_code = server_code;
+                session.snapshot.server_error_text = server_text;
+                session.snapshot.server_error_fatal = true;
+            }
             Phase(LobbyPhase::Error);
         }
 
@@ -429,7 +437,10 @@ namespace tenhou {
                 for (const auto &text: messages) {
                     const auto message = ParseNetworkMessage(text, options.official);
                     const auto old_phase = session.snapshot.phase;
+                    const auto old_err = session.snapshot.server_error_receipt;
                     const auto replies = session.Receive(message);
+                    if (session.snapshot.server_error_receipt != old_err)
+                        session.snapshot.server_error_receipt = ++server_error_sequence;
                     if (options.official && message.tag == "HELO") {
                         if (!official_game_id.empty()) SaveOfficialGameId({});
                         resuming = false;
@@ -660,6 +671,9 @@ namespace tenhou {
                 }
             } catch (const TransportFailure &error) {
                 self->Error(error.what(), true);
+                return 0;
+            } catch (const ServerRejection &error) {
+                self->Error(error.what(), false, error.code, error.wire_text, true);
                 return 0;
             } catch (const std::exception &error) {
                 self->Error(error.what());

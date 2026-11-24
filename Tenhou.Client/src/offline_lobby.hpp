@@ -30,6 +30,17 @@ namespace tenhou {
         int average_score_hundredths, average_place_hundredths;
         int hands = 0;
         std::optional<int> average_g_hundredths = std::nullopt;
+        // Raw counts and monthly ranking fields preserved from original PF* / RANKING v2 wire frames.
+        std::array<int, 4> place_counts{};
+        int bust_count = 0, win_count = 0, deal_in_count = 0, call_count = 0, reach_count = 0;
+        double total_score = 0.0;
+        int total_chips = 0;
+        bool has_monthly_raw = false;
+        bool has_amber_monthly = false;
+        double total_income = 0.0;
+        std::optional<double> average_income = std::nullopt;
+        std::optional<double> average_chips = std::nullopt;
+        std::vector<int> monthly_ranks;
     };
 
     inline constexpr unsigned kPrivateThreeProfile = 1, kPrivateFourProfile = 2;
@@ -40,6 +51,8 @@ namespace tenhou {
     inline constexpr std::array<unsigned, 8> kAmberMonthlyProfiles{0x421, 0x221, 0x621, 0x429,
                                                                    0x229, 0x629, 0x631, 0x639};
     inline constexpr std::array<unsigned, 8> kAmberLifetimeProfiles{601, 602, 603, 611, 612, 613, 623, 633};
+
+    std::wstring LocalizeCertification(std::wstring_view text);
 
     unsigned RankedMonthlyProfile(unsigned type, RankedTier tier);
     bool ValidMonthlyProfile(unsigned type);

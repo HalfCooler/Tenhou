@@ -170,6 +170,10 @@ namespace tenhou {
         wchar_t name[80]{};
         GetPrivateProfileStringW(L"REBUILD", L"WelcomeName", L"NoName", name, 80, config.c_str());
         SetWindowTextW(edit_, name);
+        // Remember official Tenhou login ID via [STATUS] UNAME (matching tenhou.exe.c:110564).
+        wchar_t official_name[80]{};
+        GetPrivateProfileStringW(L"STATUS", L"UNAME", L"NoName", official_name, 80, config.c_str());
+        SetWindowTextW(official_id_, official_name[0] ? official_name : L"NoName");
         SetWindowTextW(host_, PreferenceString(config, L"REBUILD", L"NativeHost", L"localhost").c_str());
         SetWindowTextW(port_, std::to_wstring(GetPrivateProfileIntW(L"REBUILD", L"NativePort", 10080,
                                                                    config.c_str())).c_str());
@@ -219,18 +223,19 @@ namespace tenhou {
     }
 
     void WelcomeView::Save(const std::filesystem::path &config) {
-        wchar_t name[80]{};
-        GetWindowTextW(edit_, name, 80);
-        if (!masked_identity_.empty()) wcscpy_s(name, L"NoName");
-        // Remember the local account name, never its password.
-        if (!WritePrivateProfileStringW(L"REBUILD", L"WelcomeName", name, config.c_str()) ||
-            !WritePrivateProfileStringW(L"REBUILD", L"WelcomeFemale", gender_ == 'F' ? L"1" : L"0", config.c_str()))
+        const auto name = Identity();
+        const auto official = OfficialIdentity();
+        // Remember both local account name and official Tenhou ID ([STATUS] UNAME), never passwords.
+        if (!WritePrivateProfileStringW(L"REBUILD", L"WelcomeName", name.empty() ? L"NoName" : name.c_str(), config.c_str()) ||
+            !WritePrivateProfileStringW(L"REBUILD", L"WelcomeFemale", gender_ == 'F' ? L"1" : L"0", config.c_str()) ||
+            !WritePrivateProfileStringW(L"STATUS", L"UNAME", official.empty() ? L"NoName" : official.c_str(), config.c_str()))
             throw std::runtime_error("Cannot save login preferences");
         WritePreferenceInt(config, L"REBUILD", L"OfficialServer", official_server_ ? 1 : 0);
         const auto host = Host();
         if (!host.empty()) WritePreference(config, L"REBUILD", L"NativeHost", host.c_str());
         const auto port = Port();
         if (port) WritePreferenceInt(config, L"REBUILD", L"NativePort", static_cast<int>(port));
+        WritePrivateProfileStringW(nullptr, nullptr, nullptr, config.c_str());
     }
 
     std::wstring WelcomeView::Identity() const {
@@ -277,7 +282,12 @@ namespace tenhou {
                std::all_of(id.begin() + 11, id.end(), alphanumeric);
     }
 
-    std::wstring WelcomeView::OfficialIdentity() const { return EditText(official_id_); }
+    std::wstring WelcomeView::OfficialIdentity() const {
+        auto id = EditText(official_id_);
+        const auto start = id.find_first_not_of(L" \t\r\n");
+        if (start == std::wstring::npos) return {};
+        return id.substr(start, id.find_last_not_of(L" \t\r\n") - start + 1);
+    }
 
     void WelcomeView::ClearPassword() { SetWindowTextW(password_, L""); }
 

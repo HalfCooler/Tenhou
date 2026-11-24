@@ -5,6 +5,7 @@
 #include "offline_lobby.hpp"
 #include <cstdint>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,21 @@ namespace tenhou {
 
     std::string NetworkJson(const std::string &value);
     LobbyStatistics ReadPrivateLobbyStatistics(std::string_view text);
+
+    struct ServerErrorNotice {
+        std::wstring caption;
+        std::wstring message;
+        bool fatal = true;
+    };
+
+    ServerErrorNotice FormatServerError(int code, const std::string &wire_text = {});
+
+    struct ServerRejection : std::runtime_error {
+        int code = -1;
+        std::string wire_text;
+        ServerRejection(int error_code, std::string text, const std::string &what)
+            : std::runtime_error(what), code(error_code), wire_text(std::move(text)) {}
+    };
 
     class NetworkFramer {
     public:
@@ -61,6 +77,13 @@ namespace tenhou {
         std::optional<OfflineLobby> origin_lobby;
         std::string origin_pending, origin_error;
         std::uint64_t origin_clock = 0, origin_clock_at = 0;
+        // The issuing HELO identifies this notice across subsequent lobby refreshes.
+        std::uint64_t certification_receipt = 0;
+        std::wstring certification;
+        std::uint64_t server_error_receipt = 0;
+        int server_error_code = -1;
+        std::string server_error_text;
+        bool server_error_fatal = false;
         bool ranked = false;
         std::string replay_status;
         unsigned native_request = 0;

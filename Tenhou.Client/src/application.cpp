@@ -100,7 +100,6 @@ namespace tenhou {
         table_.reset();
         offline_lobby_.reset();
         lobby_.reset();
-        if (IsMenu(client_menu_)) DestroyMenu(client_menu_);
         if (gdiplus_token_) Gdiplus::GdiplusShutdown(gdiplus_token_);
         if (font_) DeleteObject(font_);
         if (mutex_) CloseHandle(mutex_);
@@ -174,17 +173,10 @@ namespace tenhou {
         Check(SetPropA(window_, instance_property_.c_str(), reinterpret_cast<HANDLE>(1)) != FALSE,
               "Set instance identity");
         SetWindowTextW(window_, L"Tenhou Rebuild / Windows x64");
-        client_menu_ = CreateMenu();
-        Check(client_menu_ != nullptr, "Create client menu");
-        AppendMenuW(client_menu_, MF_STRING, kSettings, L"设置...");
-        AppendMenuW(client_menu_, MF_STRING, kReplay, L"打开牌谱...");
-        AppendMenuW(client_menu_, MF_STRING, kWelcome, L"返回登录");
-        if (options_.offline_lobby) AppendMenuW(client_menu_, MF_STRING, kOfflineLobby, L"离线大厅");
-        Check(SetMenu(window_, client_menu_) != FALSE, "SetMenu");
-        // Keep configured values as client dimensions after adding the new tools menu.
+        DragAcceptFiles(window_, TRUE);
         RECT client_bounds{0, 0, width_, height_};
-        Check(AdjustWindowRectExForDpi(&client_bounds, kWindowStyle, TRUE, 0, GetDpiForWindow(window_)) != FALSE,
-              "AdjustWindowRectExForDpi menu");
+        Check(AdjustWindowRectExForDpi(&client_bounds, kWindowStyle, FALSE, 0, GetDpiForWindow(window_)) != FALSE,
+              "AdjustWindowRectExForDpi");
         SetWindowPos(window_, nullptr, 0, 0, client_bounds.right - client_bounds.left,
                      client_bounds.bottom - client_bounds.top,
                      SWP_NOMOVE | SWP_NOZORDER);
@@ -221,6 +213,12 @@ namespace tenhou {
             }, [this](const std::string &message) { Log(message); });
         }
         lobby_->SetConnectionObserver([this](const LobbySnapshot &s) {
+            if (s.server_error_receipt != 0 && s.server_error_receipt != last_server_error_receipt_) {
+                last_server_error_receipt_ = s.server_error_receipt;
+                const auto notice = FormatServerError(s.server_error_code, s.server_error_text);
+                pending_server_error_ = PendingServerError{notice.caption, notice.message, s.server_error_fatal};
+                PostMessageW(window_, WM_APP + 28, 0, 0);
+            }
             if (view_ != "welcome") return;
             if ((s.native_service || s.official) &&
                 (s.phase == LobbyPhase::Lobby || (s.phase == LobbyPhase::AwaitRecovery && s.game.started) ||
@@ -228,7 +226,14 @@ namespace tenhou {
                 welcome_->ClearPassword();
                 welcome_->SetLoginState(false, L"服务已确认登录");
                 SetView("lobby");
-            } else if (s.phase == LobbyPhase::Error) welcome_->SetLoginState(false, L"连接失败：" + NetworkWide(s.error));
+            } else if (s.phase == LobbyPhase::Error) {
+                if (s.server_error_receipt != 0) {
+                    const auto notice = FormatServerError(s.server_error_code, s.server_error_text);
+                    welcome_->SetLoginState(false, notice.message);
+                } else {
+                    welcome_->SetLoginState(false, L"连接失败：" + NetworkWide(s.error));
+                }
+            }
         });
         settings_ = std::make_unique<SettingsView>(window_, config_path_, resource_directory_,
                                                    [this](PreferenceChange change) { ApplyPreferences(change); },
@@ -368,11 +373,6 @@ namespace tenhou {
         lobby_->Show(view_ == "lobby");
         lobby_->SetWelcomeMusic(view_ == "welcome", welcome_->OfficialServer());
         lobby_->SetOfflineLobbyMusic(view_ == "offline_lobby" ? std::optional<bool>(offline_lobby_->contest()) : std::nullopt);
-        EnableMenuItem(client_menu_, kReplay, MF_BYCOMMAND | (view_ == "lobby" ? MF_GRAYED : MF_ENABLED));
-        EnableMenuItem(client_menu_, kWelcome, MF_BYCOMMAND |
-                       (view_ == "replay" || view_ == "offline_lobby" ? MF_ENABLED : MF_GRAYED));
-        if (offline_lobby_) EnableMenuItem(client_menu_, kOfflineLobby, MF_BYCOMMAND |
-                                          (view_ == "welcome" || view_ == "replay" ? MF_ENABLED : MF_GRAYED));
         Layout();
         LoadResources();
         if (view_ == "offline_lobby") offline_lobby_->Show(true);
@@ -421,6 +421,8 @@ namespace tenhou {
         connection.session_file = config_path_.parent_path() / (
             std::wstring(connection.official ? L"official-session-" : L"platform-session-") +
             std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) + L".txt");
+        // Persist login ID immediately on login attempt (matching tenhou.exe.c:110711-110719).
+        welcome_->Save(config_path_);
         welcome_->SetLoginState(true, connection.official ? L"正在连接天凤官方服务器..." : L"正在连接第三方服务器...");
         lobby_->Login(connection);
     }
@@ -504,6 +506,25 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
         }
         if (message == WM_APP + 27 && view_ == "lobby") {
             OpenReplay();
+            return 0;
+        }
+        if (message == WM_APP + 28) {
+            if (pending_server_error_) {
+                const auto err = std::move(*pending_server_error_);
+                pending_server_error_.reset();
+                MessageBoxW(window_, err.message.c_str(), err.caption.c_str(), MB_OK);
+                if (err.fatal && view_ == "lobby") SetView("welcome");
+            }
+            return 0;
+        }
+        if (message == WM_DROPFILES) {
+            const auto drop = reinterpret_cast<HDROP>(wparam);
+            wchar_t file[32768]{};
+            if (DragQueryFileW(drop, 0, file, static_cast<UINT>(std::size(file))) && view_ != "lobby") {
+                table_->Load(file);
+                SetView("replay");
+            }
+            DragFinish(drop);
             return 0;
         }
         switch (message) {

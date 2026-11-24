@@ -3,8 +3,11 @@
 #include "object_pack.hpp"
 #include <windows.h>
 #include <array>
+#include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <string>
 
 namespace Gdiplus {
     class Bitmap;
@@ -66,7 +69,6 @@ namespace tenhou {
         std::filesystem::path executable_directory_, config_path_, resource_directory_;
         std::ofstream log_;
         HWND window_ = nullptr, audio_meter_ = nullptr;
-        HMENU client_menu_ = nullptr;
         HFONT font_ = nullptr;
         HANDLE mutex_ = nullptr;
         std::string instance_property_;
@@ -76,6 +78,12 @@ namespace tenhou {
         std::unique_ptr<LobbyView> lobby_;
         std::unique_ptr<OfflineLobbyView> offline_lobby_;
         std::unique_ptr<SettingsView> settings_;
+        struct PendingServerError {
+            std::wstring caption, message;
+            bool fatal = false;
+        };
+        std::uint64_t last_server_error_receipt_ = 0;
+        std::optional<PendingServerError> pending_server_error_;
         int width_ = 1440, height_ = 1080;
         std::string view_;
         int screen_width_ = 1440;

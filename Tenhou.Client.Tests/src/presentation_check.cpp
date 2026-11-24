@@ -11,6 +11,7 @@
 
 using namespace tenhou;
 namespace tenhou {
+    void CheckCertificationPaint(HWND popup, const std::filesystem::path &resources);
     void RunTextTableChecks(HWND parent, const std::filesystem::path &resources);
     // Exercise the production receive/display boundary with packet bursts and a stalled UI timer.
     struct LobbyPresentationCheck {
@@ -171,15 +172,22 @@ namespace tenhou {
                 view.Update(session.snapshot);
             };
             const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
-            receive("<HELO uname=\"Test\" PF4=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
+            receive("<HELO uname=\"桐山\" PF4=\"9,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
                     "PF3=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" opt=\"3\" />");
             receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
             const HWND service_viewport = FindWindowExW(view.window_, nullptr, L"TENHOU_REBUILD_OFFLINE_VIEW", nullptr);
             require(service_viewport && IsWindowVisible(service_viewport),
                     "Official service lobby viewport was not shown in Lobby phase");
 
+            const HWND popup = GetDlgItem(service_viewport, 0xbc0);
+            require(popup && !IsWindowVisible(popup), "Ordinary HELO opened certification");
+            const HWND panel = FindWindowExW(service_viewport, nullptr, L"TENHOU_REBUILD_OFFLINE_LOBBY", nullptr);
+            LOGFONTW font{};
+            GetObjectW(reinterpret_cast<HFONT>(SendDlgItemMessageW(panel, 0xfa4, WM_GETFONT, 0, 0)), sizeof(font), &font);
+            require(std::wstring(font.lfFaceName) == L"MS UI Gothic" && font.lfHeight == -12, "Lobby font changed");
+
             receive("<GO type=\"1024\" lobby=\"0\" />");
-            receive("<UN n0=\"Test\" n1=\"COM\" n2=\"COM\" n3=\"COM\" />");
+            receive("<UN n0=\"桐山\" n1=\"COM\" n2=\"COM\" n3=\"COM\" />");
             receive("<TAIKYOKU oya=\"0\" />");
             if (view.match_intro_->Active()) view.match_intro_->Finish();
             receive("<INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"0\" "
@@ -206,11 +214,38 @@ namespace tenhou {
             receive("<e55 />");
             require(session.snapshot.phase == LobbyPhase::AwaitReturn && !IsWindowVisible(service_viewport),
                     "Stale game frames during AwaitReturn corrupted return transition");
-            receive("<HELO uname=\"Test\" PF4=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
+            receive("<HELO uname=\"桐山\" nintei=\"認定段位/級位 : 初段%0D%0A%0D%0A桐山%20殿%0A%0A"
+                    "貴殿は天鳳において卓越した技能を遺憾なく発揮され優秀な%0A成績をおさめられました。"
+                    "今後もさらなる雀力向上に精進されますようここに段位/級位を認定し栄誉を称えます。"
+                    "%0A%0A2026年11月24日%0A天鳳段位認定協会\" PF4=\"10,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
                     "PF3=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" opt=\"3\" />");
             receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
             require(session.snapshot.phase == LobbyPhase::Lobby && IsWindowVisible(service_viewport),
                     "Official lobby did not reopen after EXIT return completed");
+            const auto &notice = session.snapshot.certification;
+            require(notice.find(L"认定段级位：初段\n\n桐山阁下：\n\n您在天凤") == 0 &&
+                    notice.find(L"精进牌艺。\n\n2026年11月24日\n天凤段位认定协会") != notice.npos,
+                    "The certificate lost its translation or server-supplied fields");
+            RECT rect{};
+            GetClientRect(popup, &rect);
+            require(IsWindowVisible(popup) && !IsWindowEnabled(panel) && rect.right == 812 && rect.bottom == 658,
+                    "Award did not open above the lobby at original HD size");
+            const auto wait_for = [&](HWND child, bool visible) {
+                const auto until = GetTickCount64() + 4000;
+                while ((IsWindowVisible(child) != FALSE) != visible && GetTickCount64() < until) {
+                    MSG msg{};
+                    if (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+                    Sleep(10);
+                }
+                require((IsWindowVisible(child) != FALSE) == visible, "Certificate animation did not complete");
+            };
+            const HWND ok = GetDlgItem(popup, IDOK);
+            wait_for(ok, true);
+            CheckCertificationPaint(popup, resources);
+            SendMessageW(ok, BM_CLICK, 0, 0);
+            wait_for(popup, false);
+            view.Update(session.snapshot);
+            require(!IsWindowVisible(popup) && IsWindowEnabled(panel), "Acknowledged certificate reopened");
             view.Disconnect();
         }
 

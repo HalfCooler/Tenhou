@@ -83,7 +83,6 @@ namespace tenhou {
 
         void UpdateExitVote();
 
-        void PaintExit(const DRAWITEMSTRUCT &item);
 
         void Command(int id);
         std::uint64_t button_revision_ = 0;

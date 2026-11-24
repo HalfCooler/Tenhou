@@ -1,10 +1,16 @@
 #include "offline_lobby_view.hpp"
+#include "original_button.hpp"
 #include "background.hpp"
 #include "network_protocol.hpp"
 #include "window_layout.hpp"
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shellapi.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <numeric>
 #include <stdexcept>
 
 namespace tenhou {
@@ -12,14 +18,18 @@ namespace tenhou {
         using Label = TextLabelKey;
         constexpr wchar_t kViewport[] = L"TENHOU_REBUILD_OFFLINE_VIEW";
         constexpr wchar_t kPanel[] = L"TENHOU_REBUILD_OFFLINE_LOBBY";
+        constexpr wchar_t kCertificate[] = L"TENHOU_REBUILD_CERTIFICATION";
+        constexpr UINT_PTR kCertificateTimer = 0x69;
         constexpr int kPanelWidth = 590, kPanelHeight = 430;
         constexpr unsigned kOuter = 0xFA4, kTier = 0xC00, kQueue = 0xFAF;
         constexpr unsigned kContestReserve = 0xFBB, kContestRegister = 0xFBC;
         constexpr unsigned kPractice = 0xFBD, kMenu = 0xFBE, kCancel = IDCANCEL;
-        constexpr unsigned kLifetime = 0xFC0, kMonthly = 0xFC1, kHistory = 200;
+        constexpr unsigned kLifetime = 0xFC0, kMonthly = 0xFC1, kProfileExport = 0xE104, kHistory = 200;
         constexpr UINT_PTR kClockTimer = 0x65, kRulesTimer = 0x66, kMoveTimer = 0x68;
         constexpr UINT kRulesDelay = 500, kMoveDelay = 250;
         constexpr COLORREF kInk = RGB(32, 32, 32), kMuted = RGB(95, 95, 95), kAccent = RGB(28, 77, 124);
+        constexpr COLORREF kProfileInk = RGB(0, 0, 0), kProfileDisabled = RGB(170, 170, 170),
+            kProfileSubheader = RGB(136, 136, 136), kProfileLine = RGB(204, 204, 204);
         constexpr Label kTabs[]{Label::lobby_ranked, Label::lobby_parlor, Label::lobby_observe,
                                  Label::lobby_replays, Label::lobby_help, Label::lobby_toutenkou};
         constexpr int kTabWidths[]{52, 55, 46, 46, 46, 45};
@@ -48,7 +58,7 @@ namespace tenhou {
         const wchar_t *Text(Label label) { return kTextLabels[static_cast<std::size_t>(label)].label.data(); }
 
         std::wstring ProfileCaption(Label period, const std::wstring &category) {
-            return std::wstring(Text(period)) + L"／" + category;
+            return L"■" + std::wstring(Text(period)) + L" / " + category;
         }
 
         std::wstring AmberProfileLabel(std::size_t index) {
@@ -87,6 +97,107 @@ namespace tenhou {
         }
 
         void Line(HDC dc, RECT rect) { FillRect(dc, &rect, GetSysColorBrush(COLOR_3DLIGHT)); }
+
+        void ProfileLine(HDC dc, int x1, int y1, int x2, int y2, COLORREF color = kProfileLine) {
+            const HPEN pen = CreatePen(PS_SOLID, 1, color);
+            const auto old = SelectObject(dc, pen);
+            MoveToEx(dc, x1, y1, nullptr);
+            LineTo(dc, x2, y2);
+            SelectObject(dc, old);
+            DeleteObject(pen);
+        }
+
+        // Exact FUN_00434290 (tenhou.exe.c:34390): %f -> split '.' -> truncate/pad frac -> optional strip leading '0' & '+' prefix.
+        std::wstring FormatFixedTrunc(double value, int decimals, bool strip_zero, const wchar_t *plus_prefix) {
+            const float f = static_cast<float>(value);
+            wchar_t buffer[128]{};
+            std::swprintf(buffer, std::size(buffer), L"%f", static_cast<double>(f));
+            std::wstring text(buffer);
+            std::wstring integer_part, frac_part;
+            const auto dot = text.find(L'.');
+            if (dot == std::wstring::npos) integer_part = text;
+            else {
+                integer_part = text.substr(0, dot);
+                frac_part = text.substr(dot + 1);
+            }
+            if (strip_zero) {
+                if (integer_part == L"0") integer_part.clear();
+                else if (integer_part == L"-0") integer_part = L"-";
+            }
+            if (decimals <= 0) {
+                frac_part.clear();
+            } else {
+                if (frac_part.size() > static_cast<std::size_t>(decimals))
+                    frac_part.resize(static_cast<std::size_t>(decimals));
+                while (frac_part.size() < static_cast<std::size_t>(decimals))
+                    frac_part.push_back(L'0');
+            }
+            std::wstring prefix;
+            if (plus_prefix && f > 0.0f) prefix = plus_prefix;
+            if (decimals <= 0) return prefix + integer_part;
+            return prefix + integer_part + L"." + frac_part;
+        }
+
+        // Exact FUN_00434650 (tenhou.exe.c:34532): signed adaptive decimals (|int|<10 -> 2, <100 -> 1, >=100 -> 0, capped).
+        std::wstring FormatSignedAdaptive(double value, int max_decimals) {
+            const int abs_int = std::abs(static_cast<int>(static_cast<float>(value)));
+            int decimals = abs_int >= 100 ? 0 : abs_int >= 10 ? 1 : 2;
+            if (decimals > max_decimals) decimals = max_decimals;
+            return FormatFixedTrunc(value, decimals, false, L"+");
+        }
+
+        // Exact FUN_004346b0 (tenhou.exe.c:34557): rate without leading zero (e.g. .279, .000, 1.00).
+        std::wstring FormatRate(double value, int decimals = 3) {
+            const float f = static_cast<float>(value);
+            return FormatFixedTrunc(f, decimals - (f == 1.0f ? 1 : 0), true, nullptr);
+        }
+
+        // Exact 0042a978..0042a9d0: YYYYMMDD -> YYYY/MM/DD, empty -> ----/--/--.
+        std::wstring FormatExpiry(std::wstring_view raw) {
+            if (raw.empty()) return L"----/--/--";
+            if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
+                return std::wstring(raw.substr(0, 4)) + L"/" + std::wstring(raw.substr(4, 2)) + L"/" +
+                       std::wstring(raw.substr(6, 2));
+            return std::wstring(raw);
+        }
+
+        // Exact FUN_004748b0 (0..20 rank grade names in Chinese).
+        std::wstring RankGradeName(int code) {
+            static constexpr const wchar_t *kGrades[]{
+                L"新人", L"9级", L"8级", L"7级", L"6级", L"5级", L"4级", L"3级", L"2级", L"1级",
+                L"初段", L"二段", L"三段", L"四段", L"五段", L"六段", L"七段", L"八段", L"九段", L"十段", L"天凤位"
+            };
+            if (code >= 0 && code < static_cast<int>(std::size(kGrades))) return kGrades[code];
+            return code > 20 ? L"天凤位" : L"新人";
+        }
+
+        int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, unsigned monthly_type) {
+            if ((monthly_type & 0x600) != 0) {
+                const auto it = std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), monthly_type);
+                if (it != kAmberMonthlyProfiles.end()) {
+                    const auto life_id = kAmberLifetimeProfiles[static_cast<std::size_t>(it - kAmberMonthlyProfiles.begin())];
+                    const auto found = profile.other_lifetime.find(life_id);
+                    return found == profile.other_lifetime.end() ? 0 : found->second.rating;
+                }
+                return 0;
+            }
+            return (monthly_type & 0x10) ? profile.three.rating : profile.four.rating;
+        }
+
+        bool FindPngEncoder(CLSID &clsid) {
+            UINT count = 0, size = 0;
+            if (Gdiplus::GetImageEncodersSize(&count, &size) != Gdiplus::Ok || !size) return false;
+            std::vector<BYTE> storage(size);
+            auto *encoders = reinterpret_cast<Gdiplus::ImageCodecInfo *>(storage.data());
+            if (Gdiplus::GetImageEncoders(count, size, encoders) != Gdiplus::Ok) return false;
+            for (UINT i = 0; i < count; ++i) {
+                if (encoders[i].MimeType && std::wcscmp(encoders[i].MimeType, L"image/png") == 0) {
+                    clsid = encoders[i].Clsid;
+                    return true;
+                }
+            }
+            return false;
+        }
 
         void ImageAt(HDC dc, const Image &image, int x, int y) {
             if (image.bgra.empty()) return;
@@ -172,7 +283,7 @@ namespace tenhou {
 
             static std::wstring Show(HWND owner) {
                 RoomNumberDialog state;
-                const std::wstring title = Text(Label::lobby_enter_number), font = L"Microsoft YaHei UI";
+                const std::wstring title = Text(Label::lobby_enter_number), font = kOriginalUiFace;
                 DLGTEMPLATE header{};
                 header.style = WS_POPUP | WS_SYSMENU | WS_CAPTION | DS_MODALFRAME | DS_SETFONT;
                 header.cx = 224;
@@ -199,7 +310,7 @@ namespace tenhou {
           submit_(std::move(submit)), parent_(parent) {
         const auto instance = GetModuleHandleW(nullptr);
         try {
-            for (const auto *name: {kViewport, kPanel}) {
+            for (const auto *name: {kViewport, kPanel, kCertificate}) {
                 WNDCLASSW wc{};
                 wc.hInstance = instance;
                 wc.lpfnWndProc = Procedure;
@@ -208,17 +319,22 @@ namespace tenhou {
                 if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
                     throw std::runtime_error("Cannot register offline lobby window");
             }
-            font_ = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
-            title_font_ = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                                      0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+            font_ = CreateOriginalUiFont();
             viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kViewport, L"", WS_CHILD | WS_CLIPCHILDREN,
                                         0, 0, 0, 0, parent_, nullptr, instance, this);
-            if (!viewport_ || !font_ || !title_font_) throw std::runtime_error("Cannot create offline lobby viewport");
+            if (!viewport_ || !font_) throw std::runtime_error("Cannot create offline lobby viewport");
             panel_ = CreateWindowExW(WS_EX_CONTROLPARENT, kPanel, Text(submit_ ? Label::lobby_service : Label::lobby_offline),
                 WS_CHILD | WS_CLIPCHILDREN | WS_VISIBLE, 0, 0, kPanelWidth, kPanelHeight,
                 viewport_, nullptr, instance, this);
             if (!panel_) throw std::runtime_error("Cannot create offline lobby panel");
+            certificate_ = CreateWindowExW(WS_EX_CONTROLPARENT, kCertificate, L"认定",
+                WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0, viewport_,
+                reinterpret_cast<HMENU>(0xbc0), instance, this);
+            if (!certificate_) throw std::runtime_error("Cannot create certification window");
+            certificate_ok_ = CreateWindowExW(0, L"BUTTON", L"确定", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+                0, 0, 0, 0, certificate_, reinterpret_cast<HMENU>(IDOK), instance, nullptr);
+            if (!certificate_ok_) throw std::runtime_error("Cannot create certification button");
+            SendMessageW(certificate_ok_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
             int x = 30;
             for (unsigned i = 0; i < std::size(kTabs); ++i) {
                 AddButton(kOuter + i, {x, 98, x + kTabWidths[i], 120}, kTabs[i]);
@@ -236,20 +352,21 @@ namespace tenhou {
             AddButton(kCancel, {208, 365, 255, 385}, Label::lobby_cancel);
             AddButton(kLifetime, {335, 60, 555, 80}, Label::lobby_lifetime);
             AddButton(kMonthly, {335, 195, 555, 215}, Label::lobby_month);
+            // Exact WC_LOBBY_PROF 0042a736..0042a79c & WC_ITEM_BTN 113020..113041: 17x10 at (320+235-17, 30).
+            AddButton(kProfileExport, {538, 30, 555, 40}, Label::lobby_profile_copy_text);
+            SetWindowTextW(buttons_.at(kProfileExport), L"");
             LoadProfilePreferences();
             toutenkou_ = std::filesystem::is_regular_file(config_.parent_path() / L"toutenkou.test");
             Refresh();
         } catch (...) {
             if (viewport_) DestroyWindow(viewport_);
             if (font_) DeleteObject(font_);
-            if (title_font_) DeleteObject(title_font_);
             throw;
         }
     }
 
     OfflineLobbyView::~OfflineLobbyView() {
         if (IsWindow(viewport_)) DestroyWindow(viewport_);
-        DeleteObject(title_font_);
         DeleteObject(font_);
     }
 
@@ -263,7 +380,14 @@ namespace tenhou {
         buttons_.emplace(id, button);
     }
 
-    void OfflineLobbyView::ConfigureArtwork(const std::filesystem::path &resources) {
+    void OfflineLobbyView::ConfigureArtwork(const std::filesystem::path &resources, int canvas_width) {
+        certificate_scale_ = canvas_width == 1440 ? 1.4f : 1.f;
+        certificate_width_ = static_cast<int>(580 * certificate_scale_);
+        certificate_height_ = static_cast<int>(470 * certificate_scale_);
+        certificate_image_.reset();
+        RECT client{};
+        GetClientRect(viewport_, &client);
+        Resize(client.right, client.bottom);
         artwork_.Configure(resources, kDefaultClientWidth);
         const auto &frame = artwork_.Get(592);
         if (frame.width != kPanelWidth || frame.height != kPanelHeight)
@@ -277,6 +401,18 @@ namespace tenhou {
 
     void OfflineLobbyView::Resize(int width, int height) {
         MoveWindow(viewport_, 0, 0, width, height, TRUE);
+        SetWindowPos(certificate_, HWND_TOP, (width - certificate_width_) / 2, (height - certificate_height_) / 2,
+                     certificate_width_, certificate_height_, SWP_NOACTIVATE);
+        HDC dc = GetDC(certificate_ok_);
+        auto old = SelectObject(dc, font_);
+        SIZE size{};
+        GetTextExtentPoint32W(dc, L"确定", 2, &size);
+        SelectObject(dc, old);
+        ReleaseDC(certificate_ok_, dc);
+        const int button_width = size.cx + 16 + static_cast<int>(10 * certificate_scale_);
+        MoveWindow(certificate_ok_, (certificate_width_ - (size.cx + 16)) / 2,
+                   certificate_height_ - static_cast<int>(60 * certificate_scale_), button_width,
+                   size.cy + 8 + static_cast<int>(2 * certificate_scale_), TRUE);
         MoveWindow(panel_, (width - kPanelWidth) / 2, (height - kPanelHeight) / 2, kPanelWidth, kPanelHeight, TRUE);
     }
 
@@ -288,8 +424,10 @@ namespace tenhou {
             ShowWindow(viewport_, SW_SHOW);
             Tick();
             SetTimer(panel_, kClockTimer, 1000, nullptr);
-            SetFocus(buttons_.at(kOuter + outer_));
+            if (!certificate_body_.empty()) SetCertificationVisible(true);
+            else SetFocus(buttons_.at(kOuter + outer_));
         } else {
+            SetCertificationVisible(false);
             KillTimer(panel_, kClockTimer);
             KillTimer(panel_, kMoveTimer);
             ClearRules();
@@ -301,12 +439,23 @@ namespace tenhou {
     }
 
     bool OfflineLobbyView::HandleKey(UINT key) {
+        if (visible_ && IsWindowVisible(certificate_)) {
+            if (key == VK_RETURN || key == VK_SPACE) ConfirmCertification();
+            return true;
+        }
         if (!visible_ || key != VK_ESCAPE || !state_.reservations() || !IsChild(panel_, GetFocus())) return false;
         Command(kCancel);
         return true;
     }
 
     void OfflineLobbyView::SetServiceSnapshot(const LobbySnapshot &snapshot) {
+        if (certificate_receipt_ != snapshot.certification_receipt) {
+            SetCertificationVisible(false);
+            certificate_receipt_ = snapshot.certification_receipt;
+            certificate_body_ = snapshot.certification;
+            certificate_image_.reset();
+            if (visible_ && !certificate_body_.empty()) SetCertificationVisible(true);
+        }
         if (!snapshot.origin_lobby) return;
         official_ = snapshot.official;
         service_ready_ = !snapshot.recovering &&
@@ -355,6 +504,7 @@ namespace tenhou {
         control(kCancel, true, state_.reservations() != 0 && !pending);
         control(kLifetime, rule_slot_ < 0, true);
         control(kMonthly, rule_slot_ < 0, true);
+        control(kProfileExport, rule_slot_ < 0, true);
         if (IsChild(panel_, old_focus) && (!IsWindowVisible(old_focus) || !IsWindowEnabled(old_focus))) {
             const auto preferred = contest_page && contest_action == ContestStatus::Open && !pending ? kContestReserve :
                 state_.reservations() && !pending ? kCancel : kOuter + outer_;
@@ -480,6 +630,7 @@ namespace tenhou {
                     break;
                 case kLifetime: ChooseProfile(false); break;
                 case kMonthly: ChooseProfile(true); break;
+                case kProfileExport: ShowProfileExportMenu(); break;
             }
         }
         Tick();
@@ -546,6 +697,167 @@ namespace tenhou {
                        " ready=" + std::to_string(service_ready_));
         if ((pick == 1024 || pick == 1552) && official_ && submit_)
             submit_("join", std::to_wstring(pick));
+    }
+
+    void OfflineLobbyView::ShowProfileExportMenu() {
+        constexpr UINT kCopyText = 0xFC2, kSaveImage = 0xFC3;
+        const auto menu = CreatePopupMenu();
+        MenuItem(menu, kCopyText, Label::lobby_profile_copy_text);
+        MenuItem(menu, kSaveImage, Label::lobby_profile_save_image);
+        const UINT pick = Popup(menu, buttons_.at(kProfileExport), panel_);
+        if (pick == kCopyText) CopyProfileText();
+        else if (pick == kSaveImage) SaveProfileImage();
+    }
+
+    std::wstring OfflineLobbyView::FormatProfileClipboardText() const {
+        const auto &profile = state_.profile;
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        wchar_t timestamp[64]{};
+        std::swprintf(timestamp, std::size(timestamp), L"%04u/%02u/%02u %02u:%02u:%02u",
+                      now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+        std::wstring out;
+        out += L"【天凤麻将】\r\n";
+        out += L"作成时间: " + std::wstring(timestamp) + L"\r\n";
+        out += L"玩家名: " + profile.name + L"\r\n";
+        out += std::wstring(Text(Label::lobby_membership_expiry)) + L": " + FormatExpiry(profile.membership_expiry) + L"\r\n\r\n";
+
+        const bool ranked = lifetime_ == kRankedFourProfile || lifetime_ == kRankedThreeProfile;
+        const bool private_room = lifetime_ == kPrivateFourProfile || lifetime_ == kPrivateThreeProfile;
+        const bool three = lifetime_ == kRankedThreeProfile || lifetime_ == kPrivateThreeProfile ||
+                           lifetime_ == kAmberLifetimeProfiles[6] || lifetime_ == kAmberLifetimeProfiles[7];
+        const LobbyStatistics empty{};
+        const auto extra = profile.other_lifetime.find(lifetime_);
+        const auto &all = ranked ? profile.lifetime[three] : private_room ? private_lifetime_[three] :
+                          extra != profile.other_lifetime.end() ? extra->second : empty;
+        out += ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(lifetime_)) + L"\r\n";
+        if (ranked && profile.ranked_allowed) {
+            const auto &rank = three ? profile.three : profile.four;
+            const auto target = official_ && !all.next_points ? std::wstring{} : L"/" + std::to_wstring(all.next_points);
+            out += RankGradeName(rank.code) + L" " + std::to_wstring(all.points) + target +
+                   L"pt R" + std::to_wstring(rank.rating) + L"\r\n";
+        }
+        if (all.games > 0) {
+            out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(all.games) + L"\r\n";
+            out += std::wstring(Text(Label::lobby_average_score)) + L": " +
+                   FormatSignedAdaptive(static_cast<double>(all.average_score_hundredths) / 100.0, 2) + L"\r\n";
+            out += std::wstring(Text(Label::lobby_average_place)) + L": " +
+                   FormatFixedTrunc(static_cast<double>(all.average_place_hundredths) / 100.0, 2, false, nullptr) + L"\r\n";
+            constexpr Label places[]{Label::lobby_place_1, Label::lobby_place_2, Label::lobby_place_3, Label::lobby_place_4};
+            const auto raw_games = std::accumulate(all.place_counts.begin(), all.place_counts.end(), 0);
+            for (int i = 0; i < (three ? 3 : 4); ++i) {
+                const double rate = raw_games == all.games
+                    ? static_cast<double>(all.place_counts[i]) / static_cast<double>(all.games)
+                    : static_cast<double>(all.place_per_mille[i]) / 1000.0;
+                out += std::wstring(Text(places[i])) + L": " + FormatRate(rate, 3) + L"\r\n";
+            }
+            const double bust = raw_games == all.games && all.bust_count > 0
+                ? static_cast<double>(all.bust_count) / static_cast<double>(all.games)
+                : static_cast<double>(all.bust_per_mille) / 1000.0;
+            out += std::wstring(Text(Label::lobby_bust)) + L": " + FormatRate(bust, 3) + L"\r\n";
+            if (all.hands > 0) {
+                const auto hand_rate = [&](int count, int permille) {
+                    return count > 0 || all.win_count > 0 || all.call_count > 0
+                        ? static_cast<double>(count) / static_cast<double>(all.hands)
+                        : static_cast<double>(permille) / 1000.0;
+                };
+                out += std::wstring(Text(Label::lobby_wins)) + L": " + FormatRate(hand_rate(all.win_count, all.win_per_mille), 3) + L"\r\n";
+                out += std::wstring(Text(Label::lobby_deal_in)) + L": " + FormatRate(hand_rate(all.deal_in_count, all.deal_in_per_mille), 3) + L"\r\n";
+                out += std::wstring(Text(Label::lobby_call)) + L": " + FormatRate(hand_rate(all.call_count, all.call_per_mille), 3) + L"\r\n";
+                out += std::wstring(Text(Label::lobby_reach)) + L": " + FormatRate(hand_rate(all.reach_count, all.reach_per_mille), 3) + L"\r\n";
+            }
+        }
+        out += L"\r\n" + MonthlyProfileCaption(monthly_) + L"\r\n";
+        const auto month = profile.monthly.find(monthly_);
+        if (month != profile.monthly.end() && month->second.games > 0) {
+            const auto &m = month->second;
+            const bool m_three = (monthly_ & 0x10) != 0;
+            const auto &p = m.place_counts;
+            if (m_three) {
+                out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(p[0]) + L"+" +
+                       std::to_wstring(p[1]) + L"+" + std::to_wstring(p[2]) + L" = " + std::to_wstring(m.games) + L"\r\n";
+            } else {
+                out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(p[0]) + L"+" +
+                       std::to_wstring(p[1]) + L"+" + std::to_wstring(p[2]) + L"+" + std::to_wstring(p[3]) +
+                       L" = " + std::to_wstring(m.games) + L"\r\n";
+            }
+            const auto rank_suffix = [&](std::size_t idx) -> std::wstring {
+                if (idx < m.monthly_ranks.size() && m.monthly_ranks[idx] > 0)
+                    return L" " + std::to_wstring(m.monthly_ranks[idx]) + Text(Label::lobby_rank_unit);
+                return {};
+            };
+            const double score = m.has_monthly_raw ? m.total_score : (static_cast<double>(m.average_score_hundredths) * m.games / 100.0);
+            out += std::wstring(Text(Label::lobby_monthly_total)) + Text(Label::lobby_monthly_score) + L": " +
+                   FormatSignedAdaptive(score, 1) + rank_suffix(1) + L"\r\n";
+            out += std::wstring(Text(Label::lobby_monthly_average)) + Text(Label::lobby_monthly_score) + L": " +
+                   FormatSignedAdaptive(score / m.games, 2) + rank_suffix(2) + L"\r\n";
+            const double uma = m_three ? (p[0] * 30.0 - p[2] * 30.0) : (p[0] * 30.0 + p[1] * 10.0 - p[2] * 10.0 - p[3] * 30.0);
+            const double avg_place = static_cast<double>(p[0] + p[1] * 2 + p[2] * 3 + p[3] * 4) / m.games;
+            out += std::wstring(Text(Label::lobby_monthly_total)) + Text(Label::lobby_monthly_place) + L": " +
+                   FormatFixedTrunc(uma, 0, false, L"+") + rank_suffix(3) + L"\r\n";
+            out += std::wstring(Text(Label::lobby_monthly_average)) + Text(Label::lobby_monthly_place) + L": " +
+                   FormatFixedTrunc(avg_place, 2, false, nullptr) + rank_suffix(4) + L"\r\n";
+        }
+        return out;
+    }
+
+    void OfflineLobbyView::CopyProfileText() {
+        const auto text = FormatProfileClipboardText();
+        if (!OpenClipboard(panel_)) return;
+        EmptyClipboard();
+        const std::size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+        if (const HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+            if (auto *dest = static_cast<wchar_t *>(GlobalLock(mem))) {
+                std::memcpy(dest, text.c_str(), bytes);
+                GlobalUnlock(mem);
+                if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+            } else GlobalFree(mem);
+        }
+        CloseClipboard();
+    }
+
+    void OfflineLobbyView::SaveProfileImage() {
+        SYSTEMTIME now{};
+        GetLocalTime(&now);
+        wchar_t path[MAX_PATH]{};
+        std::swprintf(path, std::size(path), L"tenhou_prof_%04u%02u%02u.png", now.wYear, now.wMonth, now.wDay);
+        OPENFILENAMEW dialog{};
+        dialog.lStructSize = sizeof(dialog);
+        dialog.hwndOwner = parent_;
+        dialog.lpstrFilter = L"PNG 图像 (*.png)\0*.png\0所有文件 (*.*)\0*.*\0\0";
+        dialog.lpstrFile = path;
+        dialog.nMaxFile = static_cast<DWORD>(std::size(path));
+        dialog.lpstrDefExt = L"png";
+        dialog.lpstrTitle = Text(Label::lobby_profile_save_image);
+        dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetSaveFileNameW(&dialog)) return;
+
+        CLSID png{};
+        if (!FindPngEncoder(png)) return;
+        constexpr int kProfX = 320, kProfY = 30, kProfW = 240, kProfH = 370;
+        Gdiplus::Bitmap image(kProfW, kProfH, PixelFormat32bppRGB);
+        {
+            Gdiplus::Graphics graphics(&image);
+            HDC dc = graphics.GetHDC();
+            const int saved = SaveDC(dc);
+            const RECT full{0, 0, kProfW, kProfH};
+            FillRect(dc, &full, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+            OffsetViewportOrgEx(dc, -kProfX, -kProfY, nullptr);
+            SetBkMode(dc, TRANSPARENT);
+            SelectObject(dc, font_);
+            PaintProfile(dc);
+            for (unsigned id : {kLifetime, kMonthly}) {
+                const HWND button = buttons_.at(id);
+                if (!IsWindowVisible(button)) continue;
+                RECT rect{};
+                GetWindowRect(button, &rect);
+                MapWindowPoints(nullptr, panel_, reinterpret_cast<POINT *>(&rect), 2);
+                PaintButton({ODT_BUTTON, id, 0, ODA_DRAWENTIRE, 0, button, dc, rect, 0});
+            }
+            RestoreDC(dc, saved);
+            graphics.ReleaseHDC(dc);
+        }
+        image.Save(path, &png, nullptr);
     }
 
     void OfflineLobbyView::ChooseProfile(bool monthly) {
@@ -640,6 +952,100 @@ namespace tenhou {
         if (official_ && submit_) submit_("monthly-profile", std::to_wstring(type));
     }
 
+    void OfflineLobbyView::SetCertificationVisible(bool show) {
+        KillTimer(certificate_, kCertificateTimer);
+        if (certificate_close_) {
+            certificate_body_.clear();
+            certificate_image_.reset();
+        }
+        certificate_close_ = 0;
+        certificate_start_ = GetTickCount64();
+        ShowWindow(certificate_ok_, SW_HIDE);
+        EnableWindow(panel_, !show);
+        ShowWindow(certificate_, show ? SW_SHOW : SW_HIDE);
+        if (!show) return;
+        SetFocus(certificate_);
+        SetTimer(certificate_, kCertificateTimer, 20, nullptr);
+        InvalidateRect(certificate_, nullptr, FALSE);
+    }
+
+    void OfflineLobbyView::ConfirmCertification() {
+        if (!IsWindowVisible(certificate_ok_) || certificate_close_) return;
+        certificate_close_ = GetTickCount64();
+        ShowWindow(certificate_ok_, SW_HIDE);
+        SetTimer(certificate_, kCertificateTimer, 20, nullptr);
+    }
+
+    void OfflineLobbyView::PaintCertification(HDC dc) {
+        POINT origin{};
+        MapWindowPoints(certificate_, viewport_, &origin, 1);
+        const int saved = SaveDC(dc);
+        OffsetViewportOrgEx(dc, -origin.x, -origin.y, nullptr);
+        PaintLobby(dc);
+        RestoreDC(dc, saved);
+
+        using namespace Gdiplus;
+        const int w = certificate_width_, h = certificate_height_;
+        if (!certificate_image_) {
+            auto image = std::make_unique<Bitmap>(w, h, PixelFormat32bppPARGB);
+            Graphics g(image.get());
+            g.Clear(Color(0xdd000000));
+            const auto edge = [&](ARGB color, int x, int y, int right, int bottom) {
+                Pen pen(Color(color), 1);
+                g.DrawLine(&pen, x, y, right, bottom);
+            };
+            edge(0xffcccccc, 0, 0, w - 1, 0);
+            edge(0xffaaaaaa, 0, 0, 0, h - 1);
+            edge(0xff888888, w - 1, 0, w - 1, h - 1);
+            edge(0xff666666, 0, h - 1, w - 1, h - 1);
+
+            const float scale = certificate_scale_;
+            // DisplayArtwork holds the HD lobby pack even with the SD canvas.
+            auto title = artwork_.TextRun(TextKey::title_certification, 580 * .5f * 1.4f, 75 * 1.4f, true);
+            TextRenderContext context;
+            context.native_layout_scale = scale / 1.4;
+            artwork_.Text().Draw(g, context, title);
+            FontFamily system(L"SYSTEM");
+            Font font(system.IsAvailable() ? &system : FontFamily::GenericSansSerif(),
+                      scale * (44.f / 3), FontStyleRegular, UnitPixel);
+            RectF extent;
+            g.MeasureString(certificate_body_.c_str(), -1, &font, PointF(), &extent);
+            const float margin = 10 * scale;
+            const float x = std::max(margin, (w - extent.Width) * .5f);
+            const RectF block(x, 180 * scale, w - 2 * x + 1, (470 - 180 - 60) * scale);
+            SolidBrush white(Color(0xffffffff));
+            g.SetTextRenderingHint(TextRenderingHintAntiAlias);
+            g.DrawString(certificate_body_.c_str(), -1, &font, block, nullptr, &white);
+            // The original entrance/exit bitmap includes the child button.
+            RECT button{};
+            GetClientRect(certificate_ok_, &button);
+            Bitmap button_image(button.right, button.bottom, PixelFormat32bppRGB);
+            {
+                Graphics button_graphics(&button_image);
+                HDC button_dc = button_graphics.GetHDC();
+                DRAWITEMSTRUCT item{ODT_BUTTON, IDOK, 0, ODA_DRAWENTIRE, 0, certificate_ok_, button_dc, button};
+                PaintOriginalButton(item, font_, L"确定");
+                button_graphics.ReleaseHDC(button_dc);
+            }
+            POINT pos{};
+            MapWindowPoints(certificate_ok_, certificate_, &pos, 1);
+            g.DrawImage(&button_image, pos.x, pos.y, button.right, button.bottom);
+            certificate_image_ = std::move(image);
+        }
+        const auto now = GetTickCount64();
+        const float zoom = certificate_close_ ? static_cast<float>(std::pow(.8, (now - certificate_close_) / 20)) : 1.f;
+        const float alpha = certificate_close_ ? zoom : std::min(1.f, (1 + (now - certificate_start_) / 20) * .01f);
+        ColorMatrix matrix{};
+        for (int i = 0; i < 5; ++i) matrix.m[i][i] = 1.f;
+        matrix.m[3][3] = alpha;
+        ImageAttributes attributes;
+        attributes.SetColorMatrix(&matrix);
+        Graphics g(dc);
+        RectF dest(w * (1 - zoom) / 2, h * (1 - zoom) / 2, w * zoom, h * zoom);
+        g.DrawImage(certificate_image_.get(), dest, 0.f, 0.f, static_cast<float>(w), static_cast<float>(h),
+                    UnitPixel, &attributes);
+    }
+
     void OfflineLobbyView::PaintViewport(HDC dc) {
         RECT client{};
         GetClientRect(viewport_, &client);
@@ -649,6 +1055,23 @@ namespace tenhou {
 
     void OfflineLobbyView::Capture(HDC dc) {
         if (!IsWindowVisible(viewport_)) return;
+        PaintLobby(dc);
+        if (!IsWindowVisible(certificate_)) return;
+        POINT origin{};
+        MapWindowPoints(certificate_, viewport_, &origin, 1);
+        const int saved = SaveDC(dc);
+        OffsetViewportOrgEx(dc, origin.x, origin.y, nullptr);
+        PaintCertification(dc);
+        if (IsWindowVisible(certificate_ok_)) {
+            POINT button{};
+            MapWindowPoints(certificate_ok_, certificate_, &button, 1);
+            OffsetViewportOrgEx(dc, button.x, button.y, nullptr);
+            SendMessageW(certificate_ok_, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc), PRF_CLIENT);
+        }
+        RestoreDC(dc, saved);
+    }
+
+    void OfflineLobbyView::PaintLobby(HDC dc) {
         PaintViewport(dc);
         RECT bounds{};
         GetWindowRect(panel_, &bounds);
@@ -672,7 +1095,7 @@ namespace tenhou {
         FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
         ImageAt(dc, artwork_.Get(592), 0, 0);
         SetBkMode(dc, TRANSPARENT);
-        SelectObject(dc, title_font_);
+        SelectObject(dc, font_);
         std::wstring title = Text(Label::lobby_title);
         if (state_.contest()) title = state_.Contest() ? state_.Contest()->title : Text(Label::lobby_contest);
         else if (state_.room() == kBroadcastLobby) title = Text(Label::lobby_broadcast);
@@ -683,7 +1106,6 @@ namespace tenhou {
         Line(dc, {320, 30, 321, 400});
         Line(dc, {30, 119, 320, 120});
         Line(dc, {30, 349, 320, 350});
-        SelectObject(dc, font_);
         std::wstring status = official_ ? L"天凤官方" : Text(submit_ ? Label::lobby_service : Label::lobby_offline);
         if (state_.pending()) status = std::wstring(Text(Label::lobby_switching)) + L"  " + *state_.pending();
         else if (!service_pending_.empty()) status = Text(Label::lobby_waiting_receipt);
@@ -782,83 +1204,291 @@ namespace tenhou {
 
     void OfflineLobbyView::PaintProfile(HDC dc) {
         const auto &profile = state_.profile;
-        Draw(dc, profile.name, {335, 27, 555, 45}, DT_CENTER);
-        Draw(dc, std::wstring(Text(Label::lobby_membership_expiry)) + L"  " + profile.membership_expiry,
-             {335, 43, 555, 58}, DT_CENTER, kMuted);
+        SIZE unit{};
+        GetTextExtentPoint32W(dc, L"a", 1, &unit);
+        const int cy = std::max<int>(12, unit.cy);
+
+        // Exact WC_LOBBY_PROF (0042a8e3..0042aa60): vertical border at x=320, centered 2-line name + expiry.
+        ProfileLine(dc, 320, 30, 320, 400);
+        const std::wstring header_block = profile.name + L"\r\n" +
+            std::wstring(Text(Label::lobby_membership_expiry)) + L" : " + FormatExpiry(profile.membership_expiry);
+        RECT header_rect{335, 30, 555, 60};
+        SetTextColor(dc, kProfileInk);
+        DrawTextW(dc, header_block.c_str(), static_cast<int>(header_block.size()), &header_rect,
+                  DT_CENTER | DT_NOPREFIX);
+
         const bool ranked = lifetime_ == kRankedFourProfile || lifetime_ == kRankedThreeProfile;
         const bool private_room = lifetime_ == kPrivateFourProfile || lifetime_ == kPrivateThreeProfile;
         const bool three = lifetime_ == kRankedThreeProfile || lifetime_ == kPrivateThreeProfile ||
                            lifetime_ == kAmberLifetimeProfiles[6] || lifetime_ == kAmberLifetimeProfiles[7];
+        const auto amber_it = std::find(kAmberLifetimeProfiles.begin(), kAmberLifetimeProfiles.end(), lifetime_);
+        const bool amber_chips = amber_it != kAmberLifetimeProfiles.end() &&
+                                 (lifetime_ % 10 != 1); // *02, *03, *12, *13, *23, *33 have chip bit 0x200.
+
         const LobbyStatistics empty{};
         const auto extra = profile.other_lifetime.find(lifetime_);
         const auto &all = ranked ? profile.lifetime[three] : private_room ? private_lifetime_[three] :
                           extra != profile.other_lifetime.end() ? extra->second : empty;
-        if (ranked) {
-            const auto &rank = three ? profile.three : profile.four;
-            const auto grade = rank.code == 0 ? L"新人" :
-                rank.code < 10 ? std::to_wstring(10 - rank.code) + L"级" : std::to_wstring(rank.code - 9) + L"段";
-            const auto target = official_ && !all.next_points ? std::wstring{} : L"/" + std::to_wstring(all.next_points);
-            const auto description = grade + L"  " + std::to_wstring(all.points) + target +
-                L"pt  R" + std::to_wstring(rank.rating);
-            Draw(dc, profile.ranked_allowed ? description : L"—", {335, 81, 555, 98}, DT_CENTER);
-        } else if (all.rating || all.average_g_hundredths) {
-            auto description = all.rating ? L"R" + std::to_wstring(all.rating) : std::wstring{};
-            if (all.average_g_hundredths) description += L"  G" + Decimal(*all.average_g_hundredths, 2);
-            Draw(dc, description, {335, 81, 555, 98}, DT_CENTER);
-        }
-        const auto row = [&](int x, int y, int width, Label label, const std::wstring &value) {
-            SIZE value_size{};
-            GetTextExtentPoint32W(dc, value.c_str(), static_cast<int>(value.size()), &value_size);
-            Draw(dc, Text(label), {x, y, x + width - value_size.cx - 2, y + 16});
-            Draw(dc, value, {x, y, x + width, y + 16}, DT_RIGHT);
-            Line(dc, {x, y + 16, x + width, y + 17});
-        };
-        constexpr Label places[]{Label::lobby_place_1, Label::lobby_place_2, Label::lobby_place_3, Label::lobby_place_4};
-        const auto percentage = [](int value) { return value == 1000 ? L"100%" : Decimal(value, 1) + L"%"; };
-        const auto statistics = [&](const LobbyStatistics &stats, bool three_players, bool monthly, int y) {
-            const bool have_games = stats.games > 0;
-            const bool have_game_rates = have_games && (!submit_ || official_ || private_room);
-            const bool have_hand_rates = stats.hands > 0 || (!submit_ && have_games);
-            for (int i = 0; i < (three_players ? 3 : 4); ++i)
-                row(335, y + i * 17, 73, places[i], have_games ? percentage(stats.place_per_mille[i]) : L"—");
-            if (!official_ || !monthly)
-                row(335, y + 68, 73, Label::lobby_bust, have_game_rates ? percentage(stats.bust_per_mille) : L"—");
-            row(409, y, 73, Label::lobby_games,
-                have_games || (submit_ && !official_ && ranked && !monthly) ? std::to_wstring(stats.games) : L"—");
-            row(409, y + 17, 73, Label::lobby_average_score, have_game_rates ? Decimal(stats.average_score_hundredths, 2) : L"—");
-            row(409, y + 34, 73, Label::lobby_average_place, have_games ? Decimal(stats.average_place_hundredths, 2) : L"—");
-            if (!official_ || !monthly) {
-                row(483, y, 73, Label::lobby_wins, have_hand_rates ? percentage(stats.win_per_mille) : L"—");
-                row(483, y + 17, 73, Label::lobby_deal_in, have_hand_rates ? percentage(stats.deal_in_per_mille) : L"—");
-                row(483, y + 34, 73, Label::lobby_call, have_hand_rates ? percentage(stats.call_per_mille) : L"—");
-                row(483, y + 51, 73, Label::lobby_reach, have_hand_rates ? percentage(stats.reach_per_mille) : L"—");
-            }
-        };
+
         if (lifetime_ == kAmberRatingProfile || lifetime_ == kAmberGProfile) {
+            // Exact 0042c395..0042c810: 8-row Amber summary table.
+            int y = 84;
             for (unsigned i = 0; i < kAmberLifetimeProfiles.size(); ++i) {
                 const auto it = profile.other_lifetime.find(kAmberLifetimeProfiles[i]);
-                std::wstring value = L"—";
+                std::wstring value = L"-";
                 if (it != profile.other_lifetime.end()) {
                     const auto &stats = it->second;
-                    if (lifetime_ == kAmberRatingProfile && stats.rating) value = L"R" + std::to_wstring(stats.rating);
+                    if (lifetime_ == kAmberRatingProfile && stats.rating)
+                        value = L"R" + std::to_wstring(stats.rating);
                     if (lifetime_ == kAmberGProfile && stats.average_g_hundredths)
                         value = L"G" + Decimal(*stats.average_g_hundredths, 2);
                 }
-                const int y = 82 + static_cast<int>(i) * 14;
-                Draw(dc, AmberProfileLabel(i), {335, y, 480, y + 14});
-                Draw(dc, value, {480, y, 555, y + 14}, DT_RIGHT);
+                RECT left_r{335, y, 485, y + cy};
+                RECT right_r{485, y, 555, y + cy};
+                SetTextColor(dc, kProfileInk);
+                const auto label = AmberProfileLabel(i);
+                DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &left_r, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &right_r, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
+                if (i == 2 || i == 5) ProfileLine(dc, 335, y + cy + 1, 555, y + cy + 1);
+                y += 13;
             }
         } else {
-            statistics(all, three, false, 100);
+            // Exact 0042b1ed..0042b3dc: rank/R/G header line + full underline from 335 to 555.
+            std::wstring summary = L"-";
+            if (ranked) {
+                if (profile.ranked_allowed) {
+                    const auto &rank = three ? profile.three : profile.four;
+                    if (rank.rating > 0 || all.games > 0 || all.points != 0 || rank.code > 0) {
+                        const auto target = official_ && !all.next_points ? std::wstring{} : L"/" + std::to_wstring(all.next_points);
+                        summary = RankGradeName(rank.code) + L" " + std::to_wstring(all.points) + target +
+                                  L"pt R" + std::to_wstring(rank.rating);
+                    } else {
+                        summary = L"新人";
+                    }
+                }
+            } else if (!private_room && (all.rating || all.average_g_hundredths)) {
+                summary.clear();
+                if (all.rating) summary = L"R" + std::to_wstring(all.rating);
+                if (all.average_g_hundredths) {
+                    if (!summary.empty()) summary += L"  ";
+                    summary += L"G" + Decimal(*all.average_g_hundredths, 2);
+                }
+            }
+            const int summary_y = 85;
+            RECT summary_rect{335, summary_y, 555, summary_y + cy};
+            SetTextColor(dc, kProfileInk);
+            DrawTextW(dc, summary.c_str(), static_cast<int>(summary.size()), &summary_rect, DT_CENTER | DT_NOPREFIX);
+            ProfileLine(dc, 335, summary_y + cy, 555, summary_y + cy);
+
+            // Exact 0042c139..0042c2be: 14 lifetime items in 3 columns with 10px gaps.
+            // Col 0: x=335 w=57 (335..392), Col 1: x=402 w=81 (402..483), Col 2: x=493 w=62 (493..555).
+            const bool have_games = all.games > 0;
+            const bool have_game_rates = have_games && (!submit_ || official_ || private_room);
+            const bool have_hand_rates = all.hands > 0 || (!submit_ && have_games);
+            const int raw_places_sum = std::accumulate(all.place_counts.begin(), all.place_counts.end(), 0);
+            const bool use_raw_places = have_games && raw_places_sum == all.games;
+            const auto place_rate = [&](int idx) {
+                return use_raw_places ? static_cast<double>(all.place_counts[idx]) / static_cast<double>(all.games)
+                                      : static_cast<double>(all.place_per_mille[idx]) / 1000.0;
+            };
+            const auto hand_rate = [&](int raw_count, int permille) {
+                return all.hands > 0 && (raw_count > 0 || all.win_count > 0 || all.deal_in_count > 0 ||
+                                         all.call_count > 0 || all.reach_count > 0)
+                    ? static_cast<double>(raw_count) / static_cast<double>(all.hands)
+                    : static_cast<double>(permille) / 1000.0;
+            };
+            const double bust_rate = use_raw_places && (all.bust_count > 0 || all.bust_per_mille == 0)
+                ? static_cast<double>(all.bust_count) / static_cast<double>(all.games)
+                : static_cast<double>(all.bust_per_mille) / 1000.0;
+            const double avg_score = use_raw_places && (all.total_score != 0.0 || all.average_score_hundredths == 0)
+                ? all.total_score / static_cast<double>(all.games)
+                : static_cast<double>(all.average_score_hundredths) / 100.0;
+            const double avg_place = use_raw_places
+                ? static_cast<double>(all.place_counts[0] + all.place_counts[1] * 2 +
+                                      all.place_counts[2] * 3 + all.place_counts[3] * 4) / static_cast<double>(all.games)
+                : static_cast<double>(all.average_place_hundredths) / 100.0;
+
+            struct LifetimeRow {
+                Label label;
+                std::wstring value;
+                bool grayed;
+            };
+            const std::array<LifetimeRow, 14> items{{
+                {Label::lobby_place_1, have_games ? FormatRate(place_rate(0), 3) : L"-", false},
+                {Label::lobby_place_2, have_games ? FormatRate(place_rate(1), 3) : L"-", false},
+                {Label::lobby_place_3, have_games ? FormatRate(place_rate(2), 3) : L"-", false},
+                {Label::lobby_place_4, !three && have_games ? FormatRate(place_rate(3), 3) : L"-", three},
+                {Label::lobby_bust, have_game_rates ? FormatRate(bust_rate, 3) : L"-", false},
+                {Label::lobby_games, have_games || (submit_ && !official_ && ranked) ? std::to_wstring(all.games) : L"-", false},
+                {Label::lobby_average_score, have_game_rates ? FormatSignedAdaptive(avg_score, 2) : L"-", false},
+                {Label::lobby_average_place, have_games ? FormatFixedTrunc(avg_place, 2, false, nullptr) : L"-", false},
+                {Label::lobby_average_income, amber_chips && all.average_income ? FormatSignedAdaptive(*all.average_income, 2) : L"-", !amber_chips},
+                {Label::lobby_average_chips, amber_chips && all.average_chips ? FormatSignedAdaptive(*all.average_chips, 2) : L"-", !amber_chips},
+                {Label::lobby_wins, have_hand_rates ? FormatRate(hand_rate(all.win_count, all.win_per_mille), 3) : L"-", false},
+                {Label::lobby_deal_in, have_hand_rates ? FormatRate(hand_rate(all.deal_in_count, all.deal_in_per_mille), 3) : L"-", false},
+                {Label::lobby_call, have_hand_rates ? FormatRate(hand_rate(all.call_count, all.call_per_mille), 3) : L"-", false},
+                {Label::lobby_reach, have_hand_rates ? FormatRate(hand_rate(all.reach_count, all.reach_per_mille), 3) : L"-", false},
+            }};
+
+            constexpr int col_x[]{335, 402, 493};
+            constexpr int col_w[]{57, 81, 62};
+            const int grid_top = summary_y + cy + 9;
+            const int row_step = cy + 5;
+            for (int i = 0; i < 14; ++i) {
+                const int col = i / 5;
+                const int r = i % 5;
+                const int x = col_x[col];
+                const int w = col_w[col];
+                const int y = grid_top + r * row_step;
+                ProfileLine(dc, x, y + cy, x + w, y + cy);
+                SetTextColor(dc, items[i].grayed ? kProfileDisabled : kProfileInk);
+                RECT cell{x, y, x + w, y + cy};
+                const auto *label = Text(items[i].label);
+                DrawTextW(dc, label, -1, &cell, DT_LEFT | DT_NOPREFIX);
+                DrawTextW(dc, items[i].value.c_str(), static_cast<int>(items[i].value.size()), &cell,
+                          DT_RIGHT | DT_NOPREFIX);
+            }
         }
-        const auto month = profile.monthly.find(monthly_);
-        if (official_ || month != profile.monthly.end()) {
-            const auto &stats = month == profile.monthly.end() ? empty : month->second;
-            if (stats.rating) Draw(dc, L"R" + std::to_wstring(stats.rating), {335, 220, 555, 239}, DT_CENTER);
-            statistics(stats, (monthly_ & 0x10) != 0, true, 242);
-        } else {
-            Draw(dc, Text(Label::lobby_no_stats), {335, 221, 555, 241}, DT_CENTER, kMuted);
+
+        // Exact WC_LOBBY_PROF monthly section (0042cd56..0042db30 + FUN_00433e00).
+        const auto month_it = profile.monthly.find(monthly_);
+        const auto &ms = month_it == profile.monthly.end() ? empty : month_it->second;
+        const bool m_three = (monthly_ & 0x10) != 0;
+        const bool m_amber_chips = (monthly_ & 0x200) != 0;
+        const bool m_games = ms.games > 0;
+        const auto &mp = ms.place_counts;
+        const int mp_sum = std::accumulate(mp.begin(), mp.end(), 0);
+        const bool m_raw = m_games && mp_sum == ms.games;
+
+        const auto rank_text = [&](std::size_t idx, bool enabled = true) -> std::wstring {
+            if (!enabled || idx >= ms.monthly_ranks.size() || ms.monthly_ranks[idx] <= 0) return L"-";
+            return std::to_wstring(ms.monthly_ranks[idx]) + Text(Label::lobby_rank_unit);
+        };
+
+        const auto draw_monthly_cell = [&](int x_off, int y, int width, int mid_right,
+                                           const wchar_t *label, const std::wstring &right_text,
+                                           const std::wstring &mid_text, bool grayed, bool dot) {
+            const int x = 335 + x_off;
+            ProfileLine(dc, x, y + cy, x + width, y + cy);
+            SetTextColor(dc, grayed ? kProfileDisabled : kProfileInk);
+            RECT cell{x, y, x + width, y + cy};
+            if (label && *label) DrawTextW(dc, label, -1, &cell, DT_LEFT | DT_NOPREFIX);
+            if (!right_text.empty())
+                DrawTextW(dc, right_text.c_str(), static_cast<int>(right_text.size()), &cell, DT_RIGHT | DT_NOPREFIX);
+            if (!mid_text.empty() && mid_right > 0) {
+                RECT mid_rect{x, y, x + mid_right, y + cy};
+                DrawTextW(dc, mid_text.c_str(), static_cast<int>(mid_text.size()), &mid_rect, DT_RIGHT | DT_NOPREFIX);
+            }
+            if (dot) {
+                // Exact 0042d970..0042d99d: 2x2 black square at (320 + x_off + 10, y + cy/2 - 2).
+                const RECT square{320 + x_off + 10, y + cy / 2 - 2, 320 + x_off + 12, y + cy / 2};
+                FillRect(dc, &square, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            }
+        };
+
+        // Row 0: Games breakdown (left) + Rate & Rate rank (right).
+        const int row0_y = 220;
+        std::wstring games_summary = L"-";
+        if (m_raw) {
+            const bool compact_games = mp[0] >= 100 || mp[1] >= 100 || mp[2] >= 100 || (!m_three && mp[3] >= 100);
+            if (m_three) {
+                games_summary = std::to_wstring(mp[0]) + L"+" + std::to_wstring(mp[1]) + L"+" + std::to_wstring(mp[2]);
+            } else {
+                games_summary = std::to_wstring(mp[0]) + L"+" + std::to_wstring(mp[1]) + L"+" +
+                                std::to_wstring(mp[2]) + L"+" + std::to_wstring(mp[3]);
+            }
+            games_summary += compact_games ? (L"=" + std::to_wstring(ms.games))
+                                           : (L" = " + std::to_wstring(ms.games) + Text(Label::lobby_games_unit));
+        } else if (m_games) {
+            games_summary = std::to_wstring(ms.games) + Text(Label::lobby_games_unit);
         }
+        std::wstring rate_mid;
+        const bool has_rate_rank = ms.monthly_ranks.size() >= 9 && ms.monthly_ranks[8] > 0;
+        const int corr_rating = MonthlyCorrespondingRating(profile, monthly_);
+        if (has_rate_rank && corr_rating > 0) rate_mid = L"R" + std::to_wstring(corr_rating);
+        else if (!official_ && ms.rating > 0) rate_mid = L"R" + std::to_wstring(ms.rating);
+
+        draw_monthly_cell(0, row0_y, 120, 0, nullptr, games_summary, {}, false, false);
+        draw_monthly_cell(130, row0_y, 90, 40, nullptr, rank_text(8), rate_mid, false, false);
+
+        // Column sub-headers: 通算 & 平均 (0042d9ac..0042daae).
+        const int sub_y = row0_y + cy + 9;
+        SetTextColor(dc, kProfileSubheader);
+        const UINT old_align = SetTextAlign(dc, TA_RIGHT);
+        const auto *total_lbl = Text(Label::lobby_monthly_total);
+        const auto *avg_lbl = Text(Label::lobby_monthly_average);
+        TextOutW(dc, 335 + 5 + 65, sub_y, total_lbl, static_cast<int>(std::wcslen(total_lbl)));
+        TextOutW(dc, 335 + 130 + 40, sub_y, avg_lbl, static_cast<int>(std::wcslen(avg_lbl)));
+        SetTextAlign(dc, old_align);
+        ProfileLine(dc, 335, sub_y + cy, 335 + 5 + 115, sub_y + cy);
+        ProfileLine(dc, 335 + 130, sub_y + cy, 335 + 130 + 90, sub_y + cy);
+
+        // Rows 2..9: 得点, 顺位, 收支, 祝仪 (通算 left, 平均 right).
+        const int table_y = sub_y + cy + 4;
+        const int m_step = cy + 4;
+        const double total_score = ms.has_monthly_raw
+            ? ms.total_score
+            : (static_cast<double>(ms.average_score_hundredths) * ms.games / 100.0);
+        const double avg_m_score = m_games ? total_score / static_cast<double>(ms.games) : 0.0;
+        const double place_uma = m_raw
+            ? (m_three ? (mp[0] * 30.0 - mp[2] * 30.0) : (mp[0] * 30.0 + mp[1] * 10.0 - mp[2] * 10.0 - mp[3] * 30.0))
+            : 0.0;
+        const double avg_m_place = m_raw
+            ? static_cast<double>(mp[0] + mp[1] * 2 + mp[2] * 3 + mp[3] * 4) / static_cast<double>(ms.games)
+            : static_cast<double>(ms.average_place_hundredths) / 100.0;
+
+        draw_monthly_cell(5, table_y, 115, 65, Text(Label::lobby_monthly_score),
+                          rank_text(1), m_games ? FormatSignedAdaptive(total_score, 1) : L"-", false, !m_amber_chips);
+        draw_monthly_cell(130, table_y, 90, 40, nullptr,
+                          rank_text(2), m_games ? FormatSignedAdaptive(avg_m_score, 2) : L"-", false, false);
+
+        draw_monthly_cell(5, table_y + m_step, 115, 65, Text(Label::lobby_monthly_place),
+                          rank_text(3), m_raw ? FormatFixedTrunc(place_uma, 0, false, L"+") : L"-", false, !m_amber_chips);
+        draw_monthly_cell(130, table_y + m_step, 90, 40, nullptr,
+                          rank_text(4), m_games ? FormatFixedTrunc(avg_m_place, 2, false, nullptr) : L"-", false, false);
+
+        const bool have_amber_data = m_amber_chips && m_games && ms.has_amber_monthly;
+        draw_monthly_cell(5, table_y + m_step * 2, 115, 65, Text(Label::lobby_monthly_income),
+                          rank_text(9, m_amber_chips), have_amber_data ? FormatSignedAdaptive(ms.total_income, 1) : L"-",
+                          !m_amber_chips, m_amber_chips);
+        draw_monthly_cell(130, table_y + m_step * 2, 90, 40, nullptr,
+                          rank_text(10, m_amber_chips), have_amber_data ? FormatSignedAdaptive(ms.total_income / ms.games, 2) : L"-",
+                          !m_amber_chips, false);
+
+        draw_monthly_cell(5, table_y + m_step * 3, 115, 65, Text(Label::lobby_monthly_chips),
+                          rank_text(11, m_amber_chips), have_amber_data ? FormatSignedAdaptive(ms.total_chips, 0) : L"-",
+                          !m_amber_chips, m_amber_chips);
+        draw_monthly_cell(130, table_y + m_step * 3, 90, 40, nullptr,
+                          rank_text(12, m_amber_chips), have_amber_data ? FormatSignedAdaptive(static_cast<double>(ms.total_chips) / ms.games, 2) : L"-",
+                          !m_amber_chips, false);
+
+        // Row 10: 综合 (0042d3a0..0042d48e).
+        const int overall_y = table_y + m_step * 4;
+        std::wstring overall_mid = L"-";
+        if (ms.monthly_ranks.size() == 9 && ms.monthly_ranks[2] > 0) {
+            overall_mid = std::to_wstring(ms.monthly_ranks[1] + ms.monthly_ranks[2] +
+                                          ms.monthly_ranks[3] + ms.monthly_ranks[4]);
+        } else if (ms.monthly_ranks.size() == 13 && ms.monthly_ranks[10] > 0) {
+            overall_mid = std::to_wstring(ms.monthly_ranks[9] + ms.monthly_ranks[10] +
+                                          ms.monthly_ranks[11] + ms.monthly_ranks[12]);
+        }
+        draw_monthly_cell(90, overall_y, 130, 80, Text(Label::lobby_monthly_overall),
+                          rank_text(0), overall_mid, false, true);
+
+        // Rows 11..13: 一位率 / 连对率 / 末位率 (0042d5bc..0042d683).
+        const int rates_y = overall_y + cy + 9;
+        const double top_rate = m_raw ? static_cast<double>(mp[0]) / ms.games
+                                      : static_cast<double>(ms.place_per_mille[0]) / 1000.0;
+        const double top2_rate = m_raw ? static_cast<double>(mp[0] + mp[1]) / ms.games
+                                       : static_cast<double>(ms.place_per_mille[0] + ms.place_per_mille[1]) / 1000.0;
+        const double last_rate = m_raw ? static_cast<double>(m_three ? mp[2] : mp[3]) / ms.games
+                                       : static_cast<double>(ms.place_per_mille[m_three ? 2 : 3]) / 1000.0;
+        draw_monthly_cell(0, rates_y, 105, 59, Text(Label::lobby_monthly_top_rate),
+                          rank_text(5), m_games ? FormatRate(top_rate, 3) : L"-", false, false);
+        draw_monthly_cell(115, rates_y, 105, 59, Text(Label::lobby_monthly_top2_rate),
+                          rank_text(6, !m_three), !m_three && m_games ? FormatRate(top2_rate, 3) : L"-", m_three, false);
+        draw_monthly_cell(0, rates_y + m_step, 105, 59, Text(Label::lobby_monthly_last_rate),
+                          rank_text(7), m_games ? FormatRate(last_rate, 3) : L"-", false, false);
     }
 
     void OfflineLobbyView::PaintRules(HDC dc) {
@@ -890,22 +1520,49 @@ namespace tenhou {
         const bool selected = (tab && id == kOuter + outer_) || (tier && id == kTier + static_cast<unsigned>(tier_));
         const bool disabled = (item.itemState & ODS_DISABLED) != 0;
         const bool pressed = (item.itemState & ODS_SELECTED) != 0;
-        FillRect(item.hDC, &rect, GetSysColorBrush(disabled ? COLOR_3DFACE :
-                                                 selected ? COLOR_WINDOW : COLOR_BTNFACE));
-        FrameRect(item.hDC, &rect, GetSysColorBrush(selected || pressed ? COLOR_HIGHLIGHT : COLOR_3DSHADOW));
-        const bool dropdown = id == kMenu || id == kPractice || id == kLifetime || id == kMonthly;
+        const bool profile_btn = id == kLifetime || id == kMonthly || id == kProfileExport;
+        if (profile_btn && !disabled) {
+            // Exact WC_ITEM_BTN gradient (tenhou.exe.c:112696-112722): top half white, bottom half 221..255.
+            const int height = rect.bottom - rect.top;
+            const RECT top_half{rect.left, rect.top, rect.right, rect.top + height / 2};
+            FillRect(item.hDC, &top_half, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+            const int half = height - height / 2;
+            const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+            for (int row = 0; row < half; ++row) {
+                const int shade = 221 + 34 * row / std::max(1, half - 1);
+                SetDCBrushColor(item.hDC, RGB(shade, shade, shade));
+                const RECT line{rect.left, rect.top + height / 2 + row, rect.right, rect.top + height / 2 + row + 1};
+                FillRect(item.hDC, &line, brush);
+            }
+            SetDCBrushColor(item.hDC, pressed ? RGB(51, 153, 255) : RGB(136, 136, 136));
+            FrameRect(item.hDC, &rect, brush);
+        } else {
+            FillRect(item.hDC, &rect, GetSysColorBrush(disabled ? COLOR_3DFACE :
+                                                     selected ? COLOR_WINDOW : COLOR_BTNFACE));
+            FrameRect(item.hDC, &rect, GetSysColorBrush(selected || pressed ? COLOR_HIGHLIGHT : COLOR_3DSHADOW));
+        }
+        const bool dropdown = id == kMenu || id == kPractice || id == kLifetime || id == kMonthly || id == kProfileExport;
         auto text_bounds = rect;
-        InflateRect(&text_bounds, -3, -1);
+        InflateRect(&text_bounds, id == kLifetime || id == kMonthly ? -6 : -3, -1);
         SelectObject(item.hDC, font_);
         SetBkMode(item.hDC, TRANSPARENT);
         if (dropdown) {
-            Draw(item.hDC, L"▾", {rect.right - 15, rect.top, rect.right - 3, rect.bottom}, DT_CENTER);
-            text_bounds.right -= 12;
+            const int cx = id == kProfileExport ? (rect.left + rect.right) / 2 : rect.right - 9;
+            const int cy = (rect.top + rect.bottom) / 2;
+            POINT triangle[3]{{cx - 3, cy - 1}, {cx + 3, cy - 1}, {cx, cy + 2}};
+            const auto pen = SelectObject(item.hDC, GetStockObject(BLACK_PEN));
+            const auto brush = SelectObject(item.hDC, GetStockObject(BLACK_BRUSH));
+            Polygon(item.hDC, triangle, 3);
+            SelectObject(item.hDC, brush);
+            SelectObject(item.hDC, pen);
+            text_bounds.right -= 14;
         }
-        wchar_t text[96]{};
-        GetWindowTextW(item.hwndItem, text, static_cast<int>(std::size(text)));
-        Draw(item.hDC, text, text_bounds, id == kLifetime || id == kMonthly ? DT_LEFT : DT_CENTER,
-             disabled ? kMuted : selected ? kAccent : kInk);
+        if (id != kProfileExport) {
+            wchar_t text[96]{};
+            GetWindowTextW(item.hwndItem, text, static_cast<int>(std::size(text)));
+            Draw(item.hDC, text, text_bounds, id == kLifetime || id == kMonthly ? DT_LEFT : DT_CENTER,
+                 disabled ? kMuted : selected ? kAccent : profile_btn ? kProfileInk : kInk);
+        }
         if (item.itemState & ODS_FOCUS) {
             InflateRect(&rect, -2, -2);
             DrawFocusRect(item.hDC, &rect);
@@ -938,6 +1595,36 @@ namespace tenhou {
         auto *self = reinterpret_cast<OfflineLobbyView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (!self) return DefWindowProcW(window, msg, wparam, lparam);
         try {
+            if (window == self->certificate_) {
+                switch (msg) {
+                    case WM_ERASEBKGND: return 1;
+                    case WM_PAINT:
+                        self->certificate_buffer_.Paint(window, [&](HDC dc) { self->PaintCertification(dc); });
+                        return 0;
+                    case WM_DRAWITEM:
+                        PaintOriginalButton(*reinterpret_cast<DRAWITEMSTRUCT *>(lparam), self->font_, L"确定");
+                        return TRUE;
+                    case WM_PRINTCLIENT:
+                        self->PaintCertification(reinterpret_cast<HDC>(wparam));
+                        return 0;
+                    case WM_COMMAND:
+                        if (LOWORD(wparam) == IDOK) self->ConfirmCertification();
+                        return 0;
+                    case WM_TIMER:
+                        if (wparam != kCertificateTimer) break;
+                        if (self->certificate_close_ && GetTickCount64() - self->certificate_close_ >= 420) {
+                            self->SetCertificationVisible(false);
+                            SetFocus(self->buttons_.at(kOuter + self->outer_));
+                        } else if (!self->certificate_close_ && GetTickCount64() - self->certificate_start_ >= 1980) {
+                            KillTimer(window, kCertificateTimer);
+                            ShowWindow(self->certificate_ok_, SW_SHOW);
+                            SetFocus(self->certificate_ok_);
+                        }
+                        InvalidateRect(window, nullptr, FALSE);
+                        return 0;
+                }
+                return DefWindowProcW(window, msg, wparam, lparam);
+            }
             const bool panel = window == self->panel_;
             switch (msg) {
                 case WM_ERASEBKGND: return 1;

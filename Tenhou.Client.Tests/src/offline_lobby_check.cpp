@@ -55,11 +55,108 @@ namespace {
               s.origin_lobby->reservations() == 0 && s.origin_pending.empty() && reply == std::vector<std::string>{"<GOK />"},
               "Committed GO wins a pending cancel and uses presentation flags");
     }
+
+    void OfficialProfileAndServerErrorChecks() {
+        using namespace tenhou;
+        // 1. FormatServerError mapping and fatal classification.
+        const auto dup = FormatServerError(1004, {});
+        Check(dup.caption == L"Error" && dup.fatal && !dup.message.empty(), "ERR 1004 must be fatal Error dialog");
+        const auto non_fatal = FormatServerError(1019, {});
+        Check(non_fatal.caption == L"Error" && !non_fatal.fatal, "ERR 1019 must be non-fatal");
+        const auto special = FormatServerError(1012, {});
+        Check(special.caption != L"Error" && !special.fatal, "ERR 1012 uses special caption");
+        const auto custom = FormatServerError(400, "该账号已在其他窗口登录");
+        Check(custom.caption == L"Error" && custom.fatal &&
+              custom.message == L"该账号已在其他窗口登录", "Self-hosted ERR wire text preserved");
+
+        // 2. Official duplicate login <ERR code="1004" /> throws ServerRejection.
+        {
+            LobbySession official;
+            official.official = official.origin_lobby = true;
+            official.Connected("ID00000000-00000000", 'M');
+            bool caught = false;
+            try {
+                official.Receive(ParseNetworkMessage("<ERR code=\"1004\" />"));
+            } catch (const ServerRejection &e) {
+                caught = (e.code == 1004 && e.wire_text.empty());
+            }
+            Check(caught, "Official ERR 1004 must throw ServerRejection with code 1004");
+        }
+
+        // 3. Self-hosted duplicate login <ERR code="400" text="..." /> throws ServerRejection.
+        {
+            LobbySession native;
+            native.require_native = native.origin_lobby = true;
+            native.Connected("dup_account", 'M');
+            bool caught = false;
+            try {
+                native.Receive(ParseNetworkMessage("<ERR code=\"400\" text=\"该账号已在其他窗口登录\" />"));
+            } catch (const ServerRejection &e) {
+                caught = (e.code == 400 && e.wire_text == "该账号已在其他窗口登录");
+            }
+            Check(caught, "Self-hosted duplicate login ERR must throw ServerRejection with wire text");
+        }
+
+        // 4. Official HELO + 15-field & 21-field RANKING v2 + PF602 + non-fatal ERR 1019.
+        {
+            LobbySession official;
+            official.official = official.origin_lobby = true;
+            official.preferred_monthly_profile = 17;
+            official.Connected("ID00000000-00000000", 'M');
+            official.Receive(ParseNetworkMessage(
+                "<HELO uname=\"HalfCool\" auth=\"20261124-00000000\" "
+                "PF4=\"11,465,1674.00,0,41,38,38,39,11,800,178,117,288,138\" "
+                "PF3=\"11,175,1538.00,-2052.6,87,101,123,0,42,1000,272,186,300,220\" "
+                "PF602=\"15,-60.0,4,3,2,1,1,80,20,10,24,16\" PF02C=\"0,1620.00,0\" "
+                "expire=\"20270527\" />"));
+            official.Receive(ParseNetworkMessage("<LN n=\"B\" j=\"A\" g=\"A\" />"));
+            Check(official.snapshot.phase == LobbyPhase::Lobby && official.snapshot.origin_lobby,
+                  "Official session entered lobby");
+            const auto &amber = official.snapshot.origin_lobby->profile.other_lifetime.at(602);
+            Check(amber.games == 10 && amber.average_income && *amber.average_income == -3.0 &&
+                  amber.average_chips && *amber.average_chips == 1.5,
+                  "PF602 average_income and average_chips parsed");
+
+            // 15-field monthly ranking (HalfCool Figure 2: 2+0+0=2 games, +104 945位, +60 837位, R1538 25098位).
+            official.Receive(ParseNetworkMessage("<RANKING v2=\"2,0,0,0,104,,0,945,0,837,0,0,0,0,25098\" />"));
+            const auto &m15 = official.snapshot.origin_lobby->profile.monthly.at(17);
+            Check(m15.has_monthly_raw && !m15.has_amber_monthly && m15.games == 2 &&
+                  m15.place_counts == std::array<int, 4>{2, 0, 0, 0} && m15.total_score == 104.0 &&
+                  m15.monthly_ranks.size() == 9 && m15.monthly_ranks[1] == 945 &&
+                  m15.monthly_ranks[3] == 837 && m15.monthly_ranks[8] == 25098,
+                  "15-field RANKING v2 parsed accurately");
+
+            // 21-field Amber monthly ranking.
+            official.Receive(ParseNetworkMessage(
+                "<RANKING v2=\"4,3,2,1,55,,12,10,20,30,40,50,60,70,80,150,25,101,102,103,104\" />"));
+            const auto &m21 = official.snapshot.origin_lobby->profile.monthly.at(17);
+            Check(m21.has_monthly_raw && m21.has_amber_monthly && m21.games == 10 &&
+                  m21.total_income == 150.0 && m21.total_chips == 25 &&
+                  m21.monthly_ranks.size() == 13 && m21.monthly_ranks[0] == 12 &&
+                  m21.monthly_ranks[9] == 101 && m21.monthly_ranks[12] == 104,
+                  "21-field Amber RANKING v2 parsed accurately");
+
+            // Non-fatal ERR 1019 in Lobby must not disconnect or throw.
+            const auto before_receipt = official.snapshot.server_error_receipt;
+            official.Receive(ParseNetworkMessage("<ERR code=\"1019\" />"));
+            Check(official.snapshot.phase == LobbyPhase::Lobby &&
+                  official.snapshot.server_error_receipt > before_receipt &&
+                  official.snapshot.server_error_code == 1019 &&
+                  !official.snapshot.server_error_fatal,
+                  "Non-fatal official ERR 1019 recorded without disconnecting");
+        }
+    }
 }
 
 int main() {
     using namespace tenhou;
     try {
+        Check(LocalizeCertification(L"認定段位/級位：１級\r\n天鳳段位認定協会 殿\r\n天鳳サンマ漁業協会") ==
+              L"认定段级位：１级\n天鳳段位認定協会阁下：\n天凤秋刀鱼渔业协会",
+              "Certificate must translate ranks and issuers while preserving player names");
+        Check(LocalizeCertification(L"Additional award text") == L"Additional award text",
+              "Unknown certificate text must be preserved");
+
         OfflineLobby lobby(FixtureProfile());
         constexpr unsigned base[]{7, 15, 1, 9, 0x41, 0x49, 0x1041, 0x1049, 0x11, 0x19, 0x51, 0x59};
         constexpr unsigned mask[]{0, 0x80, 0x20, 0xA0};
@@ -124,6 +221,7 @@ int main() {
         lobby.SetContest(kEventLobbies[2], FixtureContest(2, 210));
         Check(lobby.ContestAction(211) == ContestStatus::Blocked && !lobby.RegisterContest(211), "Contest blocked");
         ServiceResponses();
+        OfficialProfileAndServerErrorChecks();
         std::cout << "Offline lobby checks passed\n";
         return 0;
     } catch (const std::exception &e) {

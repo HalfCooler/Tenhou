@@ -460,5 +460,19 @@ namespace tenhou {
             std::cout << "P3 production text: three rules, cached/full/expose, SD text layout, buttons, intro, replay, PNG isolation\n";
         }
     };
+    void CheckCertificationPaint(HWND popup, const std::filesystem::path &resources) {
+        RECT r{};
+        GetClientRect(popup, &r);
+        Surface image(r.right, r.bottom);
+        SendMessageW(popup, WM_PRINT, reinterpret_cast<WPARAM>(image.dc), PRF_CLIENT | PRF_CHILDREN);
+        const auto pixels = image.Pixels();
+        const auto bright = [](unsigned pixel) { return (pixel & 0xf0f0f0) == 0xf0f0f0; };
+        for (const auto row : {105, 252}) {
+            const auto start = pixels.begin() + row * r.right;
+            Require(std::count_if(start, start + 70 * r.right, bright) > 30, "Missing certification text");
+        }
+        image.Save(resources.parent_path() / "certification.png");
+    }
+
     void RunTextTableChecks(HWND parent, const std::filesystem::path &resources) { TextTableCheck::Run(parent, resources); }
 }

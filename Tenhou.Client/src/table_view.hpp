@@ -92,7 +92,7 @@ namespace tenhou {
         HWND load_ = nullptr, open_ = nullptr, previous_ = nullptr, next_ = nullptr, reset_ = nullptr, end_ = nullptr;
         HWND playback_ = nullptr, speed_ = nullptr, rounds_ = nullptr;
         HWND animate_control_ = nullptr, sound_control_ = nullptr;
-        HWND results_control_ = nullptr;
+        HWND results_control_ = nullptr, back_ = nullptr;
         std::unique_ptr<SettlementView> settlement_view_;
         std::unique_ptr<MatchIntroView> match_intro_;
         bool show_results_ = false;

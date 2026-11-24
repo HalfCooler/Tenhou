@@ -1,4 +1,5 @@
 #include "matchmaking_view.hpp"
+#include "original_button.hpp"
 #include "network_protocol.hpp"
 #include "room_settings_view.hpp"
 #include <commctrl.h>
@@ -35,8 +36,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) throw std::runtime_error(
             "Cannot register matching panel");
-        font_ = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH, L"MS UI Gothic");
+        font_ = CreateOriginalUiFont();
         window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 590, 430, parent,
                                   nullptr, instance, this);
         if (!font_ || !window_) throw std::runtime_error("Cannot create matching panel");

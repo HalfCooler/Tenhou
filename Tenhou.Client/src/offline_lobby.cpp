@@ -29,6 +29,58 @@ namespace tenhou {
         return std::nullopt;
     }
 
+    std::wstring LocalizeCertification(std::wstring_view text) {
+        constexpr std::wstring_view rank = L"認定段位/級位";
+        constexpr std::wstring_view award =
+            L"貴殿は天鳳において卓越した技能を遺憾なく発揮され優秀な成績をおさめられました。"
+            L"今後もさらなる雀力向上に精進されますようここに段位/級位を認定し栄誉を称えます。";
+        const auto award_length = [&](std::wstring_view source) -> std::size_t {
+            std::size_t pos = 0;
+            for (const wchar_t letter : award) {
+                pos = source.find_first_not_of(L" 　\t\n\r", pos);
+                if (pos == source.npos || source[pos++] != letter) return 0;
+            }
+            return pos;
+        };
+        std::wstring body;
+        while (!text.empty()) {
+            const auto newline = text.find_first_of(L"\r\n");
+            const auto line = text.substr(0, newline);
+            const auto first = line.find_first_not_of(L" 　\t");
+            const auto last = line.find_last_not_of(L" 　\t");
+            const auto content = first == line.npos ? std::wstring_view{} : line.substr(first, last - first + 1);
+            // Match whole fields. A player's name can itself contain vocabulary used in the award.
+            if (content.size() > 1 && content.back() == L'殿') {
+                const auto name = content.substr(0, content.size() - 1);
+                body += name.substr(0, name.find_last_not_of(L" 　\t") + 1);
+                body += L"阁下：";
+            } else if (content.substr(0, rank.size()) == rank) {
+                const auto value = content.find_first_not_of(L" ：:\t　", rank.size());
+                auto grade = std::wstring(value == content.npos ? std::wstring_view{} : content.substr(value));
+                std::replace(grade.begin(), grade.end(), L'級', L'级');
+                if (grade == L"天鳳位") grade = L"天凤位";
+                body += L"认定段级位：" + grade;
+            } else if (const auto length = content.empty() ? 0 : award_length(text)) {
+                // The server can hard-wrap this paragraph anywhere within a sentence.
+                body += L"您在天凤对局中展现了卓越的牌技，成绩优异。\n"
+                        L"特此认定，以表彰您的成就。\n"
+                        L"愿您再接再厉，精进牌艺。";
+                text.remove_prefix(length);
+                continue;
+            } else if (content == L"天鳳段位認定協会") body += L"天凤段位认定协会";
+            else if (content == L"天鳳サンマ漁業協会") body += L"天凤秋刀鱼渔业协会";
+            else body += line;
+            text.remove_prefix(line.size());
+            if (!text.empty()) {
+                const auto separator = text.front();
+                text.remove_prefix(1);
+                if (separator == L'\r' && !text.empty() && text.front() == L'\n') text.remove_prefix(1);
+                body += L'\n';
+            }
+        }
+        return body;
+    }
+
     bool RankedEligible(RankedTier tier, LobbyRank rank, int membership_days) {
         const bool special = rank.code >= 13 && rank.rating >= 1800;
         const bool phoenix = rank.code >= 16 && rank.rating >= 2000;
@@ -54,11 +106,19 @@ namespace tenhou {
     }
 
     OfflineLobbyProfile FixtureProfile() {
+        LobbyStatistics four{153, 1656, 475, 800, {254, 252, 247, 247}, 222, 147, 357, 175, 71, -53, 249, 1300};
+        four.place_counts = {39, 39, 38, 37};
+        four.total_score = -81.1;
+        LobbyStatistics three{98, 1842, 210, 1600, {363, 330, 307, 0}, 289, 135, 302, 223, 83, 215, 194, 820};
+        three.place_counts = {36, 32, 30, 0};
+        three.total_score = 210.7;
+        LobbyStatistics monthly{16, 1668, 0, 0, {312, 250, 250, 188}, 250, 125, 312, 188, 62, 312, 231, 0};
+        monthly.place_counts = {5, 4, 4, 3};
+        monthly.total_score = 50.0;
+        monthly.has_monthly_raw = true;
+        monthly.monthly_ranks = {0, 1240, 0, 1180, 0, 0, 0, 0, 18420};
         return {L"OfflineDemo", L"2027/02/17", 90, 0x05, {11, 1656}, {13, 1842},
-            {{{153, 1656, 475, 800, {254, 252, 247, 247}, 222, 147, 357, 175, 71, -53, 249},
-              {98, 1842, 210, 1600, {363, 330, 307, 0}, 289, 135, 302, 223, 83, 215, 194}}},
-            {{kDefaultMonthlyProfile,
-              {16, 1668, 0, 0, {312, 250, 250, 188}, 250, 125, 312, 188, 62, 312, 231}}}, true, {}};
+            {{four, three}}, {{kDefaultMonthlyProfile, monthly}}, true, {}};
     }
 
     OfflineLobbyCounts FixtureCounts(const std::wstring &room, std::uint64_t seconds) {

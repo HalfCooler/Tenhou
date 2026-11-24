@@ -264,6 +264,49 @@ namespace tenhou {
         return result;
     }
 
+    ServerErrorNotice FormatServerError(int code, const std::string &wire_text) {
+        if (!wire_text.empty()) return {L"Error", NetworkWide(wire_text), true};
+        // Exact mapping from tenhou.exe.c:63966-64319 (WM_USER 0x8202).
+        switch (code) {
+            case 0: return {L"Error", L"已正常结束", false};
+            case 1001: return {L"Error", L"玩家名不正确", true};
+            case 1002: return {L"Error", L"使用该玩家名需要通过 ID 登录", true};
+            case 1003: return {L"Error", L"ID 不正确\r\n\r\n■ 关于玩家 ID 重新发行\r\nhttp://tenhou.net/support.html\r\n\r\n超过 180 天未进行对局的 ID 会被停用或删除。\r\n七段以上且可确认付费结算信息的账号有可能恢复，请尽早联系官方。", true};
+            case 1004: return {L"Error", L"该玩家已在线", true};
+            case 1005: return {L"Error", L"该玩家已注册", true};
+            case 1006: return {L"Error", L"当前连接来源约 7 天内无法进行注册／举报／创建大会会场", true};
+            case 1007: return {L"Error", L"注册失败", true};
+            case 1008: return {L"Error", L"当前连接来源在一定期间内无法访问", true};
+            case 1009: return {L"Error", L"举报已完成", true};
+            case 1010: return {L"Error", L"该功能在个室中不可用\r\n请移动至排名战大厅", true};
+            case 1011: return {L"Error", L"举报失败", true};
+            case 1012: return {L"玩家 ID 注册", L"注册已完成\r\n\r\n※请注意玩家 ID 无法重新发行\r\n\r\n新的玩家 ID 已显示在输入框中。\r\n关闭此对话框后，请点击登录入场。", false};
+            case 1013: return {L"Error", L"当前没有可观战的对局", false};
+            case 1014: return {L"Error", L"未找到观战信息\r\n该对局可能已经结束", false};
+            case 1015: return {L"Error", L"大会会场创建已完成", true};
+            case 1016: return {L"Error", L"大会会场创建失败", true};
+            case 1017: return {L"Error", L"预约中无法浏览牌谱", false};
+            case 1018: return {L"Error", L"预约中无法观战", false};
+            case 1019: return {L"Error", L"未找到大会会场", false};
+            case 1020: return {L"Error", L"参加所需的有效期限不足", false};
+            case 1021: return {L"Error", L"外部登录服务器无响应", true};
+            case 1022: return {L"Error", L"无法移动至 ID 不兼容的会场", true};
+            case 1023: return {L"Error", L"临时使用的外部 ID 已过期", true};
+            case 1024: return {L"Error", L"未满足参加所需的条件", true};
+            case 1025: return {L"Error", L"外部 ID 无法使用", true};
+            case 1026: return {L"Error", L"该会场无法进行参赛报名", false};
+            case 1027: return {L"参赛报名", L"参赛报名已完成", false};
+            case 1028: return {L"Error", L"已完成参赛报名", false};
+            case 2000: return {L"Error", L"不允许连接到该域名", true};
+            case 2001: return {L"Error", L"已在其他客户端连接", true};
+            case 2002: return {L"Error", L"与服务器的连接已断开\r\n是否重新连接？", false};
+            case 2003: return {L"Error", L"牌谱读取失败\r\n进行中的牌谱将在对局结束后可供浏览", false};
+            case 2004: return {L"Error", L"请选择性别", true};
+            default:
+                return {L"Error", code >= 0 ? L"ERR=" + std::to_wstring(code) : L"服务器拒绝了本次连接", true};
+        }
+    }
+
     const char *LobbyPhaseName(LobbyPhase phase) {
         switch (phase) {
             case LobbyPhase::Disconnected: return "Disconnected";
@@ -337,11 +380,24 @@ namespace tenhou {
         ++snapshot.received;
         snapshot.last_tag = tag;
         if (tag == "ERR") {
-            if (message.attributes.count("text")) Fail(Attribute(message, "text").c_str());
-            const auto code = Attribute(message, "code");
-            if (!code.empty() && code.size() <= 10 && std::all_of(code.begin(), code.end(), Digit))
-                throw std::runtime_error("Server rejected session (ERR code=" + code + ")");
-            Fail("Server rejected session (ERR)");
+            const auto text = Attribute(message, "text");
+            const auto code_str = Attribute(message, "code");
+            int code = -1;
+            if (!code_str.empty() && code_str.size() <= 10 && std::all_of(code_str.begin(), code_str.end(), Digit))
+                code = static_cast<int>(Integer(code_str));
+            const auto notice = FormatServerError(code, text);
+            // Non-fatal official ERR codes (tenhou.exe.c:63966-64318) display a dialog without closing the lobby.
+            if (official && !notice.fatal && snapshot.phase != LobbyPhase::AwaitHelo &&
+                snapshot.phase != LobbyPhase::AwaitLobby) {
+                snapshot.server_error_receipt = snapshot.received;
+                snapshot.server_error_code = code;
+                snapshot.server_error_text = text;
+                snapshot.server_error_fatal = false;
+                return {};
+            }
+            if (!text.empty()) throw ServerRejection(code, text, text);
+            if (code >= 0) throw ServerRejection(code, {}, "Server rejected session (ERR code=" + code_str + ")");
+            throw ServerRejection(-1, {}, "Server rejected session (ERR)");
         }
         if (tag == "BYE" && !message.attributes.count("who")) Fail("Server ended session (BYE)");
         const auto phase = snapshot.phase;
@@ -815,6 +871,9 @@ namespace tenhou {
             if (official) {
                 // Receiving HELO means the server opened the lobby instead of resuming a saved gpid
                 // (live gpid replies directly with GO; confirmed in tenhou.exe.c:63830-63957).
+                const auto notice = Attribute(message, "nintei");
+                snapshot.certification = LocalizeCertification(NetworkWide(DecodeNetworkText(notice)));
+                snapshot.certification_receipt = notice.empty() ? 0 : snapshot.received;
                 official_game_id.clear();
                 FinishOfficialRecovery();
                 official_profile_dirty_ = true;
@@ -921,6 +980,7 @@ namespace tenhou {
         }
 
         std::int64_t FillPlacements(LobbyStatistics &stats, const std::array<int, 4> &places, double score_hundredths) {
+            stats.place_counts = places;
             const auto games = std::accumulate(places.begin(), places.end(), std::int64_t{0});
             if (!games) return 0;
             constexpr auto max_int = std::numeric_limits<int>::max();
@@ -944,19 +1004,26 @@ namespace tenhou {
             };
             const auto count = [&](std::size_t offset) { return std::max(0, ProfileInteger(field(offset))); };
             // Origin converts the wire score in points to integer tenths before averaging.
+            const auto score_tenths = ProfileScoreTenths(field(0));
+            stats.total_score = static_cast<double>(score_tenths) * 0.1;
             const auto games = FillPlacements(stats, {count(1), count(2), count(3), count(4)},
-                                             10.0 * ProfileScoreTenths(field(0)));
+                                             10.0 * score_tenths);
+            stats.bust_count = count(5);
             if (games)
-                stats.bust_per_mille = static_cast<int>(1000LL * std::min<std::int64_t>(count(5), games) / games);
+                stats.bust_per_mille = static_cast<int>(1000LL * std::min<std::int64_t>(stats.bust_count, games) / games);
             stats.hands = count(6);
+            stats.win_count = count(7);
+            stats.deal_in_count = count(8);
+            stats.call_count = count(9);
+            stats.reach_count = count(10);
             if (stats.hands) {
-                const auto rate = [&](std::size_t offset) {
-                    return static_cast<int>(1000LL * std::min(count(offset), stats.hands) / stats.hands);
+                const auto rate = [&](int value) {
+                    return static_cast<int>(1000LL * std::min(value, stats.hands) / stats.hands);
                 };
-                stats.win_per_mille = rate(7);
-                stats.deal_in_per_mille = rate(8);
-                stats.call_per_mille = rate(9);
-                stats.reach_per_mille = rate(10);
+                stats.win_per_mille = rate(stats.win_count);
+                stats.deal_in_per_mille = rate(stats.deal_in_count);
+                stats.call_per_mille = rate(stats.call_count);
+                stats.reach_per_mille = rate(stats.reach_count);
             }
         }
 
@@ -980,7 +1047,19 @@ namespace tenhou {
             for (std::size_t i = 0; i < places.size(); ++i)
                 places[i] = std::max(0, ProfileInteger(fields[i]));
             LobbyStatistics stats{};
-            FillPlacements(stats, places, 100 * ProfileDecimal(fields[4]));
+            stats.total_score = ProfileDecimal(fields[4]);
+            FillPlacements(stats, places, 100 * stats.total_score);
+            stats.has_monthly_raw = true;
+            stats.monthly_ranks.resize(fields.size() == 21 ? 13 : 9, 0);
+            for (std::size_t i = 0; i < 9; ++i)
+                stats.monthly_ranks[i] = std::max(0, ProfileInteger(fields[6 + i]));
+            if (fields.size() == 21) {
+                stats.has_amber_monthly = true;
+                stats.total_income = ProfileDecimal(fields[15]);
+                stats.total_chips = ProfileInteger(fields[16]);
+                for (std::size_t i = 0; i < 4; ++i)
+                    stats.monthly_ranks[9 + i] = std::max(0, ProfileInteger(fields[17 + i]));
+            }
             return stats;
         }
 
@@ -1107,11 +1186,19 @@ namespace tenhou {
                     FillLifetimeStatistics(stats, results, 1);
                     if (results.size() >= 2 && stats.games) {
                         constexpr int chip_values[]{0, 2, 5, 0, 2, 5, 5, 5};
-                        const auto score = ProfileScoreTenths(results[1]) / 10;
-                        const auto chips = static_cast<std::int64_t>(ProfileInteger(results[0])) * chip_values[i];
+                        const auto raw_chips = ProfileInteger(results[0]);
+                        stats.total_chips = raw_chips;
+                        const auto score_tenths = ProfileScoreTenths(results[1]);
+                        const auto score = score_tenths / 10;
+                        const auto chips = static_cast<std::int64_t>(raw_chips) * chip_values[i];
                         constexpr auto max_int = static_cast<std::int64_t>(std::numeric_limits<int>::max());
                         stats.average_g_hundredths = static_cast<int>(
                             std::clamp(10000LL * (score + chips) / stats.games, -max_int, max_int));
+                        if (chip_values[i] > 0) {
+                            stats.average_income = (static_cast<double>(score_tenths) * 0.1 +
+                                                    static_cast<double>(chips)) / static_cast<double>(stats.games);
+                            stats.average_chips = static_cast<double>(raw_chips) / static_cast<double>(stats.games);
+                        }
                     }
                     profile.other_lifetime.emplace(type, stats);
                 }
