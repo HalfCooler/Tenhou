@@ -51,8 +51,13 @@ target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32)
+add_library(tenhou_presenter STATIC src/tile_geometry.cpp src/hand_projection.cpp src/settlement_sequencer.cpp)
+target_include_directories(tenhou_presenter PUBLIC src "${asset_generated_directory}")
+target_compile_options(tenhou_presenter PRIVATE /W4 /WX /utf-8 /EHsc)
+target_link_libraries(tenhou_presenter PUBLIC tenhou_resources tenhou_network)
+target_link_libraries(tenhou_table PUBLIC tenhou_presenter)
 set(tenhou_lobby_sources src/background.cpp src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
-        src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/variant_table_view.cpp src/offline_lobby_view.cpp
+        src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/offline_lobby_view.cpp
 )
 add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/table_view.cpp
         ${tenhou_lobby_sources}

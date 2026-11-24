@@ -81,16 +81,6 @@ namespace tenhou {
             if (!red && !label.empty() && label.back() == '*') label.pop_back();
             return label;
         }
-
-        void Tile(HDC dc, int tile, RECT bounds, bool claimed = false, bool reach = false, bool drawn = false,
-                  bool red = true) {
-            Fill(dc, bounds, claimed ? RGB(146, 168, 166) : drawn ? RGB(255, 230, 152) : RGB(250, 249, 238));
-            const auto border = CreateSolidBrush(reach ? RGB(220, 50, 50) : RGB(90, 110, 100));
-            FrameRect(dc, &bounds, border);
-            DeleteObject(border);
-            SetTextColor(dc, tile / 4 >= 27 ? RGB(130, 30, 30) : RGB(25, 45, 60));
-            Text(dc, CompactTile(tile, red), bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        }
     } // namespace
 
     TableView::TableView(HWND parent, std::function<void(const std::string &)> log, const std::filesystem::path &config)
@@ -106,7 +96,7 @@ namespace tenhou {
         font_ = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         if (!font_) throw std::runtime_error("Cannot create offline table font");
-        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VSCROLL,
+        viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                                     0, 0, width_, height_, parent_, reinterpret_cast<HMENU>(202), instance, this);
         if (!viewport_) throw std::runtime_error("Cannot create offline table viewport");
         const auto control = [&](const wchar_t *kind, const wchar_t *text, int id, DWORD style = 0) {
@@ -256,12 +246,11 @@ namespace tenhou {
         }
         settlement_view_->Move(BoardBounds());
         match_intro_->Move({0, 0, width_, height_});
-        UpdateScroll();
         InvalidateRect(viewport_, nullptr, FALSE);
     }
 
     bool TableView::Compact() const {
-        return original_display_ && session_ && session_->state().initialized && !text_details_;
+        return original_display_ && session_ && session_->state().initialized;
     }
 
     RECT TableView::BoardBounds() const {
@@ -351,7 +340,6 @@ namespace tenhou {
             } catch (const std::exception &) {
             }
             painted_ = false;
-            scroll_ = 0;
             log_("REPLAY LOADED events=" + std::to_string(session_->log().events.size()));
         } catch (const std::exception &error) {
             error_ = error.what();
@@ -372,29 +360,6 @@ namespace tenhou {
         audio_error_.clear();
         if (GetWindowTextLengthW(path_)) Command(kLoad);
         else Update();
-    }
-
-    void TableView::UpdateScroll() {
-        const int visible = std::max(1, height_ - 204 - 48);
-        int card_height = std::max(180, (visible - 10) / 2);
-        if (session_) {
-            const int per_row = std::max(1, ((width_ - 42) / 2 - 16) / 28);
-            for (const auto &player: session_->state().players) {
-                const int rows = (static_cast<int>(player.discards.size()) + per_row - 1) / per_row;
-                card_height = std::max(card_height,
-                                       107 + std::max(1, rows) * 23 + 20 + static_cast<int>(player.melds.size()) * 20 +
-                                       8);
-            }
-        }
-        board_height_ = card_height * 2 + 10;
-        SCROLLINFO info{sizeof(SCROLLINFO)};
-        info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS | SIF_DISABLENOSCROLL;
-        info.nMin = 0;
-        info.nMax = board_height_ - 1;
-        info.nPage = static_cast<UINT>(session_ && text_details_ ? visible : board_height_);
-        scroll_ = std::clamp(scroll_, 0, std::max(0, board_height_ - visible));
-        info.nPos = scroll_;
-        SetScrollInfo(viewport_, SB_VERT, &info, TRUE);
     }
 
     void TableView::Update() {
@@ -622,7 +587,7 @@ namespace tenhou {
         result_pending_ = event.kind == ReplayEventKind::Win || event.kind == ReplayEventKind::DrawEnd;
         draw_end_ticks_ = event.kind == ReplayEventKind::DrawEnd ? 28 : 0;
         if (draw_end_ticks_) SetTimer(viewport_, kEffectsTimer, 15, nullptr);
-        if (animation_enabled_ && event.kind != ReplayEventKind::Init && !text_details_ && artwork_error_.empty()) {
+        if (animation_enabled_ && event.kind != ReplayEventKind::Init && artwork_error_.empty()) {
             try {
                 if (!artwork_.width()) artwork_.Load(resource_directory_, canvas_width_);
                 const auto index = SendMessageW(speed_, CB_GETCURSEL, 0, 0);
@@ -646,21 +611,21 @@ namespace tenhou {
         const int who = event.kind == ReplayEventKind::Win ? std::stoi(event.attributes.at("who")) : event.who;
         const char gender = who >= 0 && who < 4 ? session_->state().players[who].gender : '?';
         const bool intro = event.kind == ReplayEventKind::Init && !before.initialized && playing_ && animation_enabled_
-                           && original_display_ && !text_details_;
+                           && original_display_;
         if (intro) start_sound_pending_ = !ReplaySounds(event, gender, effects_only_, individual_voices_).empty();
         else for (auto id: ReplaySounds(event, gender, effects_only_, individual_voices_)) PlaySoundId(id);
         if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
             presentation_.Cancel();
             if (!artwork_.width()) artwork_.Load(resource_directory_, canvas_width_);
             artwork_.SetRedTiles(session_->state().red_tiles);
-            opening_.Begin(session_->state(), original_display_ && !text_details_, &artwork_, red_tiles_);
+            opening_.Begin(session_->state(), original_display_, &artwork_, red_tiles_);
             opening_.ResumeClock(AnimationNow());
             opening_timer_.Start(viewport_, kOpeningTimer, kTableTickMs);
             log_("OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()) +
                  " tick=" + std::to_string(GetTickCount64()));
         }
         if (event.kind == ReplayEventKind::Init && !before.initialized && playing_ && animation_enabled_ &&
-            original_display_ && !text_details_)
+            original_display_)
             PresentMatchStart();
         if (presentation_.Active()) motion_timer_.Start(viewport_, kMotionTimer, kTableTickMs);
     }
@@ -717,57 +682,6 @@ namespace tenhou {
             InvalidateRect(viewport_, nullptr, FALSE);
         }
         if (!opening_.Active()) opening_timer_.Stop();
-    }
-
-    void TableView::PaintPlayer(HDC dc, int seat, RECT bounds) {
-        const int saved = SaveDC(dc);
-        IntersectClipRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
-        const auto &state = session_->state();
-        const auto &player = state.players[seat];
-        Fill(dc, bounds, state.turn == seat ? RGB(45, 103, 90) : RGB(37, 76, 70));
-        SetTextColor(dc, RGB(245, 245, 235));
-        std::ostringstream header;
-        header << "Seat " << seat << "  " << player.score;
-        if (seat == state.dealer) header << "  [dealer]";
-        if (player.reach) header << "  [riichi " << player.reach << "]";
-        if (std::find(state.winners.begin(), state.winners.end(), seat) != state.winners.end()) header << "  [win]";
-        if (!player.nuki.empty()) header << "  [north x" << player.nuki.size() << "]";
-        header << "  " << player.name;
-        Text(dc, header.str(), {bounds.left + 8, bounds.top + 7, bounds.right - 8, bounds.top + 27});
-        const int available = bounds.right - bounds.left - 16;
-        const int tile_width = std::min(32, std::max(19, available / 14 - 2));
-        const int start = bounds.left + 8;
-        const int top = bounds.top + 32;
-        auto hand = player.hand;
-        std::sort(hand.begin(), hand.end());
-        for (std::size_t i = 0; i < hand.size(); ++i) {
-            const int x = start + static_cast<int>(i) * (tile_width + 2);
-            Tile(dc, hand[i], {x, top, x + tile_width, top + 29}, false, false, hand[i] == player.drawn_tile,
-                 red_tiles_);
-        }
-        SetTextColor(dc, RGB(225, 235, 230));
-        Text(dc, "River (red border: riichi; muted: claimed)", {start, top + 33, bounds.right - 8, top + 51});
-        const int river_width = 26;
-        const int per_row = std::max(1, available / (river_width + 2));
-        for (std::size_t i = 0; i < player.discards.size(); ++i) {
-            const auto &item = player.discards[i];
-            const int x = start + static_cast<int>(i) % per_row * (river_width + 2);
-            const int y = top + 52 + static_cast<int>(i) / per_row * 23;
-            Tile(dc, item.tile, {x, y, x + river_width, y + 21}, item.claimed, item.riichi, false, red_tiles_);
-        }
-        SetTextColor(dc, RGB(225, 235, 230));
-        const int river_rows = (static_cast<int>(player.discards.size()) + per_row - 1) / per_row;
-        const int meld_top = top + 55 + std::max(1, river_rows) * 23;
-        Text(dc, player.melds.empty() ? "Melds: none" : "Melds:", {start, meld_top, bounds.right - 8, meld_top + 18});
-        int meld_y = meld_top + 20;
-        for (const auto &meld: player.melds) {
-            std::string melds = std::string(MeldKindName(meld.kind)) + ": ";
-            for (int tile: meld.tiles) melds += CompactTile(tile, red_tiles_) + " ";
-            melds += "(seat " + std::to_string(meld.from) + ")";
-            Text(dc, melds, {start, meld_y, bounds.right - 8, meld_y + 20});
-            meld_y += 20;
-        }
-        RestoreDC(dc, saved);
     }
 
     void TableView::PaintTable(HDC dc, RECT bounds) {
@@ -989,26 +903,20 @@ namespace tenhou {
                                                       : state.last_event)
                                    : "Load failed (previous replay kept): " + error_,
                      {16, 174, width_ - 16, 194});
-            const int left = 16, top = BoardBounds().top, gap = 10;
-            const int card_width = (width_ - 32 - gap) / 2;
-            const int card_height = (board_height_ - gap) / 2;
+            const auto board = BoardBounds();
             const int clip = SaveDC(dc);
-            IntersectClipRect(dc, 0, top, width_, BoardBounds().bottom);
-            if (!text_details_ && state.initialized) PaintTable(dc, BoardBounds());
-            else
-                for (int seat = 0; seat < 4; ++seat) {
-                    if (!SeatPresent(state.seat_mask, seat)) continue;
-                    const int x = left + seat % 2 * (card_width + gap);
-                    const int y = top + seat / 2 * (card_height + gap) - scroll_;
-                    PaintPlayer(dc, seat, {x, y, x + card_width, y + card_height});
-                }
+            IntersectClipRect(dc, 0, board.top, width_, board.bottom);
+            if (state.initialized) PaintTable(dc, board);
+            else {
+                SetTextColor(dc, RGB(225, 235, 230));
+                Text(dc, "等待首局 INIT 事件，点击“前进”或“播放”开始查看牌桌。",
+                     {board.left + 8, board.top + 8, board.right - 8, board.bottom - 8}, DT_LEFT | DT_WORDBREAK);
+            }
             RestoreDC(dc, clip);
         }
         SetTextColor(dc, RGB(225, 235, 230));
         if (!Compact())
-            Text(dc, text_details_
-                         ? "m=man, p=pin, s=sou; E/S/W/N=wind; P/F/C=white/green/red; 0=red five | Gold: drawn tile"
-                         : "All active hands visible | Gold outline: drawn tile / riichi | Text details: full event inspection",
+            Text(dc, "All active hands visible | Gold outline: drawn tile / riichi",
                  {16, height_ - 36, width_ - 16, height_ - 15});
         SelectObject(dc, old_font);
         if (!painted_) {
@@ -1098,30 +1006,6 @@ LRESULT CALLBACK TableView::ViewProc(HWND window, UINT message, WPARAM wparam, L
                 }
                 if (message == WM_PRINTCLIENT) {
                     view->Paint(reinterpret_cast<HDC>(wparam));
-                    return 0;
-                }
-                if (message == WM_MOUSEWHEEL || message == WM_VSCROLL) {
-                    if (!view->session_ || !view->text_details_) return 0;
-                    int position = view->scroll_;
-                    if (message == WM_MOUSEWHEEL) position -= GET_WHEEL_DELTA_WPARAM(wparam) / WHEEL_DELTA * 54;
-                    else {
-                        const auto command = LOWORD(wparam);
-                        if (command == SB_LINEUP) position -= 24;
-                        else if (command == SB_LINEDOWN) position += 24;
-                        else if (command == SB_PAGEUP) position -= std::max(1, view->height_ - 252);
-                        else if (command == SB_PAGEDOWN) position += std::max(1, view->height_ - 252);
-                        else if (command == SB_TOP) position = 0;
-                        else if (command == SB_BOTTOM) position = view->board_height_;
-                        else if (command == SB_THUMBTRACK || command == SB_THUMBPOSITION) {
-                            SCROLLINFO info{sizeof(SCROLLINFO)};
-                            info.fMask = SIF_TRACKPOS;
-                            GetScrollInfo(window, SB_VERT, &info);
-                            position = info.nTrackPos;
-                        }
-                    }
-                    view->scroll_ = position;
-                    view->UpdateScroll();
-                    InvalidateRect(window, nullptr, FALSE);
                     return 0;
                 }
                 if (message == WM_PAINT) {

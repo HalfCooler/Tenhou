@@ -1,6 +1,6 @@
 # 重建对局细节
 
-使用 `python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw`（或 `--spawn` 挂起拉起以覆盖冷重启首帧）记录原版双向通信。首个标准段位战与完整断线重连再开（含失效 `gpid` 回落大厅与有效 `gpid` 直连 `GO → SAIKAI → REINIT`）均已有完整原始样本并完成重建端匹配及离线/回环验收，可以直接实窗对照。下方勾选项记录曾采集的桌型，具体覆盖范围、静态取证与补采优先级见[原版通信覆盖](ORIGIN-WIRE-COVERAGE.md)。
+使用 `python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw`（或 `--spawn` 挂起拉起以覆盖冷重启首帧）记录原版双向通信。首个标准段位战与完整断线重连再开（含失效 `gpid` 回落大厅与有效 `gpid` 直连 `GO → SAIKAI → REINIT`）均已有完整原始样本并完成重建端匹配及离线/回环验收，可以直接实窗对照。下方勾选项记录曾采集的桌型，采集方法见[原版会话采集](ORIGIN-SESSION-CAPTURE.md)，原始样本保存在 `docs/Tenhou.Client.Origin/origin-capture/`。
 
 - [ ] 一般 食断无 东风战
 - [x] 一般 食断赤 东风战

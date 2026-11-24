@@ -1,69 +1,14 @@
 #pragma once
-#include "object_pack.hpp"
-#include "replay.hpp"
+#include "tile_geometry.hpp"
 #include "variant_artwork.hpp"
 #include <map>
-#include <optional>
+#include <memory>
 #include <tuple>
 
 namespace tenhou {
-    // Native resource commands; the toolbar and score captions are a rebuild UI.
-    struct TableTile {
-        char family = 't';
-        int slot = 0, tile = 0, direction = 0;
-        int dx = 0, dy = 0; // Translation in the selected native canvas.
-        bool drawn = false, riichi = false;
-        const char *role = "hand";
-        unsigned meld_sideways = 0; // Native n slots that widen the following slots.
-        int river_reach_slot = -1; // Declaration preceding this tile in the same row.
-        bool river_waiting = false;
-        int wall_extra = 0; // Additional stacks translated from measured native resource anchors.
-        int wall_stack = -1, wall_stacks = 0; // Logical identity, independent of the reused sprite slot.
-        bool native_draw_offset = false;
-    };
-
-    struct TileOffset {
-        int x = 0, y = 0;
-        bool operator==(const TileOffset &other) const { return x == other.x && y == other.y; }
-    };
-
-    struct TileFlightImage {
-        TableTile sprite;
-        std::array<TileOffset, 4> offsets{};
-        unsigned count = 0;
-        float opacity = 1.f;
-        int landing_x = 0, landing_y = 0;
-        bool cover_landing = false;
-
-        bool operator==(const TileFlightImage &other) const {
-            return sprite.family == other.sprite.family && sprite.slot == other.sprite.slot &&
-                   sprite.tile == other.sprite.tile && sprite.direction == other.sprite.direction &&
-                   offsets == other.offsets && count == other.count && opacity == other.opacity &&
-                   landing_x == other.landing_x && landing_y == other.landing_y && cover_landing == other.cover_landing;
-        }
-    };
-
-    struct PositionedTile {
-        TableTile tile;
-        int x = 0, y = 0;
-        std::optional<TileFlightImage> flight{};
-    };
-
-    int TileVariant(int tile, bool red = true);
-
-    // Origin tenhou.exe.c:90593-90661 (FUN_00488220 "od eat 0") & 109604-109653 (FUN_004a3500):
-    // Move absent suits behind present suits when fewer than three suits are held;
-    // keep suit order unchanged when all three suits are present.
-    void UpdateOriginSuitOrder(std::array<int, 3> &suit_order, const std::vector<int> &tiles);
-    void SortOriginHand(std::vector<int> &tiles, const std::array<int, 3> &suit_order);
-
-    TileOffset TableTileOffset(const TableTile &tile, int width);
-
-    std::vector<TableTile> BuildTableScene(const ReplayState &state, bool sort_self = true, bool sort_opponents = true);
-
     class TableArtwork {
     public:
-        void SetRedTiles(const std::vector<int> &tiles) { red_tiles_ = tiles; }
+        void SetRedTiles(const std::vector<int> &tiles) { geometry_.SetRedTiles(tiles); }
 
         void SetColor(const std::array<float, 3> &rgb) {
             if (rgb_ != rgb) {
@@ -79,7 +24,10 @@ namespace tenhou {
         const ObjectImage &Get(const TableTile &tile, bool red = true);
         const ObjectImage &GetFlight(const TileFlightImage &flight, bool red);
 
-        TileOffset Offset(const TableTile &tile);
+        TileOffset Offset(const TableTile &tile) { return geometry_.Offset(tile); }
+
+        TileGeometryCatalog &geometry() { return geometry_; }
+        const TileGeometryCatalog &geometry() const { return geometry_; }
 
         // Only evict at the next frame boundary, never while Get references live.
         void BeginFrame();
@@ -87,15 +35,14 @@ namespace tenhou {
         std::size_t cached_bytes() const { return cached_bytes_; }
         void SetCacheBudget(std::size_t bytes) { cache_budget_ = bytes; }
         std::size_t evictions() const { return evictions_; }
-        int width() const { return width_; }
+        int width() const { return geometry_.width(); }
 
     private:
-        std::uint32_t ImageKey(const TableTile &tile, bool red) const;
-        std::vector<int> red_tiles_{16, 52, 88};
+        std::uint32_t ImageKey(const TableTile &tile, bool red) const { return geometry_.ImageKey(tile, red); }
         std::array<float, 3> rgb_{0, 0, 38.0f / 255.0f};
-        ObjectPack even_, odd_;
+        std::shared_ptr<const ObjectPack> even_, odd_;
+        TileGeometryCatalog geometry_;
         VariantArtwork variants_;
-        int width_ = 0;
 
         struct Cached {
             ObjectImage image;
@@ -110,7 +57,7 @@ namespace tenhou {
         std::size_t cache_budget_ = 32 * 1024 * 1024, evictions_ = 0;
     };
 
-    // Native perspective rows overlap toward the canvas centre. Equal-depth
-    // sprites must be painted from the outside inward, on both sides of the row.
-    void SortTableScene(std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red = true);
+    inline void SortTableScene(std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red = true) {
+        SortTableScene(scene, artwork.geometry(), red);
+    }
 } // namespace tenhou

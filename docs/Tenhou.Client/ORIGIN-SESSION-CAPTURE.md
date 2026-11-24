@@ -57,7 +57,7 @@ $frame = Get-Content -Encoding utf8 -LiteralPath .\build\origin-capture\capture-
 
 ## 验证记录
 
-- Python 套件共 19 项通过。采集测试覆盖来源过滤、启停、脱敏模式、原始模式的发送短写和超过 64 KiB 的合成帧，以及原始记录的审阅和带标记裁剪。
-- 原版实窗使用同一指纹的 EXE 和隔离的 `NoName` 配置接入本机回环。原始模式按字节对照了双向 `HELO` 和分两次送达的 `LN`，验证额外属性、裸 `&`、百分号编码、高位字节和末尾 NUL。两种模式都通过了暂停及裁剪检查。官方注册账号的非空资料回包仍待用原始模式采集。
+- Python 采集测试套件（`python -B -m unittest discover -s scripts/tests -v`）共 6 项通过，覆盖来源过滤、子进程门控拉起、启停、脱敏模式、原始模式的发送短写和超过 64 KiB 的合成帧，以及原始记录的审阅、解码与带标记裁剪。
+- 原版实窗使用同一指纹的 EXE 和隔离的 `NoName` 配置接入本机回环。原始模式按字节对照了双向 `HELO` 和分两次送达的 `LN`，验证额外属性、裸 `&`、百分号编码、高位字节和末尾 NUL。两种模式都通过了暂停及裁剪检查。
 
-已有原版样本见[第 3 阶段官方会话](ORIGIN-STAGE3.md)、[第 4 阶段东天红](ORIGIN-STAGE4.md)和[四麻东南牌局](ORIGIN-RIICHI-SESSION.md)。
+已归档的原版原始会话样本与勾选清单见[重建对局细节](ORIGIN.md)及 `docs/Tenhou.Client.Origin/origin-capture/`（自动化回归由 `client_official_captures` 执行）。

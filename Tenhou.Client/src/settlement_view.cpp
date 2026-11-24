@@ -20,8 +20,8 @@ namespace tenhou {
         wc.lpfnWndProc = Procedure;
         wc.lpszClassName = L"TENHOU_REBUILD_SETTLEMENT";
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) throw std::runtime_error(
-            "Cannot register settlement view");
+        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+            throw std::runtime_error("Cannot register settlement view");
         font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"MS UI Gothic");
         window_ = CreateWindowExW(WS_EX_CONTROLPARENT, wc.lpszClassName, L"Settlement", WS_CHILD | WS_CLIPCHILDREN,
@@ -30,21 +30,21 @@ namespace tenhou {
         choices_ = CreateWindowExW(0, L"COMBOBOX", L"",
                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
                                    0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5401), wc.hInstance, nullptr);
-        details_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE |
-                                                                   ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL, 0, 0, 1,
-                                   1, window_, reinterpret_cast<HMENU>(5402), wc.hInstance, nullptr);
+        details_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_READONLY | WS_VSCROLL | ES_AUTOVSCROLL,
+                                   0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5402), wc.hInstance, nullptr);
         if (!choices_ || !details_) throw std::runtime_error("Cannot create settlement controls");
-        for (HWND control: {choices_, details_}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_),
-                                                              FALSE);
+        for (HWND control: {choices_, details_})
+            SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         SendMessageW(details_, EM_LIMITTEXT, 65536, 0);
         ok_ = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                               0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5404), wc.hInstance, nullptr);
         if (!ok_) throw std::runtime_error("Cannot create settlement confirmation");
         SendMessageW(ok_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         previous_patterns_ = CreateWindowExW(0, L"BUTTON", L"上一页", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
-            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5405), wc.hInstance, nullptr);
+                                             0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5405), wc.hInstance, nullptr);
         next_patterns_ = CreateWindowExW(0, L"BUTTON", L"下一页", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
-            0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5406), wc.hInstance, nullptr);
+                                         0, 0, 1, 1, window_, reinterpret_cast<HMENU>(5406), wc.hInstance, nullptr);
         if (!previous_patterns_ || !next_patterns_) throw std::runtime_error("Cannot create pattern paging controls");
         for (HWND control: {previous_patterns_, next_patterns_})
             SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
@@ -55,17 +55,53 @@ namespace tenhou {
         if (font_) DeleteObject(font_);
     }
 
+    void SettlementView::ApplyEffects(const SettlementEffects &effects) {
+        if (effects.stop_sound && stop_sound_) stop_sound_();
+        for (unsigned id: effects.sounds)
+            if (play_sound_) play_sound_(id);
+        if (effects.presentation_timer_ms.has_value()) {
+            KillTimer(window_, 1);
+            if (*effects.presentation_timer_ms > 0 &&
+                !SetTimer(window_, 1, *effects.presentation_timer_ms, nullptr)) {
+                ApplyEffects(sequencer_.CancelPresentation(GetTickCount64()));
+                return;
+            }
+        }
+        if (effects.confirm_timer_ms.has_value()) {
+            KillTimer(window_, 2);
+            if (*effects.confirm_timer_ms > 0) SetTimer(window_, 2, *effects.confirm_timer_ms, nullptr);
+        }
+        if (choices_ && sequencer_.ChoiceCount() > 0) {
+            const auto current = SendMessageW(choices_, CB_GETCURSEL, 0, 0);
+            if (current != static_cast<LRESULT>(sequencer_.selected()))
+                SendMessageW(choices_, CB_SETCURSEL, sequencer_.selected(), 0);
+        }
+        if (effects.dirty) {
+            if (details_) {
+                UpdateText();
+                Arrange();
+            }
+            InvalidateRect(window_, nullptr, FALSE);
+        }
+        if (effects.notify_bgm_changed) PostMessageW(GetParent(window_), WM_APP + 18, 0, 0);
+        if (effects.notify_presentation_done) PostMessageW(GetParent(window_), WM_APP + 16, 0, 0);
+        if (effects.confirm_finished && confirm_handler_) confirm_handler_();
+    }
+
     void SettlementView::SetSoundEnabled(bool enabled) {
-        sound_enabled_ = enabled;
-        if (!enabled && !animation_enabled_) CancelPresentation();
+        ApplyEffects(sequencer_.SetSoundEnabled(enabled, GetTickCount64()));
     }
 
     void SettlementView::SetAnimationEnabled(bool enabled) {
-        animation_enabled_ = enabled;
-        if (!enabled && !sound_enabled_) CancelPresentation();
-        UpdateText();
-        Arrange();
-        InvalidateRect(window_, nullptr, FALSE);
+        ApplyEffects(sequencer_.SetAnimationEnabled(enabled, GetTickCount64()));
+    }
+
+    void SettlementView::SetConfirmEnabled(bool enabled) {
+        ApplyEffects(sequencer_.SetConfirmEnabled(enabled, GetTickCount64()));
+    }
+
+    void SettlementView::SetContinuation(bool available) {
+        ApplyEffects(sequencer_.SetContinuation(available, GetTickCount64()));
     }
 
     void SettlementView::Configure(const std::filesystem::path &directory, int width) {
@@ -80,19 +116,15 @@ namespace tenhou {
     }
 
     void SettlementView::Show(bool visible) {
-        const bool opening = visible && !visible_, changed = visible != visible_;
-        visible_ = visible;
+        const bool opening = visible && !sequencer_.visible();
         if (!visible && peeking_) {
             peeking_ = false;
             if (GetCapture() == window_) ReleaseCapture();
         }
         ShowWindow(window_, visible ? SW_SHOW : SW_HIDE);
-        if (!visible) CancelPresentation();
-        else if (opening) {
-            Present();
-            SetFocus(ok_);
-        }
-        if (changed) Arrange();
+        const bool host_visible = visible && IsWindowVisible(window_) != FALSE;
+        ApplyEffects(sequencer_.SetVisible(visible, GetTickCount64(), host_visible));
+        if (opening && host_visible) SetFocus(ok_);
     }
 
     void SettlementView::Move(RECT r) {
@@ -112,233 +144,65 @@ namespace tenhou {
     }
 
     void SettlementView::Set(const SettlementState &s, const std::array<std::string, 4> &names, bool red) {
-        if (SettlementJson(state_) == SettlementJson(s) && state_.red_tiles == s.red_tiles && names_ == names && red_ ==
-            red) return;
-        const bool was_final = state_.has_final && selected_ == state_.receipts.size();
-        const bool new_round = s.receipts.size() < state_.receipts.size() || (
-                                   !s.receipts.empty() && !state_.receipts.empty() &&
-                                   (s.receipts[0].tag != state_.receipts[0].tag || s.receipts[0].base != state_.receipts
-                                    [0].base || s.receipts[0].hand != state_.receipts[0].hand));
-        state_ = s;
-        names_ = names;
-        red_ = red;
+        SettlementEffects effects;
+        if (!sequencer_.SetState(s, names, red, GetTickCount64(), effects)) return;
         artwork_.SetRedTiles(s.red_tiles);
-        if (new_round) selected_ = 0;
-        if (was_final && s.has_final) selected_ = s.receipts.size();
         SendMessageW(choices_, CB_RESETCONTENT, 0, 0);
         for (const auto &r: s.receipts) {
             const auto text = Wide(SettlementLabel(r));
             SendMessageW(choices_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
         }
-        if (s.has_final) SendMessageW(choices_, CB_ADDSTRING, 0,
-                                      reinterpret_cast<LPARAM>(L"Match results | supplied scores / points"));
-        const auto count = s.receipts.size() + (s.has_final ? 1 : 0);
-        selected_ = count ? std::min(selected_, count - 1) : 0;
-        SendMessageW(choices_, CB_SETCURSEL, selected_, 0);
-        Select();
+        if (s.has_final)
+            SendMessageW(choices_, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(L"Match results | supplied scores / points"));
+        SendMessageW(choices_, CB_SETCURSEL, sequencer_.selected(), 0);
+        ApplyEffects(effects);
     }
 
     void SettlementView::SetRoundFinished(bool finished) {
-        if (finished && !round_finished_ && !state_.receipts.empty() && state_.receipts.front().generic) {
-            SendMessageW(choices_, CB_SETCURSEL, 0, 0);
-            Select();
-        }
-        round_finished_ = finished;
-        Arrange();
+        ApplyEffects(sequencer_.SetRoundFinished(finished, GetTickCount64()));
     }
 
     void SettlementView::Select() {
-        pattern_page_ = 0;
-        CancelPresentation();
         const auto selected = SendMessageW(choices_, CB_GETCURSEL, 0, 0);
-        if (selected >= 0) selected_ = static_cast<std::size_t>(selected);
-        UpdateText();
-        Arrange();
-        InvalidateRect(window_, nullptr, FALSE);
-        PostMessageW(GetParent(window_), WM_APP + 18, 0, 0);
+        const std::size_t index = selected >= 0 ? static_cast<std::size_t>(selected) : sequencer_.selected();
+        ApplyEffects(sequencer_.SelectReceipt(index, GetTickCount64()));
     }
 
     void SettlementView::UpdateText() {
-        auto displayed = state_;
-        for (auto &receipt: displayed.receipts) receipt.yaku = SettlementDisplayYaku(receipt);
-        const bool animate = animation_enabled_ && resource_error_.empty();
-        if (animate && selected_ < displayed.receipts.size()) {
-            auto &receipt = displayed.receipts[selected_];
-            if (shown_yaku_ < receipt.yaku.size()) receipt.yaku.resize(shown_yaku_);
-            if (receipt.generic && shown_yaku_ < receipt.entries.size()) receipt.entries.resize(shown_yaku_);
-            if (shown_yaku_ < receipt.yakuman.size()) receipt.yakuman.resize(shown_yaku_);
-            if (UraPending()) receipt.ura.clear();
-            if (receipt.who < 0 && shown_tiles_ != static_cast<std::size_t>(-1)) {
-                std::size_t visible = shown_tiles_ > PreviewTiles() ? shown_tiles_ - PreviewTiles() : 0;
-                for (int i = 0; i < 4; ++i)
-                    if (receipt.has_revealed[i]) {
-                        const auto count = std::min(visible, receipt.revealed[i].size());
-                        visible -= count;
-                        receipt.revealed[i].resize(count);
-                        if (!count) receipt.has_revealed[i] = false;
-                    }
-            }
-        }
-        auto text = SettlementText(displayed, selected_, names_, red_, !animate || Complete());
-        if (animate && UraPending()) {
-            const auto at = text.find("Ura indicators: not supplied");
-            if (at != std::string::npos) text.replace(at, 28, "Ura indicators: awaiting reveal");
-        }
-        if (!resource_error_.empty()) text = "Tile artwork unavailable; text remains complete.\r\n" + text;
+        const auto text = sequencer_.FormatDetailsText(resource_error_.empty());
         SetWindowTextW(details_, Wide(text).c_str());
     }
 
-    std::size_t SettlementView::PreviewTiles() const {
-        return 0; // Draw hands are resolved on the table before this popup.
-    }
-
-    std::size_t SettlementView::YakuCount() const {
-        if (selected_ >= state_.receipts.size()) return 0;
-        const auto &r = state_.receipts[selected_];
-        if (r.generic) return r.entries.size();
-        return r.yakuman.empty() ? SettlementDisplayYaku(r).size() : r.yakuman.size();
-    }
-
-    bool SettlementView::UraPending() const {
-        return !ura_revealed_ && selected_ < state_.receipts.size() && !state_.receipts[selected_].ura.empty();
-    }
-
-    bool SettlementView::Complete() const {
-        return totals_revealed_ && shown_yaku_ >= YakuCount() && shown_tiles_ >= PreviewTiles() * 2 && !UraPending();
-    }
-
-    void SettlementView::ArmPresentationTimer() {
-        KillTimer(window_, 1);
-        if (Complete() || selected_ >= state_.receipts.size()) return;
-        const auto &r = state_.receipts[selected_];
-        // Keep native timer CALLBACK counts. A 10ms Win32 timer is commonly
-        // delivered every ~15.6ms; replacing 55 callbacks with 550ms speeds it up.
-        const unsigned delay = r.who < 0 ? 80 : 10;
-        if (!SetTimer(window_, 1, delay, nullptr)) CancelPresentation();
-    }
-
     void SettlementView::CancelPresentation() {
-        KillTimer(window_, 1);
-        KillTimer(window_, 2);
-        confirm_deadline_ = 0;
-        confirm_seconds_ = -1;
-        confirm_ready_ = false;
-        presentation_frames_ = 0;
-        yaku_entrance_frame_ = 10;
-        totals_revealed_ = true;
-        ura_pause_done_ = false;
-        if ((shown_yaku_ != static_cast<std::size_t>(-1) || shown_tiles_ != static_cast<std::size_t>(-1)) &&
-            stop_sound_) stop_sound_();
-        shown_yaku_ = shown_tiles_ = static_cast<std::size_t>(-1);
-        ura_revealed_ = true;
-        if (details_) {
-            UpdateText();
-            Arrange();
-        }
+        ApplyEffects(sequencer_.CancelPresentation(GetTickCount64()));
     }
 
     void SettlementView::Present() {
-        CancelPresentation();
-        if (!visible_ || !IsWindowVisible(window_)) return;
-        confirm_ready_ = true;
-        if (FinalPage()) {
-            // Origin tenhou.exe.c:115556-115560 plays SE_GAMEEND (0x73/115) and switches to BGM_GAME9.
-            if (sound_enabled_ && play_sound_) play_sound_(115);
-            PostMessageW(GetParent(window_), WM_APP + 18, 0, 0);
-            Arrange();
-            return;
-        }
-        if ((!animation_enabled_ && !sound_enabled_) || selected_ >= state_.receipts.size()) {
-            Arrange();
-            return;
-        }
-        const auto &r = state_.receipts[selected_];
-        if (r.who < 0) {
-            Arrange();
-            return;
-        }
-        shown_yaku_ = 0;
-        presentation_frames_ = 30;
-        totals_revealed_ = r.who < 0;
-        ura_revealed_ = r.ura.empty();
-        shown_tiles_ = r.who < 0 ? 0 : static_cast<std::size_t>(-1);
-        if (sound_enabled_ &&r.who >= 0 && r.yakuman.empty() && play_sound_) play_sound_(101);
-        UpdateText();
-        Arrange();
-        InvalidateRect(window_, nullptr, FALSE);
-        ArmPresentationTimer();
+        ApplyEffects(sequencer_.Present(GetTickCount64(), IsWindowVisible(window_) != FALSE));
     }
 
     void SettlementView::PresentationTick() {
-        if (!visible_ || !IsWindowVisible(window_) || selected_ >= state_.receipts.size()) {
-            CancelPresentation();
-            return;
-        }
-        const auto &r = state_.receipts[selected_];
-        if (yaku_entrance_frame_ < 10) {
-            ++yaku_entrance_frame_;
-            if (animation_enabled_) InvalidateRect(window_, nullptr, FALSE);
-        }
-        if (r.who >= 0 && presentation_frames_) {
-            if (--presentation_frames_) return;
-        }
-        const auto yaku = SettlementDisplayYaku(r);
-        const bool next_ura = r.yakuman.empty() && shown_yaku_ && shown_yaku_ < yaku.size() && yaku[shown_yaku_].id ==
-                              53;
-        if (next_ura && !ura_pause_done_) {
-            // Native frame 54, 004ad739: an additional 1200ms before ura frame 0.
-            ura_pause_done_ = true;
-            SetTimer(window_, 1, 1200, nullptr);
-            return;
-        }
-        if (shown_yaku_ < YakuCount()) {
-            if (r.generic) {
-                ++shown_yaku_;
-                if (animation_enabled_) pattern_page_ = (shown_yaku_ - 1) / kSettlementPatternsPerPage;
-                if (sound_enabled_ && play_sound_) play_sound_(109);
-            } else {
-                if (r.yakuman.empty() && yaku[shown_yaku_].id == 53) ura_revealed_ = true;
-                ++shown_yaku_;
-                yaku_entrance_frame_ = 0;
-                if (shown_yaku_ == 1 && !r.yakuman.empty() && sound_enabled_ && play_sound_) play_sound_(111);
-                if (sound_enabled_ && play_sound_) play_sound_(109);
-            }
-            ura_pause_done_ = false;
-            if (shown_yaku_ >= YakuCount()) presentation_frames_ = 12;
-            else presentation_frames_ = !r.generic && r.yakuman.empty() && yaku[shown_yaku_].id == 53 ? 54 : 55;
-        } else if (UraPending()) {
-            // Even zero-hit ura indicators must turn face up after a riichi win.
-            ura_revealed_ = true;
-            if (sound_enabled_ && play_sound_) play_sound_(104);
-        } else totals_revealed_ = true;
-        if (shown_tiles_ < PreviewTiles() * 2) {
-            ++shown_tiles_;
-            if (sound_enabled_ && play_sound_) play_sound_(104);
-        }
-        UpdateText();
-        Arrange();
-        InvalidateRect(window_, nullptr, FALSE);
-        ArmPresentationTimer();
-        if (Complete()) PostMessageW(GetParent(window_), WM_APP + 16, 0, 0);
+        ApplyEffects(sequencer_.PresentationTick(GetTickCount64(), IsWindowVisible(window_) != FALSE));
     }
 
     void SettlementView::SetContext(int dealer, int honba, int sticks) {
-        if (dealer_ == dealer && honba_ == honba && sticks_ == sticks) return;
-        dealer_ = dealer;
-        honba_ = honba;
-        sticks_ = sticks;
-        InvalidateRect(window_, nullptr, FALSE);
+        bool changed = false;
+        sequencer_.SetContext(dealer, honba, sticks, changed);
+        if (changed) InvalidateRect(window_, nullptr, FALSE);
     }
 
     SettlementLayout SettlementView::Layout() {
+        const auto params = sequencer_.SceneParameters();
         SettlementLayout layout;
         layout.width = canvas_;
-        layout.dealer = dealer_;
-        layout.honba = honba_;
-        layout.sticks = sticks_;
-        layout.pattern_page = pattern_page_;
+        layout.dealer = params.dealer;
+        layout.honba = params.honba;
+        layout.sticks = params.sticks;
+        layout.pattern_page = params.pattern_page;
+        layout.yaku_entrance = params.yaku_entrance;
         layout.tile_bounds = [this](const TableTile &tile) {
-            const auto &item = artwork_.Get(tile, red_);
+            const auto &item = artwork_.Get(tile, sequencer_.red());
             return RECT{item.x, item.y, item.x + item.image.width, item.y + item.image.height};
         };
         layout.text_width = DisplayArtwork::MeasureText;
@@ -349,8 +213,7 @@ namespace tenhou {
     RECT SettlementView::Target() const {
         RECT r{};
         GetClientRect(window_, &r);
-        // Details are an explicit inspection mode; normal results use the whole table.
-        if (text_details_ || !resource_error_.empty()) r.bottom = std::max(100L, r.bottom / 2);
+        if (!resource_error_.empty()) r.bottom = std::max(100L, r.bottom / 2);
         return FitNativeCanvas(r, canvas_);
     }
 
@@ -363,90 +226,53 @@ namespace tenhou {
         ShowWindow(ok_, SW_SHOW);
         RECT r{};
         GetClientRect(window_, &r);
-        const bool details = text_details_ || !resource_error_.empty();
-        const bool multiple = state_.receipts.size() + (state_.has_final ? 1 : 0) > 1;
+        const bool details = !resource_error_.empty();
+        const bool multiple = sequencer_.ChoiceCount() > 1;
         MoveWindow(choices_, 8, 4, std::max(50L, r.right - 160), 220, TRUE);
         ShowWindow(choices_, multiple || details ? SW_SHOW : SW_HIDE);
         const auto target = Target();
         const double unit = canvas_ == 1440 ? 1.4 : 1.0, fit = double(target.right - target.left) / canvas_;
         const int center = target.left + (target.right - target.left) / 2;
-        const auto confirm = SettlementConfirmRect(state_, selected_, canvas_);
+        const auto confirm = SettlementConfirmRect(sequencer_.state(), sequencer_.selected(), canvas_);
         const int x = target.left + static_cast<int>(confirm.left * fit),
                   y = target.top + static_cast<int>(confirm.top * fit);
-        // Same native rectangle as SettlementScene::confirm, including centering.
-        const int w = std::max(38, static_cast<int>(56 * unit * fit)), h = std::max(
-            18, static_cast<int>(21 * unit * fit));
+        const int w = std::max(38, static_cast<int>(56 * unit * fit)),
+                  h = std::max(18, static_cast<int>(21 * unit * fit));
         const int bottom = std::min(static_cast<int>(r.bottom) - h - 3, y);
-        const auto pages = selected_ < state_.receipts.size() ? SettlementPatternPages(state_.receipts[selected_]) : 1;
+        const auto pages = sequencer_.CurrentPatternPages();
         const int page_y = target.top + static_cast<int>((canvas_ * 3 / 8.0 + 45 * unit) * fit);
         for (HWND child: {previous_patterns_, next_patterns_}) ShowWindow(child, pages > 1 ? SW_SHOW : SW_HIDE);
         MoveWindow(previous_patterns_, center - static_cast<int>(160 * unit * fit), page_y,
-            std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
+                   std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
         MoveWindow(next_patterns_, center + static_cast<int>(80 * unit * fit), page_y,
-            std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
-        EnableWindow(previous_patterns_, !Animating() && pattern_page_ > 0);
-        EnableWindow(next_patterns_, !Animating() && pattern_page_ + 1 < pages);
+                   std::max(50, static_cast<int>(80 * unit * fit)), h, TRUE);
+        EnableWindow(previous_patterns_, !Animating() && sequencer_.pattern_page() > 0);
+        EnableWindow(next_patterns_, !Animating() && sequencer_.pattern_page() + 1 < pages);
         MoveWindow(ok_, x, bottom, w, h, TRUE);
-        EnableWindow(ok_, confirm_enabled_ && !Animating());
-        const bool next = (continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
-            selected_ + 1 == state_.receipts.size()) ||
-            (round_finished_ && selected_ < state_.receipts.size() && state_.receipts[selected_].generic);
-        const bool enter_final = state_.has_final && selected_ + 1 == state_.receipts.size();
-        SetWindowTextW(ok_, enter_final ? L"END" : L"OK");
-        const bool countdown = next && visible_ && confirm_ready_ && confirm_enabled_ && !Animating();
-        if (!countdown) {
-            KillTimer(window_, 2);
-            confirm_deadline_ = 0;
-            confirm_seconds_ = -1;
-        }
-        if (countdown && confirm_seconds_ < 0) {
-            confirm_seconds_ = 5;
-            confirm_deadline_ = GetTickCount64() + 5000;
-            SetTimer(window_, 2, 100, nullptr);
-            if (sound_enabled_ && play_sound_) play_sound_(102);
-        }
+        EnableWindow(ok_, sequencer_.confirm_enabled() && !Animating());
+        SetWindowTextW(ok_, sequencer_.EnterFinalLabel() ? L"END" : L"OK");
         const int text_top = std::max(65L, r.bottom / 2);
         MoveWindow(details_, 8, text_top, std::max(50L, r.right - 16), std::max(30L, r.bottom - text_top - 8), TRUE);
         ShowWindow(details_, details ? SW_SHOW : SW_HIDE);
     }
 
     void SettlementView::Confirm() {
-        if (!visible_ || Animating() || !confirm_enabled_ || !IsWindowEnabled(ok_)) return;
-        if (selected_ < state_.receipts.size() && pattern_page_ + 1 < SettlementPatternPages(state_.receipts[selected_])) {
-            ChangePatternPage(1); return;
-        }
-        KillTimer(window_, 2);
-        confirm_deadline_ = 0;
-        InvalidateRect(window_, nullptr, FALSE);
-        const auto count = state_.receipts.size() + (state_.has_final ? 1 : 0);
-        if (selected_ + 1 < count) {
-            SendMessageW(choices_, CB_SETCURSEL, ++selected_, 0);
-            Select();
-            Present();
-            SetFocus(ok_);
-        } else if (confirm_handler_) confirm_handler_();
+        if (!sequencer_.visible() || Animating() || !sequencer_.confirm_enabled() || !IsWindowEnabled(ok_)) return;
+        const auto before = sequencer_.selected();
+        ApplyEffects(sequencer_.Confirm(GetTickCount64(), IsWindowVisible(window_) != FALSE));
+        if (sequencer_.selected() != before && IsWindowVisible(window_)) SetFocus(ok_);
     }
 
     void SettlementView::ConfirmTick() {
-        if (!visible_ || !confirm_deadline_) return;
-        const auto now = GetTickCount64();
-        const int seconds = now >= confirm_deadline_ ? 0 : static_cast<int>((confirm_deadline_ - now + 999) / 1000);
-        if (!seconds) {
-            KillTimer(window_, 2);
-            confirm_deadline_ = 0;
-            Confirm();
-            return;
-        }
-        if (seconds != confirm_seconds_) {
-            confirm_seconds_ = seconds;
-            InvalidateRect(window_, nullptr, FALSE);
-            if (sound_enabled_ && play_sound_) play_sound_(102);
-        }
+        ApplyEffects(sequencer_.ConfirmTick(GetTickCount64()));
     }
 
     bool SettlementView::HandleKey(UINT key) {
-        if (!visible_ || !IsWindowVisible(window_)) return false;
-        if (key == VK_NEXT || key == VK_PRIOR) { ChangePatternPage(key == VK_NEXT ? 1 : -1); return true; }
+        if (!sequencer_.visible() || !IsWindowVisible(window_)) return false;
+        if (key == VK_NEXT || key == VK_PRIOR) {
+            ChangePatternPage(key == VK_NEXT ? 1 : -1);
+            return true;
+        }
         if (key == VK_RETURN && (GetFocus() == ok_ || GetFocus() == window_)) {
             Confirm();
             return true;
@@ -455,28 +281,22 @@ namespace tenhou {
     }
 
     void SettlementView::ChangePatternPage(int step) {
-        if (Animating() || selected_ >= state_.receipts.size()) return;
-        const int pages = static_cast<int>(SettlementPatternPages(state_.receipts[selected_]));
-        const int page = std::clamp(static_cast<int>(pattern_page_) + step, 0, pages - 1);
-        if (page == static_cast<int>(pattern_page_)) return;
-        pattern_page_ = static_cast<std::size_t>(page);
-        KillTimer(window_, 2); confirm_deadline_ = 0; confirm_seconds_ = -1;
-        Arrange(); InvalidateRect(window_, nullptr, FALSE);
+        ApplyEffects(sequencer_.ChangePatternPage(step, GetTickCount64()));
     }
 
     void SettlementView::Menu(POINT point) {
         const auto menu = CreatePopupMenu();
-        for (std::size_t i = 0; i < state_.receipts.size() + (state_.has_final ? 1 : 0); ++i) {
-            const auto label = i < state_.receipts.size() ? Wide(SettlementLabel(state_.receipts[i])) : L"最终成绩";
-            AppendMenuW(menu, MF_STRING | (i == selected_ ? MF_CHECKED : 0), static_cast<UINT_PTR>(10 + i),
+        const auto &state = sequencer_.state();
+        for (std::size_t i = 0; i < sequencer_.ChoiceCount(); ++i) {
+            const auto label = i < state.receipts.size() ? Wide(SettlementLabel(state.receipts[i])) : L"最终成绩";
+            AppendMenuW(menu, MF_STRING | (i == sequencer_.selected() ? MF_CHECKED : 0), static_cast<UINT_PTR>(10 + i),
                         label.c_str());
         }
         if (point.x == -1 && point.y == -1) {
             point = {20, 20};
             ClientToScreen(window_, &point);
         }
-        const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0, window_,
-                                            nullptr);
+        const auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, 0, window_, nullptr);
         DestroyMenu(menu);
         if (command >= 10) {
             SendMessageW(choices_, CB_SETCURSEL, command - 10, 0);
@@ -496,15 +316,13 @@ namespace tenhou {
             if (background_painter_) background_painter_(dc, bounds);
             if (peeking_) return;
             if (!artwork_.width()) artwork_.Load(directory_, canvas_);
-            artwork_.SetRedTiles(state_.red_tiles);
-            const auto all = static_cast<std::size_t>(-1);
+            const auto &state = sequencer_.state();
+            artwork_.SetRedTiles(state.red_tiles);
+            const auto params = sequencer_.SceneParameters();
             auto layout = Layout();
-            layout.yaku_entrance = yaku_entrance_frame_ / 10.0;
-            const bool win = selected_ < state_.receipts.size();
-            const auto scene = BuildSettlementScene(state_, selected_, names_, animation_enabled_ ? shown_yaku_ : all,
-                                                    animation_enabled_ ? shown_tiles_ : all,
-                                                    !animation_enabled_ || !UraPending(),
-                                                    !animation_enabled_ || Complete(), layout);
+            const bool win = params.selected < state.receipts.size();
+            const auto scene = BuildSettlementScene(state, params.selected, sequencer_.names(), params.shown_yaku,
+                                                    params.shown_tiles, params.show_ura, params.show_totals, layout);
             const auto target = Target();
             const float scale = static_cast<float>(target.right - target.left) / scene.width;
             Gdiplus::Graphics graphics(dc);
@@ -533,7 +351,7 @@ namespace tenhou {
                 const auto &item = scene.tiles[index];
                 auto command = item.tile;
                 if (command.tile < 0 && command.family == 'k') command.family = 'n';
-                const auto &im = artwork_.Get(command, red_).image;
+                const auto &im = artwork_.Get(command, sequencer_.red()).image;
                 Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
                                        const_cast<BYTE *>(im.bgra.data()));
                 const auto saved = graphics.Save();
@@ -544,8 +362,10 @@ namespace tenhou {
                     graphics.RotateTransform(-90);
                     status = graphics.DrawImage(&bitmap, 0, 0, item.rect.bottom - item.rect.top,
                                                 item.rect.right - item.rect.left);
-                } else status = graphics.DrawImage(&bitmap, item.rect.left, item.rect.top,
-                                                   item.rect.right - item.rect.left, item.rect.bottom - item.rect.top);
+                } else {
+                    status = graphics.DrawImage(&bitmap, item.rect.left, item.rect.top,
+                                                item.rect.right - item.rect.left, item.rect.bottom - item.rect.top);
+                }
                 graphics.Restore(saved);
                 if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement tile");
             }
@@ -591,8 +411,6 @@ namespace tenhou {
                     graphics.TranslateTransform(-center_x, -center_y);
                 }
                 if (item.original_font) {
-                    // FUN_004b3360 uses zero-width point anchors. A clipped layout
-                    // rectangle adds GDI+ padding and truncates even measured scores.
                     format.SetTrimming(Gdiplus::StringTrimmingNone);
                     format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsNoClip);
                     const float x = item.align == 1
@@ -601,32 +419,33 @@ namespace tenhou {
                                               ? rect.X + rect.Width
                                               : rect.X;
                     status = graphics.DrawString(value.c_str(), -1, &font, Gdiplus::PointF(x, rect.Y), &format, &ink);
-                } else status = graphics.DrawString(value.c_str(), -1, &font, rect, &format, &ink);
+                } else {
+                    status = graphics.DrawString(value.c_str(), -1, &font, rect, &format, &ink);
+                }
                 graphics.Restore(saved);
                 if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement text");
             }
             graphics.ResetTransform();
             graphics.SetPageUnit(Gdiplus::UnitPixel);
             const bool sd = scene.width == 1024;
-            const auto context = TextRenderContext::Viewport(scene.width, scene.height,
+            const auto context = TextRenderContext::Viewport(
+                scene.width, scene.height,
                 Gdiplus::RectF(static_cast<float>(target.left), static_cast<float>(target.top),
-                               static_cast<float>(target.right - target.left), static_cast<float>(target.bottom - target.top)),
+                               static_cast<float>(target.right - target.left),
+                               static_cast<float>(target.bottom - target.top)),
                 sd, GetDpiForWindow(window_));
             for (const auto &item: scene.text) {
                 if (!item.visible || item.spans.empty()) continue;
                 auto &renderer = display_artwork_.Text();
                 for (const auto &run: LayoutSettlementText(renderer, item, sd)) renderer.Draw(graphics, context, run);
             }
-            if (confirm_deadline_ &&confirm_seconds_>0)
-            {
-                // Draw with the parent frame so repeated paints cannot accumulate
-                // ClearType edges from a transparent child window.
+            if (sequencer_.confirm_deadline() && sequencer_.confirm_seconds() > 0) {
                 RECT button{};
                 GetWindowRect(ok_, &button);
                 MapWindowPoints(nullptr, window_, reinterpret_cast<POINT *>(&button), 2);
                 Gdiplus::Font font(L"Arial", 9, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
                 Gdiplus::SolidBrush ink(Gdiplus::Color(255, 255, 255, 255));
-                const auto value = std::to_wstring(confirm_seconds_);
+                const auto value = std::to_wstring(sequencer_.confirm_seconds());
                 graphics.DrawString(value.c_str(), -1, &font,
                                     Gdiplus::PointF(static_cast<float>(button.right + 3),
                                                     static_cast<float>(button.top)), &ink);
@@ -660,7 +479,7 @@ namespace tenhou {
 
     void SettlementView::Peek(bool down) {
         if (down && !peek_enabled_) return;
-        if (peeking_ == down || !visible_) return;
+        if (peeking_ == down || !sequencer_.visible()) return;
         peeking_ = down;
         if (down) {
             peek_focus_ = GetFocus();
@@ -672,7 +491,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         auto *self = reinterpret_cast<SettlementView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<SettlementView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -688,7 +507,7 @@ LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wpa
                 self->Peek(false);
                 return 0;
             }
-            if (message == WM_ERASEBKGND) return 1; // Paint supplies the complete background.
+            if (message == WM_ERASEBKGND) return 1;
             if (message == WM_SIZE) {
                 self->Arrange();
                 return 0;
@@ -703,14 +522,15 @@ LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wpa
                 return 0;
             }
             if (message == WM_COMMAND && (LOWORD(wparam) == 5405 || LOWORD(wparam) == 5406)) {
-                self->ChangePatternPage(LOWORD(wparam) == 5405 ? -1 : 1); return 0;
+                self->ChangePatternPage(LOWORD(wparam) == 5405 ? -1 : 1);
+                return 0;
             }
             if (message == WM_COMMAND && LOWORD(wparam) == 5401 && HIWORD(wparam) == CBN_SELCHANGE) {
                 self->Select();
                 self->Present();
                 return 0;
             }
-            if (message == WM_TIMER && self->paused_at_) return 0;
+            if (message == WM_TIMER && self->sequencer_.paused()) return 0;
             if (message == WM_TIMER && wparam == 1) {
                 self->PresentationTick();
                 return 0;
@@ -720,9 +540,9 @@ LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wpa
                 return 0;
             }
             if (message == WM_PAINT) {
-                try { self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc); }); } catch (const std::exception
-                    &) {
-                    /* Keep the last complete frame if buffering fails. */
+                try {
+                    self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc); });
+                } catch (const std::exception &) {
                 }
                 return 0;
             }

@@ -7,9 +7,6 @@
 #include <sstream>
 
 namespace tenhou {
-    std::size_t SettlementPatternPages(const SettlementReceipt &receipt) {
-        return receipt.generic ? std::max<std::size_t>(1, (receipt.entries.size() + kSettlementPatternsPerPage - 1) / kSettlementPatternsPerPage) : 1;
-    }
     namespace {
         std::string Number(double n, bool sign = false) {
             std::ostringstream s;

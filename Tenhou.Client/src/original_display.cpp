@@ -164,12 +164,8 @@ namespace tenhou {
     }
 
     RECT FitNativeCanvas(RECT bounds, int width) {
-        const int aw = std::max(1L, bounds.right - bounds.left), ah = std::max(1L, bounds.bottom - bounds.top);
-        const double scale = std::min(double(aw) / width, double(ah) / (width * 3 / 4));
-        const int w = std::max(1, static_cast<int>(width * scale)), h = std::max(
-            1, static_cast<int>(width * 3 / 4 * scale));
-        const int x = bounds.left + (aw - w) / 2, y = bounds.top + (ah - h) / 2;
-        return {x, y, x + w, y + h};
+        const auto fitted = FitNativeCanvasBounds({bounds.left, bounds.top, bounds.right, bounds.bottom}, width);
+        return {fitted.left, fitted.top, fitted.right, fitted.bottom};
     }
 
     void DisplayArtwork::Configure(const std::filesystem::path &directory, int width) {

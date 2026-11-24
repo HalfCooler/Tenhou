@@ -12,7 +12,7 @@ add_executable(tenhou_text_catalog_check "${client_checks_directory}/text_catalo
 target_link_libraries(tenhou_text_catalog_check PRIVATE tenhou_table tenhou_network)
 add_executable(tenhou_protocol_check "${client_checks_directory}/client_protocol_check.cpp")
 target_link_libraries(tenhou_protocol_check PRIVATE tenhou_network)
-add_executable(tenhou_variant_ui_check "${client_checks_directory}/variant_ui_check.cpp" src/variant_table_view.cpp
+add_executable(tenhou_variant_ui_check "${client_checks_directory}/variant_ui_check.cpp"
     src/online_table.cpp src/background.cpp src/settlement_view.cpp "${asset_generated_directory}/client_assets.rc")
 target_link_libraries(tenhou_variant_ui_check PRIVATE tenhou_network tenhou_table gdi32)
 add_dependencies(tenhou_variant_ui_check tenhou_assets)
@@ -40,8 +40,14 @@ target_compile_options(tenhou_offline_lobby_check PRIVATE /W4 /WX /utf-8 /EHsc)
 add_executable(tenhou_official_capture_check "${client_checks_directory}/official_capture_check.cpp")
 target_link_libraries(tenhou_official_capture_check PRIVATE tenhou_network tenhou_table)
 target_compile_options(tenhou_official_capture_check PRIVATE /W4 /WX /utf-8 /EHsc)
-add_custom_target(tenhou_client_checks DEPENDS tenhou_text_composition_check tenhou_text_samples tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check tenhou_offline_lobby_check tenhou_official_capture_check)
+add_executable(tenhou_presenter_check "${client_checks_directory}/presenter_check.cpp"
+    "${asset_generated_directory}/client_assets.rc")
+target_link_libraries(tenhou_presenter_check PRIVATE tenhou_presenter)
+target_compile_options(tenhou_presenter_check PRIVATE /W4 /WX /utf-8 /EHsc)
+add_dependencies(tenhou_presenter_check tenhou_assets)
+add_custom_target(tenhou_client_checks DEPENDS tenhou_text_composition_check tenhou_text_samples tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check tenhou_offline_lobby_check tenhou_official_capture_check tenhou_presenter_check)
 enable_testing()
+add_test(NAME client_presenter COMMAND tenhou_presenter_check "${TENHOU_OUTPUT_DIRECTORY}/resources")
 add_test(NAME client_offline_lobby COMMAND tenhou_offline_lobby_check)
 add_test(NAME client_official_captures COMMAND tenhou_official_capture_check
     "${CMAKE_CURRENT_SOURCE_DIR}/../docs/Tenhou.Client.Origin/origin-capture")

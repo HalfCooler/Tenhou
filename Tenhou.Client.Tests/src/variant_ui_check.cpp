@@ -1,4 +1,4 @@
-#include "variant_table_view.hpp"
+#include "network_protocol.hpp"
 #include "online_table.hpp"
 #include "settlement_view.hpp"
 #include <objidl.h>
@@ -19,26 +19,12 @@ int main(int argc, char **argv) {
         }
         const auto &s = snapshot.variant_state;
         if (s.empty()) return 1;
-        snapshot.rules[s.at("rule")] = {s.at("rule"), s.at("title"), "mahjong-v1", {}};
-        snapshot.actions.enabled = true; snapshot.actions.revision = 1;
-        const auto &encoded = s.at("actions");
-        std::size_t start = 0;
-        while (start < encoded.size()) {
-            const auto end = encoded.find(';', start);
-            const auto choice = encoded.substr(start, end == std::string::npos ? end : end - start);
-            const auto colon = choice.find(':'); const auto kind = choice.substr(0, colon);
-            snapshot.actions.choices.push_back({kind, (kind == "exchange" ? "换三张 " : "打出 ") + choice.substr(colon + 1), {}, {}});
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
         HWND parent = CreateWindowExW(0, L"STATIC", L"Offscreen UI check", WS_OVERLAPPEDWINDOW,
             0, 0, 1200, 850, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         Gdiplus::GdiplusStartupInput gdiplus_input;
         ULONG_PTR gdiplus_token = 0;
         if (Gdiplus::GdiplusStartup(&gdiplus_token, &gdiplus_input, nullptr) != Gdiplus::Ok) throw std::runtime_error("Cannot start GDI+");
         {
-            tenhou::VariantTableView view(parent, [](std::uint64_t, std::size_t) {}, [] {}, [] {});
-            view.Move({0, 0, 1200, 850}); view.Set(snapshot); view.Show(true);
             BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = 1200;
             info.bmiHeader.biHeight = -850; info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32; info.bmiHeader.biCompression = BI_RGB;
             void *pixels = nullptr; HDC dc = CreateCompatibleDC(nullptr);

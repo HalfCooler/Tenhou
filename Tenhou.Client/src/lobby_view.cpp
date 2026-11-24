@@ -213,14 +213,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 client_->snapshot().lobby_revision, command, value);
             else client_->NativeRequest(command, value, settings);
         });
-        variant_ = std::make_unique<VariantTableView>(window_,
-            [this](std::uint64_t revision, std::size_t index) { client_->SubmitAction(revision, index); },
-            [this]() {
-                if (client_->snapshot().phase == LobbyPhase::Error || client_->snapshot().phase == LobbyPhase::Disconnected) {
-                    client_->Disconnect(); PostMessageW(window_, WM_APP + 25, 0, 0);
-                } else client_->SubmitLobby(client_->snapshot().lobby_revision, "return");
-            },
-            [this]() { client_->ExitGame(); });
         Update(Snapshot());
         Arrange();
     }
@@ -228,7 +220,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     LobbyView::~LobbyView() {
         lobby_music_.Stop();
         StopSound();
-        variant_.reset();
         service_lobby_.reset();
         matching_.reset();
         client_.reset();
@@ -347,7 +338,6 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         if (!matching_ || !client_) return;
         RECT r{};
         GetClientRect(window_, &r);
-        if (variant_) variant_->Show(false);
         const bool game = Snapshot().game.initialized;
         const auto &session = client_->snapshot();
         const bool service = service_lobby_ && session.origin_lobby.has_value();
@@ -518,7 +508,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     bool LobbyView::LocalTableInput() const {
-        if (!client_ || text_details_ || show_results_ || match_intro_->Active() || opening_.Active() || start_barrier_)
+        if (!client_ || show_results_ || match_intro_->Active() || opening_.Active() || start_barrier_)
             return false;
         const auto &s = Snapshot();
         return s.phase == LobbyPhase::Game && s.game.initialized && s.actions.enabled && s.actions.pending.empty() && !s.game.ended && !s.game.players[0].retired && !s.recovering
@@ -528,7 +518,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     bool LobbyView::AutomaticInput() const {
         // Original WC_ITEM_CHECK children have their own input path (004a9080),
         // independent of hand actions, animation and the local start barrier.
-        if (!client_ || text_details_ || show_results_) return false;
+        if (!client_ || show_results_) return false;
         const auto &s = Snapshot();
         return s.phase == LobbyPhase::Game && s.game.initialized && !s.recovering && !client_->snapshot().table_paused
                && !client_->snapshot().exit_pending;
@@ -1004,7 +994,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         UpdateActions();
         Arrange();
         if (incoming.recovering && !incoming.silent_recovery && (!incoming.native_service || resume_preparation_pending_) &&
-            incoming.game.started && original_display_ && !text_details_ && IsWindowVisible(window_)) {
+            incoming.game.started && original_display_ && IsWindowVisible(window_)) {
             const bool beginning = !match_intro_->Resuming();
             auto state = OnlineTableState(incoming.game);
             if (incoming.official && incoming.game.has_dealer) state.initialized = true;
@@ -1280,7 +1270,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             table_.Accept(snapshot.game, ReplayEvent{}, false);
             show_results_ = snapshot.game.ended;
             if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || EffectsEnabled())) {
-                table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
+                table_.BeginOpening(opening_, snapshot.game, original_display_);
                 if (!state.Sichuan() && !state.events.empty() && state.events.back().kind == "start")
                     for (int seat = 0; seat < 4; ++seat)
                         opening_flowers_[state.Relative(seat)] = !state.players[seat].flowers.empty();
@@ -1293,7 +1283,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             }
             if (new_hand && live && !snapshot.game.ended && match_intro_pending_) {
                 match_intro_pending_ = false;
-                if (original_display_ && !text_details_ && snapshot.actions.enabled) {
+                if (original_display_ && snapshot.actions.enabled) {
                     RECT area{}; GetClientRect(window_, &area);
                     match_intro_->Move(area);
                     match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type);
@@ -1328,7 +1318,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             snapshot.game.settlement.receipts.back().who < 0;
         if (draw_end) presentation.kind = ReplayEventKind::DrawEnd;
         try {
-            table_.Accept(snapshot.game, presentation, animation_enabled_ && !text_details_ && !draw_end && !state.Preparing());
+            table_.Accept(snapshot.game, presentation, animation_enabled_ && !draw_end && !state.Preparing());
             if (table_.Animating()) motion_timer_.Start(window_, 6, kTableTickMs);
         } catch (const std::exception &error) {
             table_.CancelAnimation(); motion_timer_.Stop();
@@ -1370,7 +1360,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
         if (snapshot.official && message.tag == "TAIKYOKU" && match_intro_pending_ && !snapshot.recovering) {
             match_intro_pending_ = false;
-            if (original_display_ && !text_details_ && IsWindowVisible(window_)) {
+            if (original_display_ && IsWindowVisible(window_)) {
                 auto state = OnlineTableState(snapshot.game);
                 state.initialized = true;
                 start_barrier_ = true;
@@ -1441,7 +1431,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         const bool replaced = table_.Animating();
         try {
             table_.Accept(snapshot.game, event,
-                          animation_enabled_ && !text_details_ && !show_results_ && !opening_.Active());
+                          animation_enabled_ && !show_results_ && !opening_.Active());
             if (table_.Animating()) {
                 log_("ONLINE ANIMATION BEGIN tag=" + event.tag + " replaced=" + std::to_string(replaced));
                 motion_timer_.Start(window_, 6, kTableTickMs);
@@ -1485,20 +1475,20 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 log_("ONLINE RESULT WAIT ms=" + std::to_string(delay) + " tick=" + std::to_string(GetTickCount64()));
             }
         }
-        const bool intro = event.kind == ReplayEventKind::Init && match_intro_pending_ && original_display_ && !
-                           text_details_ && snapshot.actions.enabled;
+        const bool intro = event.kind == ReplayEventKind::Init && match_intro_pending_ && original_display_ &&
+                           snapshot.actions.enabled;
         if (event.kind == ReplayEventKind::Init && (intro || start_barrier_))
             start_sound_pending_ = !ReplaySounds(event).empty();
         else if (event_sound_allowed_) PlayEventSound(event, snapshot);
         if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
-            table_.BeginOpening(opening_, snapshot.game, original_display_ && !text_details_);
+            table_.BeginOpening(opening_, snapshot.game, original_display_);
             opening_.ResumeClock(AnimationNow());
             opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
             log_("ONLINE OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()));
         }
         if (event.kind == ReplayEventKind::Init && match_intro_pending_) {
             match_intro_pending_ = false;
-            if (original_display_ && !text_details_ && snapshot.actions.enabled) {
+            if (original_display_ && snapshot.actions.enabled) {
                 RECT area{};
                 GetClientRect(window_, &area);
                 match_intro_->Move(area);
@@ -1581,7 +1571,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         const auto old = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, original_display_ ? RGB(245, 245, 235) : RGB(25, 35, 45));
-        if (client_ && Snapshot().game.initialized && !text_details_ && !show_results_)
+        if (client_ && Snapshot().game.initialized && !show_results_)
         {
             auto bounds = BoardBounds();
             try {
@@ -1968,7 +1958,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     }
                     return 0;
                 }
-                if (message == WM_LBUTTONUP && self->client_ && !self->text_details_ && !self->show_results_) {
+                if (message == WM_LBUTTONUP && self->client_ && !self->show_results_) {
                     const bool dragged = self->hand_dragged_;
                     const int pressed_auto = self->pressed_auto_, pressed_tile = self->pressed_tile_;
                     const auto pressed_revision = self->pressed_revision_;
@@ -2034,8 +2024,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     RECT update{};
                     GetUpdateRect(window, &update, FALSE);
                     const auto board = self->BoardBounds();
-                    const bool table_only = self->Snapshot().game.initialized && !self->show_results_ && !self->
-                                            text_details_ &&
+                    const bool table_only = self->Snapshot().game.initialized && !self->show_results_ &&
                                             update.left >= board.left && update.top >= board.top && update.right <=
                                             board.right && update.bottom <= board.bottom;
                     self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only); });

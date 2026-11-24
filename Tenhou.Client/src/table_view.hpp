@@ -64,8 +64,6 @@ namespace tenhou {
 
         void Paint(HDC dc, bool table_only = false);
 
-        void PaintPlayer(HDC dc, int seat, RECT bounds);
-
         void PaintTable(HDC dc, RECT bounds);
 
         void Stop();
@@ -85,8 +83,6 @@ namespace tenhou {
 
         void PlaySoundId(unsigned id, unsigned delay = 0);
         bool EffectsEnabled() const { return sound_enabled_ && !effects_muted_; }
-
-        void UpdateScroll();
 
         HWND parent_ = nullptr, viewport_ = nullptr, path_ = nullptr, status_ = nullptr;
         HWND load_ = nullptr, open_ = nullptr, previous_ = nullptr, next_ = nullptr, reset_ = nullptr, end_ = nullptr;
@@ -135,9 +131,8 @@ namespace tenhou {
         RECT BoardBounds() const;
 
         std::vector<std::size_t> round_positions_;
-        bool playing_ = false, text_details_ = false, red_tiles_ = true;
+        bool playing_ = false, red_tiles_ = true;
         bool painted_ = false;
         int width_ = 1024, height_ = 768;
-        int scroll_ = 0, board_height_ = 610;
     };
 } // namespace tenhou

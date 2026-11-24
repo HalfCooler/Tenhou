@@ -454,26 +454,26 @@ namespace tenhou {
             int advanced = 0; result.SetConfirmHandler([&] { ++advanced; });
             result.Set(state, {}, false); result.SetContinuation(true); result.SetRoundFinished(true); result.Show(true);
             const auto expire = [&] {
-                require(result.confirm_deadline_ != 0 && result.confirm_seconds_ == 5,
+                require(result.sequencer_.confirm_deadline() != 0 && result.sequencer_.confirm_seconds() == 5,
                     "A variant receipt has no fresh five-second OK countdown");
-                result.confirm_deadline_ = GetTickCount64(); result.ConfirmTick();
+                result.sequencer_.SetConfirmDeadlineForTest(GetTickCount64()); result.ConfirmTick();
             };
             result.SetConfirmEnabled(false);
-            require(!result.confirm_deadline_, "Disabled confirmation retained a running countdown");
+            require(!result.sequencer_.confirm_deadline(), "Disabled confirmation retained a running countdown");
             result.SetConfirmEnabled(true);
             for (std::size_t i = 0; i < state.receipts.size(); ++i) {
-                require(result.selected_ == i && advanced == 0, "Countdown skipped a player or submitted next hand early");
+                require(result.sequencer_.selected() == i && advanced == 0, "Countdown skipped a player or submitted next hand early");
                 expire();
             }
             require(advanced == 1, "Last receipt did not automatically continue the hand");
-            result.Show(false); require(!result.confirm_deadline_, "Hidden results retained the OK countdown");
+            result.Show(false); require(!result.sequencer_.confirm_deadline(), "Hidden results retained the OK countdown");
             // The final match hand and every page of a long fan list also advance.
             state.receipts = {win}; state.receipts[0].entries.resize(kSettlementPatternsPerPage + 1, {"花牌"});
             result.SetContinuation(false); result.Set(state, {}, false); result.Show(true);
-            expire(); require(result.pattern_page_ == 1 && advanced == 1, "Fan page did not auto-advance");
+            expire(); require(result.sequencer_.pattern_page() == 1 && advanced == 1, "Fan page did not auto-advance");
             expire(); require(advanced == 2, "Final hand without continuation had no automatic OK");
             result.Show(false); result.SetRoundFinished(false); result.Show(true);
-            require(!result.confirm_deadline_, "History browsing started a live-hand countdown");
+            require(!result.sequencer_.confirm_deadline(), "History browsing started a live-hand countdown");
             result.Show(false);
         }
 
@@ -502,10 +502,10 @@ namespace tenhou {
             result.Show(true);
             result.Present();
             for (int frame = 0; frame < 30; ++frame) result.PresentationTick();
-            if (result.shown_yaku_ != 1 || result.yaku_entrance_frame_ != 0)
+            if (result.sequencer_.shown_yaku() != 1 || result.sequencer_.yaku_entrance_frame() != 0)
                 throw std::runtime_error("Riichi entrance did not start at frame zero");
             for (int frame = 0; frame < 10; ++frame) result.PresentationTick();
-            if (result.yaku_entrance_frame_ != 10 || !result.Animating())
+            if (result.sequencer_.yaku_entrance_frame() != 10 || !result.Animating())
                 throw std::runtime_error("Riichi entrance did not settle before totals");
             result.Show(false);
         }

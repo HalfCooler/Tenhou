@@ -25,14 +25,8 @@ namespace tenhou {
     POINT OnlineTable::ActionAnchor(const OnlineState &online) {
         artwork_.SetRedTiles(online.red_tiles);
         if (!artwork_.width()) artwork_.Load(directory_, width_);
-        POINT anchor{};
-        for (const auto &t: BuildTableScene(Project(online), false))
-            if (t.direction == 0 && std::string(t.role) == "hand") {
-                const auto &im = artwork_.Get(t, (online.type & 2) == 0);
-                anchor.x = std::max(anchor.x, static_cast<LONG>(im.x));
-                anchor.y = std::max(anchor.y, static_cast<LONG>(im.y));
-            }
-        return anchor;
+        const auto anchor = hand_.ActionAnchor(online, artwork_.geometry());
+        return {static_cast<LONG>(anchor.first), static_cast<LONG>(anchor.second)};
     }
 
     void OnlineTable::Configure(const std::filesystem::path &directory, int width) {
@@ -41,7 +35,7 @@ namespace tenhou {
         directory_ = directory;
         width_ = width;
         artwork_ = {};
-        raised_.clear();
+        hand_.ClearRaised();
         background_ = {};
         native_buffer_.Invalidate();
         hud_cache_.Invalidate();
@@ -73,92 +67,35 @@ namespace tenhou {
         if (!artwork_.width()) artwork_.Load(directory_, width_);
         const bool red = (online.type & 2) == 0;
         presentation_.Begin(before, after, event, 240, width_,
-                            [&](const TableTile &t) {
-                                const auto &im = artwork_.Get(t, red);
-                                const auto offset = artwork_.Offset(t);
-                                return std::make_pair(im.x + offset.x, im.y + offset.y);
-                            }, now, false, &artwork_, red);
-    }
-
-    ReplayState OnlineTable::Project(const OnlineState &online) {
-        auto state = OnlineTableState(online);
-        const auto &hand = online.players[0].known_hand;
-        const int drawn = online.players[0].drawn_tile;
-        const bool new_hand = online.events < hand_events_ ||
-                              (online.events != hand_events_ &&
-                               (online.last_event == "INIT" || online.last_event == "REINIT"));
-        if (new_hand) suit_order_ = {0, 1, 2};
-        if (drawn != reordered_draw_) reordered_draw_ = -1;
-        if (auto_sort_ || new_hand) {
-            hand_order_ = hand;
-            reordered_draw_ = -1;
-            if (drawn >= 0) {
-                const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
-                if (it != hand_order_.end()) hand_order_.erase(it);
-            }
-            if (!online.variant) UpdateOriginSuitOrder(suit_order_, hand_order_);
-            SortOriginHand(hand_order_, suit_order_);
-            if (drawn >= 0 && std::find(hand.begin(), hand.end(), drawn) != hand.end())
-                hand_order_.push_back(drawn);
-        } else {
-            hand_order_.erase(std::remove_if(hand_order_.begin(), hand_order_.end(), [&](int t) {
-                return std::find(hand.begin(), hand.end(), t) == hand.end();
-            }), hand_order_.end());
-            for (int t: hand) if (std::find(hand_order_.begin(), hand_order_.end(), t) == hand_order_.end()) hand_order_
-                    .push_back(t);
-            // Retain the actual visible order, including the separated draw at the end.
-            // Otherwise disabling sort would move a retained low draw back into sorted order.
-            const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
-            if (it != hand_order_.end() && reordered_draw_ < 0) {
-                hand_order_.erase(it);
-                hand_order_.push_back(drawn);
-            }
-        }
-        hand_events_ = online.events;
-        if (!online.players[0].retired) state.players[0].hand = hand_order_;
-        // FUN_00488650 reassigns the gap to the final slot after manual insertion.
-        // This is a display projection; the authoritative drawn entity is unchanged.
-        if (drawn >= 0 && reordered_draw_ == drawn && !hand_order_.empty())
-            state.players[0].drawn_tile = hand_order_.back();
-        state.draw_end_slots = draw_end_slots_;
-        return state;
+                            [&](const TableTile &t) { return artwork_.geometry().Origin(t, red); },
+                            now, false, &artwork_, red);
     }
 
     bool OnlineTable::MoveHandTile(int tile, int target, const OnlineState &online) {
-        const auto before = Project(online);
-        const auto from = std::find(hand_order_.begin(), hand_order_.end(), tile);
-        const auto to = std::find(hand_order_.begin(), hand_order_.end(), target);
-        if (from == hand_order_.end() || to == hand_order_.end() || from == to) return false;
-        const auto index = to - hand_order_.begin();
-        hand_order_.erase(from);
-        hand_order_.insert(hand_order_.begin() + index, tile);
-        auto_sort_ = false;
-        reordered_draw_ = online.players[0].drawn_tile;
-        previous_ = Project(online);
-        if (artwork_.width())
-            presentation_.BeginManual(before, previous_, width_, [&](const TableTile &t) {
-                const auto &im = artwork_.Get(t, (online.type & 2) == 0);
-                const auto offset = artwork_.Offset(t);
-                return std::make_pair(im.x + offset.x, im.y + offset.y);
-            }, AnimationNow());
+        ReplayState before, after;
+        if (!hand_.MoveHandTile(tile, target, online, &before, &after)) return false;
+        previous_ = after;
+        if (artwork_.width()) {
+            const bool red = (online.type & 2) == 0;
+            presentation_.BeginManual(before, previous_, width_,
+                                      [&](const TableTile &t) { return artwork_.geometry().Origin(t, red); },
+                                      AnimationNow());
+        }
         return true;
     }
 
     void OnlineTable::SetAutoSort(bool enabled, const OnlineState &online) {
-        if (auto_sort_ == enabled) return;
-        const auto before = Project(online);
-        auto_sort_ = enabled;
-        const auto after = Project(online);
+        ReplayState before, after;
+        if (!hand_.SetAutoSort(enabled, online, &before, &after)) return;
         previous_ = after;
         CancelAnimation();
         if (!enabled || !artwork_.width()) return;
         ReplayEvent event;
         event.tag = "SORT";
-        presentation_.Begin(before, after, event, 240, width_, [&](const TableTile &tile) {
-            const auto &image = artwork_.Get(tile, (online.type & 2) == 0);
-            const auto offset = artwork_.Offset(tile);
-            return std::make_pair(image.x + offset.x, image.y + offset.y);
-        }, AnimationNow(), false);
+        const bool red = (online.type & 2) == 0;
+        presentation_.Begin(before, after, event, 240, width_,
+                            [&](const TableTile &tile) { return artwork_.geometry().Origin(tile, red); },
+                            AnimationNow(), false);
     }
 
     void OnlineTable::Paint(HDC dc, RECT bounds, const OnlineState &online, bool interactive,
@@ -186,7 +123,8 @@ namespace tenhou {
         const bool red = (online.type & 2) == 0;
         const int w = width_, h = w * 3 / 4;
         const double unit = double(w) / 1024;
-        raised_ = interaction ? interaction->selected : std::vector<int>{};
+        hand_.SetRaised(interaction ? interaction->selected : std::vector<int>{});
+        const auto &raised = hand_.raised();
         artwork_.BeginFrame();
         const unsigned placed = opening && opening->Active() ? opening->placed() : static_cast<unsigned>(state.wall.total);
         std::vector<PositionedTile> tiles;
@@ -194,13 +132,12 @@ namespace tenhou {
         else if (presentation_.Active()) tiles = presentation_.Frame(now);
         else
             for (const auto &tile: BuildTableScene(state, false)) {
-                const auto &item = artwork_.Get(tile, red);
-                const auto offset = artwork_.Offset(tile);
-                tiles.push_back({tile, item.x + offset.x, item.y + offset.y});
+                const auto origin = artwork_.geometry().Origin(tile, red);
+                tiles.push_back({tile, origin.first, origin.second});
             }
         for (auto &tile: tiles)
             if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand" &&
-                std::find(raised_.begin(), raised_.end(), tile.tile.tile) != raised_.end()) tile.y -= static_cast<int>(8 * unit);
+                std::find(raised.begin(), raised.end(), tile.tile.tile) != raised.end()) tile.y -= static_cast<int>(8 * unit);
         SortTableScene(tiles, artwork_, red);
         if (original_display_) InsertNearWall(tiles, artwork_, state, red, placed, true);
         if (opening && opening->Active()) opening->SlideWall(tiles);
@@ -215,24 +152,11 @@ namespace tenhou {
             for (auto c: interaction->countdown) stamp << ':' << int(c);
             for (auto value: interaction->automatic) stamp << ':' << value;
         }
-        enum class HandColor : unsigned { Normal, Hover, UnavailableHover, Selected, Dim, SelectedHover, Exchange };
         const auto hand_color = [&](const TableTile &tile) {
-            if (!interaction || !interactive || state.ended || tile.tile < 0 || tile.direction != 0 ||
-                std::string_view(tile.role) != "hand") return HandColor::Normal;
-            const bool hover = tile.tile == interaction->hovered;
-            const bool playable = std::find(interaction->playable.begin(), interaction->playable.end(), tile.tile)
-                                  != interaction->playable.end();
-            const bool selected = std::find(interaction->selected.begin(), interaction->selected.end(), tile.tile)
-                                  != interaction->selected.end();
-            if (state.variant) {
-                if (selected) return HandColor::Exchange;
-                if (interaction->selecting && playable) return HandColor::Hover;
-            } else {
-                if (selected) return hover ? HandColor::SelectedHover : HandColor::Selected;
-                if (!playable && (interaction->selecting || interaction->restrict_discards))
-                    return hover ? HandColor::UnavailableHover : HandColor::Dim;
-            }
-            return hover ? (playable ? HandColor::Hover : HandColor::UnavailableHover) : HandColor::Normal;
+            if (!interaction) return HandColor::Normal;
+            return HandProjection::ClassifyTile(tile, interactive, state.ended, state.variant, interaction->hovered,
+                                                interaction->playable, interaction->selected,
+                                                interaction->selecting, interaction->restrict_discards);
         };
         std::vector<unsigned> appearances;
         for (const auto &tile: tiles) appearances.push_back(static_cast<unsigned>(hand_color(tile.tile)));
@@ -471,33 +395,14 @@ namespace tenhou {
 
     int OnlineTable::HitTile(RECT bounds, const OnlineState &online, int x, int y) {
         if (!artwork_.width() || !online.initialized) return -1;
-        const int w = width_, h = w * 3 / 4;
-        const auto target = FitNativeCanvas(bounds, w);
-        if (x < target.left || x >= target.right || y < target.top || y >= target.bottom) return -1;
-        const int px = (x - target.left) * w / (target.right - target.left);
-        const int py = (y - target.top) * h / (target.bottom - target.top);
-        int found = -1;
-        const bool red = (online.type & 2) == 0;
-        std::vector<PositionedTile> scene;
-        if (presentation_.Active()) scene = presentation_.Frame(AnimationNow());
-        else
-            for (const auto &t: BuildTableScene(Project(online), false))
-                if (t.direction == 0 && std::string(t.role) == "hand") {
-                    const auto &item = artwork_.Get(t, red);
-                    const auto offset = artwork_.Offset(t);
-                    const int tx = item.x + offset.x, ty = item.y + offset.y -
-                        (std::find(raised_.begin(), raised_.end(), t.tile) != raised_.end() ? 8 * w / 1024 : 0);
-                    scene.push_back({t, tx, ty});
-                }
-        SortTableScene(scene, artwork_, red);
-        for (const auto &placed: scene) {
-            if (placed.flight || placed.tile.direction != 0 || std::string(placed.tile.role) != "hand") continue;
-            const auto &image = artwork_.Get(placed.tile, red).image;
-            const int x0 = px - placed.x, y0 = py - placed.y;
-            if (x0 >= 0 && y0 >= 0 && x0 < image.width && y0 < image.height &&
-                image.bgra[(static_cast<std::size_t>(y0) * image.width + x0) * 4 + 3])
-                found = placed.tile.tile;
+        artwork_.SetRedTiles(online.red_tiles);
+        std::vector<PositionedTile> animated;
+        const std::vector<PositionedTile> *active = nullptr;
+        if (presentation_.Active()) {
+            animated = presentation_.Frame(AnimationNow());
+            active = &animated;
         }
-        return found;
+        return hand_.HitTile({bounds.left, bounds.top, bounds.right, bounds.bottom}, online,
+                             artwork_.geometry(), x, y, active);
     }
 } // namespace tenhou

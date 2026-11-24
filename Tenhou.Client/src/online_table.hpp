@@ -1,5 +1,6 @@
 #pragma once
 #include "background.hpp"
+#include "hand_projection.hpp"
 #include "online_game.hpp"
 #include "table_scene.hpp"
 #include "original_display.hpp"
@@ -49,7 +50,7 @@ namespace tenhou {
             }
         }
 
-        void SetDrawEndSlots(unsigned slots) { draw_end_slots_ = slots; }
+        void SetDrawEndSlots(unsigned slots) { hand_.SetDrawEndSlots(slots); }
         void PresentSettlement() { settlement_presented_ = true; }
 
         void Configure(const std::filesystem::path &directory, int width);
@@ -83,13 +84,9 @@ namespace tenhou {
         void SetRelativeScores(bool relative) { relative_scores_ = relative; }
 
     private:
-        ReplayState Project(const OnlineState &state);
+        ReplayState Project(const OnlineState &state) { return hand_.Project(state); }
 
-        std::vector<int> hand_order_;
-        std::array<int, 3> suit_order_{0, 1, 2};
-        std::vector<int> raised_;
-        std::uint64_t hand_events_ = 0;
-        int reordered_draw_ = -1;
+        HandProjection hand_;
         std::filesystem::path directory_;
         int width_ = 1440;
         TableArtwork artwork_;
@@ -101,12 +98,10 @@ namespace tenhou {
         TileShadowLayer shadow_layer_;
         DisplayArtwork display_artwork_;
         bool original_display_ = true;
-        bool auto_sort_ = true;
         bool relative_scores_ = false;
         bool reference_rendering_ = RetainedScene::Reference();
         TablePresentation presentation_;
         ReplayState previous_;
-        unsigned draw_end_slots_ = 14;
         bool settlement_presented_ = false;
         double paused_at_ = 0;
     };

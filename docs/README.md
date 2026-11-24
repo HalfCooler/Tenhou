@@ -4,7 +4,7 @@
 
 | 项目 | 文档 |
 | --- | --- |
-| Tenhou.Client | [客户端与资源](Tenhou.Client/README.md)、[原版大厅与东天红重建](Tenhou.Client/ORIGIN-REBUILD.md)、[TrueType 文字目录](../Tenhou.Client/assets/text/README.md)、[国标与八花](Tenhou.Client/GUOBIAO.md)、[第三方源码和许可](Tenhou.Client/THIRD-PARTY-NOTICES.md) |
+| Tenhou.Client | [客户端总览与演进](Tenhou.Client/README.md)、[渲染迁移调研](Tenhou.Client/RENDERING-MIGRATION.md)、[原版对局采集清单](Tenhou.Client/ORIGIN.md)、[个人战绩与壳层取证](Tenhou.Client/ORIGIN-PROFILE-AND-SHELL.md)、[原版会话采集](Tenhou.Client/ORIGIN-SESSION-CAPTURE.md)、[TrueType 文字目录](../Tenhou.Client/assets/text/README.md)、[第三方源码和许可](Tenhou.Client/THIRD-PARTY-NOTICES.md) |
 | Tenhou.Client.Tests | [客户端专项检查](Tenhou.Client.Tests/README.md) |
 | Tenhou.Server | [构建与运行](Tenhou.Server/README.md)、[架构](Tenhou.Server/ARCHITECTURE.md)、[规则](Tenhou.Server/RULES.md)、[协议](Tenhou.Server/PROTOCOL.md)、[验证记录](Tenhou.Server/VALIDATION.md)、[第三方参考与许可](Tenhou.Server/THIRD-PARTY-NOTICES.md) |
 | Tenhou.Server.Tests | [规则和集成测试](Tenhou.Server.Tests/README.md) |

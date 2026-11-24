@@ -37,8 +37,6 @@ namespace tenhou {
         int x = 0, y = 0;
         double scale = 1;
     };
-    inline constexpr std::size_t kSettlementPatternsPerPage = 14;
-    std::size_t SettlementPatternPages(const SettlementReceipt &receipt);
 
     struct SettlementLayout {
         int width = 1024, dealer = 0, honba = -1, sticks = -1;

@@ -85,4 +85,11 @@ namespace tenhou {
 
     // Presentation order and the zero-hit ura row never alter the receipt or score.
     std::vector<SettlementYaku> SettlementDisplayYaku(const SettlementReceipt &receipt);
+
+    inline constexpr std::size_t kSettlementPatternsPerPage = 14;
+    inline std::size_t SettlementPatternPages(const SettlementReceipt &receipt) {
+        if (!receipt.generic) return 1;
+        const auto pages = (receipt.entries.size() + kSettlementPatternsPerPage - 1) / kSettlementPatternsPerPage;
+        return pages ? pages : 1;
+    }
 } // namespace tenhou
