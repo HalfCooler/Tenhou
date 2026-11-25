@@ -1,6 +1,7 @@
 #pragma once
 #include "online_actions.hpp"
-#include <windows.h>
+#include "tile_geometry.hpp"
+#include <utility>
 
 namespace tenhou {
     std::string ActionGroup(const std::string &kind);
@@ -14,12 +15,13 @@ namespace tenhou {
 
     struct ActionPlacement {
         int button = 0;
-        RECT rect{};
+        CanvasRect rect{};
     };
 
     // Original 00497c0e..00497cf6: hand anchor, 65/45 offsets, 110 stride,
     // reverse creation order and 1.4 resource scale for the 1440 canvas.
-    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, int width, POINT hand_anchor);
+    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, int width,
+                                                       std::pair<int, int> hand_anchor);
 
     struct ActionSelection {
         std::uint64_t revision = 0;

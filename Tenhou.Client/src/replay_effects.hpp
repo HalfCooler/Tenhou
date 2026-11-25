@@ -44,7 +44,15 @@ namespace tenhou {
     ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
                                            const ReplayEvent &event, unsigned duration, int canvas_width,
                                            const TileOrigin &origin, bool sort_self = true,
-                                           TableArtwork *artwork = nullptr, bool red = true);
+                                           const TileGeometryCatalog *geometry = nullptr, bool red = true);
+
+    inline ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
+                                                  const ReplayEvent &event, unsigned duration, int canvas_width,
+                                                  const TileOrigin &origin, bool sort_self,
+                                                  TableArtwork *artwork, bool red = true) {
+        return BuildReplayTransition(before, after, event, duration, canvas_width, origin, sort_self,
+                                     artwork ? &artwork->geometry() : nullptr, red);
+    }
 
     // A single presentation slot: a new accepted event replaces the old movement.
     // Caller-owned authoritative states and clocks are never advanced by this class.
@@ -52,7 +60,14 @@ namespace tenhou {
     public:
         void Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
                    unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self = true,
-                   TableArtwork *artwork = nullptr, bool red = true, unsigned playback_limit = 0);
+                   const TileGeometryCatalog *geometry = nullptr, bool red = true, unsigned playback_limit = 0);
+
+        void Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
+                   unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self,
+                   TableArtwork *artwork, bool red = true, unsigned playback_limit = 0) {
+            Begin(before, after, event, duration, width, origin, now, sort_self,
+                  artwork ? &artwork->geometry() : nullptr, red, playback_limit);
+        }
 
         void BeginManual(const ReplayState &before, const ReplayState &after, int width, const TileOrigin &origin,
                          double now);
@@ -80,7 +95,11 @@ namespace tenhou {
     // Prepare the wall in display order, then deal starting at the dealer.
     class OpeningPresentation {
     public:
-        void Begin(const ReplayState &state, bool wall, TableArtwork *artwork = nullptr, bool red = true);
+        void Begin(const ReplayState &state, bool wall, const TileGeometryCatalog *geometry = nullptr, bool red = true);
+
+        void Begin(const ReplayState &state, bool wall, TableArtwork *artwork, bool red = true) {
+            Begin(state, wall, artwork ? &artwork->geometry() : nullptr, red);
+        }
 
         bool Tick(unsigned steps = 1);
         bool Advance(double now);
@@ -91,7 +110,11 @@ namespace tenhou {
 
         ReplayState Frame() const;
 
-        std::vector<PositionedTile> Scene(TableArtwork &artwork, bool red = true) const;
+        std::vector<PositionedTile> Scene(const TileGeometryCatalog &geometry, bool red = true) const;
+
+        std::vector<PositionedTile> Scene(TableArtwork &artwork, bool red = true) const {
+            return Scene(artwork.geometry(), red);
+        }
 
         void SlideWall(std::vector<PositionedTile> &scene) const;
 

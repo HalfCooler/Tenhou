@@ -8,7 +8,7 @@
 
 | 文件 | CTest 名称 | 覆盖范围 |
 | --- | --- | --- |
-| `presenter_check.cpp` | `client_presenter` | 纯内存无窗口/无 GDI+ 验证：`TileGeometryCatalog`（精灵包围盒、偏移、1-bit Alpha 命中掩码）、`HandProjection`（缺门花色排序、手动插牌槽位重映射、非整数视口命中与高亮分类）及 `SettlementSequencer`（立直里宝 1200ms 停顿、役满音效、终局页 BGM/115 音效、暂停时间平移与 5 秒倒计时） |
+| `presenter_check.cpp` | `client_presenter` | 纯内存无窗口/无 GDI+ 验证：`TileGeometryCatalog`（精灵包围盒、偏移、1-bit Alpha 命中掩码）、`HandProjection`（缺门花色排序、手动插牌槽位重映射、非整数视口命中与高亮分类）、`SettlementSequencer`（立直里宝 1200ms 停顿、役满音效、终局页 BGM/115 音效、暂停时间平移与 5 秒倒计时）、`ReplayTableSequencer`（开局与流局翻牌节拍）、`OnlineTableSequencer`（封包排队、41 tick 等待、自动摸切、`CLOCK` 告警、`AGARI` 延迟与暂停顺延）及 `BuildOnlineTableRenderFrame` |
 | `offline_lobby_check.cpp` | `client_offline_lobby` | 自建原版大厅 `LobbySession` 切厅、大会资格、多票预约、并发 `GO` 收敛；官方 `HELO`/`RANKING v2`（15/21 项）/琥珀厅战绩解码与 `<ERR>` 致命分类 |
 | `official_capture_check.cpp` | `client_official_captures` | 回放 `docs/Tenhou.Client.Origin/origin-capture/` 中的真实官方对局与断线重连原始帧样本，核对客户端协议与状态收敛 |
 | `text_catalog_check.cpp` | `client_text_catalog` | 296 文字 / 7 图像分类、共享文案、481 役种完整样式、459 小字 12 pt、Info 三段装饰、生产按钮两态及全部立直/变体番型文字回退 |

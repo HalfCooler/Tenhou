@@ -1,5 +1,4 @@
 #include "action_selection_scene.hpp"
-#include "table_scene.hpp"
 #include <algorithm>
 
 namespace tenhou {
@@ -22,7 +21,8 @@ namespace tenhou {
         return result;
     }
 
-    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, int width, POINT anchor) {
+    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, int width,
+                                                       std::pair<int, int> anchor) {
         const char *kinds[]{"discard", "chi", "pon", "kan", "riichi", "ron", "tsumo", "draw", "skip", "next", "nuki"};
         std::vector<int> buttons;
         if (!actions.enabled) return {};
@@ -32,8 +32,8 @@ namespace tenhou {
             }))
                 buttons.push_back(i == 10 ? 5151 : 5120 + i);
         const double scale = width == 1440 ? 1.4 : 1.0;
-        int x = std::max(0, static_cast<int>(anchor.x + 65.0 - (static_cast<int>(buttons.size()) - 1) * 110 * scale));
-        const int y = static_cast<int>(anchor.y - 45 * scale);
+        int x = std::max(0, static_cast<int>(anchor.first + 65.0 - (static_cast<int>(buttons.size()) - 1) * 110 * scale));
+        const int y = static_cast<int>(anchor.second - 45 * scale);
         std::vector<ActionPlacement> result;
         for (int button: buttons) {
             result.push_back({button, {x, y, x + static_cast<int>(100 * scale), y + static_cast<int>(36 * scale)}});

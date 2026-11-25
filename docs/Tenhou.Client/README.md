@@ -35,11 +35,14 @@ Windows 原生 C++17 客户端，以仓库内冻结的原版客户端 `Tenhou.Cl
 
 ### 既定渲染与解耦路线
 
-1. **逻辑与演出全面下沉（Stage 2）**：将在线对局、离线回放与结算弹窗的排队、15ms 节拍门控、停顿与倒计时全部收归 `tenhou_presenter`，合并在线与回放的双轨牌桌绘制入口为单一 `ITableCanvasRenderer`。
-2. **牌桌画布局部硬件加速（Stage 3.2-B）**：保持多原生子控件的表单/大厅壳层（`WelcomeView`、`OfflineLobbyView`、`SettingsView` 等）及已逐像素校准的 `TextRenderer` 字形栅格化内核不变；将牌桌动作按钮收归画布内自绘与矩形命中，为 `ITableCanvasRenderer` 接入 **Direct2D 1.1 + D3D11 Flip SwapChain** 后端，从而移除纯 CPU 多级缩放缓冲与脏矩形合成负担，降低后续扩展新玩法的渲染成本。
+详细任务目标、行为边界、已完成模块与待推进清单见 [解耦与 Direct2D 迁移路线](DECOUPLING-PLAN.md)，总体分阶段如下：
+
+1. **逻辑与演出全面下沉（Stage 2）**：已将几何目录（`TileGeometryCatalog`）、手牌投影（`HandProjection`）、结算编排（`SettlementSequencer`）、在线与回放牌桌编排（`OnlineTableSequencer` / `ReplayTableSequencer`）及统一牌桌帧构建（`TableRenderFrame` + `ITableCanvasRenderer` + `GdiTableRenderer`）落入 `tenhou_presenter` / `tenhou_table`；待完成离线大厅战绩格式化与计时下沉。
+2. **牌桌画布局部硬件加速（Stage 3.2-B）**：保持多原生子控件的表单/大厅壳层（`WelcomeView`、`OfflineLobbyView`、`SettingsView` 等）及已逐像素校准的 `TextRenderer` 字形栅格化内核不变；将牌桌动作按钮收归 `TableRenderFrame::buttons` 自绘与命中，再为 `ITableCanvasRenderer` 接入 **Direct2D 1.1 + D3D11 Flip SwapChain**（`D2DTableRenderer`），从而移除纯 CPU 多级缩放缓冲与脏矩形合成负担，降低后续扩展新玩法的渲染成本。
 
 ## 相关文档
 
+- [解耦与 Direct2D 迁移路线（目标、边界与待办）](DECOUPLING-PLAN.md)
 - [牌桌渲染迁移收益调研](RENDERING-MIGRATION.md)
 - [原版对局采集清单](ORIGIN.md)
 - [个人战绩面板、错误弹窗与主窗口壳层取证](ORIGIN-PROFILE-AND-SHELL.md)

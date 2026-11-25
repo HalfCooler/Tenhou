@@ -19,3 +19,6 @@
 最低成本的验证是用固定牌谱、相同资源、相同窗口物理尺寸和相同时钟，比较当前基线、拆分后的 GDI+ 路径、Direct2D 牌桌原型。取静止、普通摸打和连续动画样本，在原生尺寸与高 DPI 下用 ETW 比较进程 CPU、每次绘制的 UI 线程耗时 P50/P95、重绘次数及 GPU 占用。若缩放或像素对比居首，原型应覆盖这一步。若场景构建居首，先验证复用帧数据的收益。避免逐帧从 CPU 上传整张已合成画面。实现路线参考 [Direct2D 设备上下文](https://learn.microsoft.com/en-us/windows/win32/direct2d/devices-and-device-contexts)、[Direct2D 性能指南](https://learn.microsoft.com/en-us/windows/win32/direct2d/improving-direct2d-performance)和 [D3D11On12](https://learn.microsoft.com/en-us/windows/win32/direct3d12/direct3d-11-on-12)。
 
 本次验证范围为静态调用点和现有测试入口。待验证项包括实际 CPU/GPU 耗时、不同物理尺寸下的画面差异及原版实窗对照。现有 [客户端测试说明](../Tenhou.Client.Tests/README.md)列出呈现事件、局部重绘和离屏图片的覆盖范围。
+
+> [!NOTE]
+> 基于本调研已形成并核准分阶段实施路线，当前已完成 `tenhou_presenter` 演出编排下沉与 `ITableCanvasRenderer` / `GdiTableRenderer` 抽象合流；具体任务目标、约束边界、已完成清单与后续 Stage 3.2-B（画布动作按钮 + Direct2D 1.1 / D3D11 后端）待推进项详见 [解耦与 Direct2D 迁移路线](DECOUPLING-PLAN.md)。

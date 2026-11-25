@@ -13,7 +13,7 @@ target_link_libraries(tenhou_text_catalog_check PRIVATE tenhou_table tenhou_netw
 add_executable(tenhou_protocol_check "${client_checks_directory}/client_protocol_check.cpp")
 target_link_libraries(tenhou_protocol_check PRIVATE tenhou_network)
 add_executable(tenhou_variant_ui_check "${client_checks_directory}/variant_ui_check.cpp"
-    src/online_table.cpp src/background.cpp src/settlement_view.cpp "${asset_generated_directory}/client_assets.rc")
+    src/online_table.cpp src/settlement_view.cpp "${asset_generated_directory}/client_assets.rc")
 target_link_libraries(tenhou_variant_ui_check PRIVATE tenhou_network tenhou_table gdi32)
 add_dependencies(tenhou_variant_ui_check tenhou_assets)
 add_executable(tenhou_variant_check "${client_checks_directory}/variant_check.cpp")
@@ -27,7 +27,7 @@ add_executable(tenhou_lobby_check "${client_checks_directory}/lobby_check.cpp" $
     "${asset_generated_directory}/client_assets.rc")
 target_link_libraries(tenhou_lobby_check PRIVATE tenhou_network tenhou_table comctl32 comdlg32 shell32 ole32)
 add_dependencies(tenhou_lobby_check tenhou_assets)
-add_executable(tenhou_resource_check "${client_checks_directory}/resource_check.cpp" src/background.cpp
+add_executable(tenhou_resource_check "${client_checks_directory}/resource_check.cpp"
     "${asset_generated_directory}/client_assets.rc")
 target_link_libraries(tenhou_resource_check PRIVATE tenhou_table comctl32)
 add_dependencies(tenhou_resource_check tenhou_assets)

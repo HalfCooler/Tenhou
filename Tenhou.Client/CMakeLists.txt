@@ -41,8 +41,9 @@ target_include_directories(tenhou_replay PUBLIC src "${asset_generated_directory
 target_compile_definitions(tenhou_replay PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_replay PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_replay PUBLIC zlib_inflate)
-add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_effects.cpp src/replay_audio.cpp src/original_display.cpp
-        src/wall_scene.cpp src/action_selection_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp)
+add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_audio.cpp src/original_display.cpp
+        src/wall_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp
+        src/background.cpp src/gdi_table_renderer.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text winmm msacm32 gdiplus)
@@ -51,12 +52,14 @@ target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32)
-add_library(tenhou_presenter STATIC src/tile_geometry.cpp src/hand_projection.cpp src/settlement_sequencer.cpp)
+add_library(tenhou_presenter STATIC src/tile_geometry.cpp src/wall_geometry.cpp src/replay_effects.cpp
+        src/action_selection_scene.cpp src/hand_projection.cpp src/settlement_sequencer.cpp
+        src/table_sequencer.cpp src/table_render_frame.cpp)
 target_include_directories(tenhou_presenter PUBLIC src "${asset_generated_directory}")
 target_compile_options(tenhou_presenter PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_presenter PUBLIC tenhou_resources tenhou_network)
 target_link_libraries(tenhou_table PUBLIC tenhou_presenter)
-set(tenhou_lobby_sources src/background.cpp src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
+set(tenhou_lobby_sources src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
         src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/offline_lobby_view.cpp
 )
 add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/table_view.cpp

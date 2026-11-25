@@ -1,4 +1,5 @@
 #include "lobby_view.hpp"
+#include "background.hpp"
 #include "offline_lobby_view.hpp"
 #include "original_button.hpp"
 #include "settings_view.hpp"
@@ -10,51 +11,12 @@
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
-#include <charconv>
 #include <stdexcept>
 #include <commctrl.h>
 
 namespace tenhou {
-    namespace { constexpr UINT_PTR kOpeningTimer = 12; }
-
-    void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
-        if (change == PreferenceChange::MusicPreviewBegin || change == PreferenceChange::MusicPreviewEnd) {
-            music_preview_ = change == PreferenceChange::MusicPreviewBegin;
-            if (music_preview_) lobby_music_.Stop();
-            UpdateLobbyMusic();
-            return;
-        }
-        preferences_ = preferences;
-        settlement_view_->SetPeekEnabled(preferences.ResultPeek());
-        settlement_view_->SetTileColor(preferences.TileColor());
-        if (change == PreferenceChange::Artwork || change == PreferenceChange::Initial) {
-            lobby_background_ = {};
-            table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
-            InvalidateRect(window_, nullptr, FALSE);
-            if (service_lobby_ && !resource_directory_.empty()) service_lobby_->ConfigureArtwork(resource_directory_, canvas_width_);
-        }
-        if (change == PreferenceChange::Sound) {
-            // The original sound-volume control is the online mute switch. The
-            // retired NetworkSound flag had no UI and persisted a silent default.
-            sound_enabled_ = preferences.se_volume > 0;
-            settlement_view_->SetSoundEnabled(EffectsEnabled());
-            StopAudio();
-            audio_.SetVolumePercent(preferences.se_volume);
-            const auto voice_mode = GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
-                                                          GetPrivateProfileIntW(
-                                                              L"REBUILD", L"SoundEffectsOnly", 0, config_.c_str()),
-                                                          config_.c_str());
-            effects_only_ = voice_mode == 1;
-            individual_voices_ = voice_mode == 2;
-            sound_loaded_ = false;
-            audio_error_.clear();
-            log_("ONLINE AUDIO SETTINGS enabled=" + std::to_string(sound_enabled_) +
-                 " master=" + std::to_string(preferences.se_volume));
-            UpdateLobbyMusic(true);
-        }
-    }
-
     namespace {
+        constexpr UINT_PTR kOpeningTimer = 12;
         constexpr wchar_t kLobbyWindow[] = L"TENHOU_REBUILD_LOBBY";
 
         std::wstring Text(HWND window) {
@@ -65,7 +27,7 @@ namespace tenhou {
             return value;
         }
 
-LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) {
+        LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) {
             if (m == WM_LBUTTONDOWN || (m == WM_KEYDOWN && (wp == VK_SPACE || wp == VK_RETURN)))
                 SendMessageW(GetParent(w), WM_APP + 26, static_cast<WPARAM>(GetDlgCtrlID(w)), 0);
             if (m == WM_ERASEBKGND) return 1; // WM_DRAWITEM supplies every pixel.
@@ -83,6 +45,220 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
     }
 
+    OnlineSequencerContext LobbyView::MakeContext() const {
+        OnlineSequencerContext ctx;
+        ctx.tick_ms = GetTickCount64();
+        ctx.anim_ms = AnimationNow();
+        ctx.window_visible = window_ && IsWindowVisible(window_) != FALSE;
+        ctx.intro_active = match_intro_ && match_intro_->Active();
+        ctx.intro_resuming = match_intro_ && match_intro_->Resuming();
+        ctx.settlement_animating = settlement_view_ && settlement_view_->Animating();
+        ctx.audio_active = audio_.Active();
+        ctx.audio_healthy = audio_error_.empty();
+        ctx.canvas_width = canvas_width_;
+        return ctx;
+    }
+
+    OnlineMotionCallbacks LobbyView::MakeMotion() {
+        OnlineMotionCallbacks motion;
+        motion.accept = [this](const OnlineState &game, const ReplayEvent &event, bool animate, double now) {
+            table_.Accept(game, event, animate, now);
+            if (table_.Animating()) motion_timer_.Start(window_, 6, kTableTickMs);
+            else motion_timer_.Stop();
+        };
+        motion.begin_opening = [this](OpeningPresentation &opening, const OnlineState &game, bool wall) {
+            table_.BeginOpening(opening, game, wall);
+        };
+        motion.set_auto_sort = [this](bool enabled, const OnlineState &game) {
+            table_.SetAutoSort(enabled, game);
+            if (sequencer_.animation_enabled() && table_.Animating()) motion_timer_.Start(window_, 6);
+            else {
+                table_.CancelAnimation();
+                motion_timer_.Stop();
+            }
+        };
+        motion.set_draw_end_slots = [this](unsigned slots) { table_.SetDrawEndSlots(slots); };
+        motion.set_paused = [this](bool paused) {
+            table_.SetPaused(paused);
+            if (settlement_view_) settlement_view_->SetPaused(paused);
+            if (match_intro_) match_intro_->SetPaused(paused);
+        };
+        motion.present_settlement = [this] { table_.PresentSettlement(); };
+        motion.cancel_animation = [this] {
+            table_.CancelAnimation();
+            motion_timer_.Stop();
+        };
+        motion.animating = [this] { return table_.Animating(); };
+        motion.manual_animation = [this] { return table_.ManualAnimation(); };
+        motion.prepare = [this] { table_.Prepare(); };
+        motion.refresh_preferences = [this] { table_.SetPreferences(preferences_, config_, false); };
+        return motion;
+    }
+
+    void LobbyView::SyncTimers() {
+        if (!window_ || !client_) return;
+        if (sequencer_.opening().Active()) opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
+        else opening_timer_.Stop();
+
+        const bool queue_needed = sequencer_.QueueTimerNeeded();
+        if (queue_needed && !queue_timer_) queue_timer_ = SetTimer(window_, 7, 15, nullptr) != 0;
+        else if (!queue_needed && queue_timer_) {
+            KillTimer(window_, 7);
+            queue_timer_ = false;
+        }
+
+        const bool clock_needed = sequencer_.ClockTimerNeeded();
+        if (clock_needed && !clock_timer_) clock_timer_ = SetTimer(window_, 3, 100, nullptr) != 0;
+        else if (!clock_needed && clock_timer_) {
+            KillTimer(window_, 3);
+            clock_timer_ = false;
+        }
+
+        const bool auto_needed = sequencer_.AutoTimerNeeded(client_->snapshot());
+        if (auto_needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, 4, 100, nullptr) != 0;
+        else if (!auto_needed && automatic_timer_) {
+            KillTimer(window_, 4);
+            automatic_timer_ = false;
+        }
+
+        const bool caption_needed = sequencer_.captions().Active();
+        if (caption_needed && !caption_timer_) caption_timer_ = SetTimer(window_, 8, 15, nullptr) != 0;
+        else if (!caption_needed && caption_timer_) {
+            KillTimer(window_, 8);
+            caption_timer_ = false;
+        }
+    }
+
+    void LobbyView::ApplyEffects(const OnlineSequencerEffects &fx) {
+        if (fx.reload_config_preferences) preferences_ = ClientPreferences::Load(config_);
+        if (fx.release_capture && GetCapture() == window_) ReleaseCapture();
+        if (fx.stop_all_sound) {
+            if (match_intro_ && !fx.preserve_intro_resume) {
+                if (match_intro_->Resuming()) log_("ONLINE RESUME PREPARATION END");
+                match_intro_->Cancel();
+            }
+            if (!sequencer_.opening().Active()) opening_timer_.Stop();
+            if (!table_.Animating()) motion_timer_.Stop();
+            if (settlement_view_) settlement_view_->CancelPresentation();
+            KillTimer(window_, 2);
+            try { audio_.Stop(); } catch (const std::exception &e) {
+                log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
+            }
+        }
+        if (fx.stop_audio_only) {
+            try { audio_.Stop(); } catch (const std::exception &e) {
+                log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
+            }
+        }
+        if (fx.cancel_settlement && settlement_view_) settlement_view_->CancelPresentation();
+        if (fx.cancel_intro && match_intro_ && fx.intro.kind == OnlineIntroRequest::Kind::None)
+            match_intro_->Cancel();
+
+        for (const auto &entry: fx.logs) log_(entry);
+
+        if (fx.notified_snapshot) {
+            UpdateExitVote();
+            if (matching_) matching_->SetSnapshot(*fx.notified_snapshot);
+            if (service_lobby_) service_lobby_->SetServiceSnapshot(*fx.notified_snapshot);
+        }
+
+        if (fx.intro.kind == OnlineIntroRequest::Kind::BeginMatch && match_intro_) {
+            RECT area{};
+            GetClientRect(window_, &area);
+            match_intro_->Move(area);
+            match_intro_->Begin(fx.intro.state, fx.intro.type);
+        }
+
+        if (fx.settlement_sync.valid && settlement_view_) {
+            const auto &sync = fx.settlement_sync;
+            settlement_view_->SetContinuation(sync.continuation);
+            settlement_view_->SetContext(sync.dealer, sync.honba, sync.sticks);
+            settlement_view_->Set(sync.settlement, sync.names, sync.red);
+            settlement_view_->SetConfirmEnabled(sync.confirm_enabled);
+            settlement_view_->SetRoundFinished(sync.round_finished);
+            settlement_view_->Show(sync.show);
+            if (sync.present) settlement_view_->Present();
+        }
+
+        if (fx.arrange) {
+            UpdateActionAvailability();
+            Arrange();
+        }
+
+        if (fx.intro.kind == OnlineIntroRequest::Kind::BeginResume && match_intro_) {
+            match_intro_->Resume(fx.intro.state, fx.intro.type);
+        }
+
+        if (fx.focus_action_view && action_view_) action_view_->Focus();
+        if (fx.focus_window) SetFocus(window_);
+        if (fx.confirm_match_start && client_) client_->ConfirmMatchStart();
+        if (fx.submit_action && client_) client_->SubmitAction(fx.submit_action->first, fx.submit_action->second);
+
+        if (fx.audio_queue_overflow) {
+            audio_error_ = "Online sound queue capacity exceeded";
+            log_("ONLINE AUDIO ERROR " + audio_error_);
+            StopAudio();
+        }
+        for (unsigned sound_id: fx.play_sounds) ScheduleSound(sound_id, 0);
+        if (fx.start_deferred_sound_timer && !sequencer_.deferred_sounds().empty())
+            SetTimer(window_, 2, 25, nullptr);
+
+        if (fx.result_timer_ms.has_value()) {
+            if (*fx.result_timer_ms == 0) KillTimer(window_, 5);
+            else if (!SetTimer(window_, 5, *fx.result_timer_ms, nullptr))
+                throw std::runtime_error("Cannot start settlement delay");
+        }
+        if (fx.auto_discard_timer_ms.has_value()) {
+            if (*fx.auto_discard_timer_ms == 0) KillTimer(window_, 10);
+            else if (!SetTimer(window_, 10, *fx.auto_discard_timer_ms, nullptr))
+                throw std::runtime_error("Cannot start automatic discard wait");
+        }
+        SyncTimers();
+
+        if (fx.dirty_all) InvalidateRect(window_, nullptr, FALSE);
+        else if (fx.dirty_board) {
+            const auto bounds = BoardBounds();
+            InvalidateRect(window_, &bounds, FALSE);
+        }
+        if (fx.update_lobby_music) UpdateLobbyMusic();
+        if (fx.notified_snapshot && connection_changed_) connection_changed_(*fx.notified_snapshot);
+    }
+
+    void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
+        if (change == PreferenceChange::MusicPreviewBegin || change == PreferenceChange::MusicPreviewEnd) {
+            music_preview_ = change == PreferenceChange::MusicPreviewBegin;
+            if (music_preview_) lobby_music_.Stop();
+            UpdateLobbyMusic();
+            return;
+        }
+        preferences_ = preferences;
+        settlement_view_->SetPeekEnabled(preferences.ResultPeek());
+        settlement_view_->SetTileColor(preferences.TileColor());
+        if (change == PreferenceChange::Artwork || change == PreferenceChange::Initial) {
+            lobby_background_ = {};
+            table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
+            InvalidateRect(window_, nullptr, FALSE);
+            if (service_lobby_ && !resource_directory_.empty())
+                service_lobby_->ConfigureArtwork(resource_directory_, canvas_width_);
+        }
+        if (change == PreferenceChange::Sound) {
+            sequencer_.set_sound_enabled(preferences.se_volume > 0);
+            settlement_view_->SetSoundEnabled(sequencer_.EffectsEnabled());
+            StopAudio();
+            audio_.SetVolumePercent(preferences.se_volume);
+            const auto voice_mode = GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
+                                                          GetPrivateProfileIntW(
+                                                              L"REBUILD", L"SoundEffectsOnly", 0, config_.c_str()),
+                                                          config_.c_str());
+            sequencer_.set_voice_mode(voice_mode);
+            sound_loaded_ = false;
+            audio_error_.clear();
+            log_("ONLINE AUDIO SETTINGS enabled=" + std::to_string(sequencer_.sound_enabled()) +
+                 " master=" + std::to_string(preferences.se_volume));
+            UpdateLobbyMusic(true);
+        }
+    }
+
     LobbyView::LobbyView(HWND parent, const std::filesystem::path &config, std::function<void(const std::string &)> log)
         : parent_(parent), config_(config), log_(std::move(log)), audio_(log_), lobby_music_(log_) {
         WNDCLASSEXW wc{sizeof(wc)};
@@ -91,12 +267,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         wc.style = CS_DBLCLKS;
         wc.lpszClassName = kLobbyWindow;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) throw std::runtime_error(
-            "Cannot register lobby view");
+        if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+            throw std::runtime_error("Cannot register lobby view");
         font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kLobbyWindow, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1024, 768,
-                                  parent, reinterpret_cast<HMENU>(220), wc.hInstance, this);
+        window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kLobbyWindow, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                                  0, 0, 1024, 768, parent, reinterpret_cast<HMENU>(220), wc.hInstance, this);
         if (!font_ || !window_) throw std::runtime_error("Cannot create lobby view");
         auto add = [&](int id, const wchar_t *type, const wchar_t *text, DWORD style) {
             const HWND control = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
@@ -112,18 +288,19 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             TextLabel(TextKey::button_normal_riichi).data(), TextLabel(TextKey::button_normal_ron).data(),
             TextLabel(TextKey::button_normal_tsumo).data(), TextLabel(TextKey::button_normal_abort_draw).data(),
             TextLabel(TextKey::button_normal_pass).data(), L"次局"};
-        for (int i = 1; i <= 8; ++i) add(5120 + i, L"BUTTON", buttons[i],
-                                         WS_TABSTOP | (i >= 1 && i <= 8 ? BS_OWNERDRAW : BS_PUSHBUTTON));
+        for (int i = 1; i <= 8; ++i)
+            add(5120 + i, L"BUTTON", buttons[i], WS_TABSTOP | (i >= 1 && i <= 8 ? BS_OWNERDRAW : BS_PUSHBUTTON));
         add(5151, L"BUTTON", TextLabel(TextKey::button_normal_nuki).data(), WS_TABSTOP | BS_OWNERDRAW);
         constexpr TextKey suits[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
         for (int i = 0; i < 3; ++i) add(5170 + i, L"BUTTON", TextLabel(suits[i]).data(), WS_TABSTOP | BS_OWNERDRAW);
         add(5173, L"BUTTON", TextLabel(TextKey::button_normal_exchange).data(), WS_TABSTOP | BS_OWNERDRAW);
         add(5174, L"BUTTON", L"结算", WS_TABSTOP | BS_PUSHBUTTON);
         add(5129, L"BUTTON", L"下一盘", WS_TABSTOP | BS_PUSHBUTTON);
-        for (int id: {5170, 5171, 5172, 5173, 5129}) SetWindowSubclass(controls_[id], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
+        for (int id: {5170, 5171, 5172, 5173, 5129})
+            SetWindowSubclass(controls_[id], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
         SetWindowSubclass(controls_[5151], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
-        for (int i = 1; i <= 8; ++i) SetWindowSubclass(controls_[5120 + i], ActionButtonProcedure, 1,
-                                                       reinterpret_cast<DWORD_PTR>(&log_));
+        for (int i = 1; i <= 8; ++i)
+            SetWindowSubclass(controls_[5120 + i], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
         add(5137, L"BUTTON", L"返回大厅", WS_TABSTOP | BS_PUSHBUTTON);
         add(0xbc6, L"BUTTON", L"EXIT", WS_TABSTOP | BS_OWNERDRAW);
         SetWindowSubclass(controls_[0xbc6], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
@@ -134,8 +311,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         vote_class.lpszClassName = L"TENHOU_EXIT_VOTE";
         vote_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
         vote_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
-        if (!RegisterClassExW(&vote_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) throw std::runtime_error(
-            "Cannot register exit vote");
+        if (!RegisterClassExW(&vote_class) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+            throw std::runtime_error("Cannot register exit vote");
         RECT vote_bounds{0, 0, 420, 190};
         AdjustWindowRectEx(&vote_bounds, WS_POPUP | WS_CAPTION, FALSE, WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT);
         exit_vote_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, vote_class.lpszClassName, L"投票退出对局",
@@ -154,11 +331,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         exit_vote_text_ = vote_control(L"STATIC", L"", 5162, 20, 18, 380, 105, SS_LEFT);
         exit_yes_ = vote_control(L"BUTTON", L"同意退出", 5163, 60, 135, 130, 30, WS_TABSTOP | BS_PUSHBUTTON);
         exit_no_ = vote_control(L"BUTTON", L"继续对局", 5164, 225, 135, 130, 30, WS_TABSTOP | BS_DEFPUSHBUTTON);
-        animation_enabled_ = GetPrivateProfileIntW(L"REBUILD", L"NetworkAnimation", 1, config_.c_str()) != 0;
+        sequencer_.set_animation_enabled(GetPrivateProfileIntW(L"REBUILD", L"NetworkAnimation", 1, config_.c_str()) != 0);
         settlement_view_ = std::make_unique<SettlementView>(window_);
         settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
             if (client_ && Snapshot().game.initialized)
-            table_.Paint(dc, r, Snapshot().game, false);
+                table_.Paint(dc, r, Snapshot().game, false);
         });
         settlement_view_->SetConfirmHandler([this] {
             const auto &a = Snapshot().actions;
@@ -169,29 +346,19 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             else if (Snapshot().phase == LobbyPhase::MatchComplete && Snapshot().game.complete) {
                 client_->SubmitLobby(Snapshot().lobby_revision, "return");
             } else {
-                show_results_ = false;
+                sequencer_.set_show_results(false);
                 Update(Snapshot());
             }
         });
         action_view_ = std::make_unique<ActionSelectionView>(
             window_, [this](std::uint64_t revision, std::size_t index) {
-                if (!match_intro_->Active() && !opening_.Active() && !Moving() && !show_results_ && selection_.Active()
-                    &&
-                    revision == selection_.revision && revision == Snapshot().actions.revision)
+                if (!match_intro_->Active() && !sequencer_.opening().Active() && !Moving() &&
+                    !sequencer_.show_results() && sequencer_.selection().Active() &&
+                    revision == sequencer_.selection().revision && revision == Snapshot().actions.revision)
                     Submit(index);
             }, [this] { CancelSelection(); });
         match_intro_ = std::make_unique<MatchIntroView>(window_, [this] {
-            opening_.ResumeClock(AnimationNow());
-            if (start_barrier_) {
-                if (Snapshot().official) start_barrier_ = false;
-                client_->ConfirmMatchStart();
-            }
-            else if (start_sound_pending_) {
-                start_sound_pending_ = false;
-                PlaySoundId(112);
-            }
-            log_("ONLINE MATCH INTRO DONE");
-            Update(Snapshot());
+            ApplyEffects(sequencer_.OnMatchIntroFinished(client_->snapshot(), MakeContext(), MakeMotion()));
         });
         match_intro_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
         settlement_view_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
@@ -200,8 +367,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
             }
         });
-        settlement_view_->SetSoundEnabled(sound_enabled_);
-        settlement_view_->SetAnimationEnabled(animation_enabled_);
+        settlement_view_->SetSoundEnabled(sequencer_.sound_enabled());
+        settlement_view_->SetAnimationEnabled(sequencer_.animation_enabled());
         matching_ = std::make_unique<MatchmakingView>(window_, log_);
         client_ = std::make_unique<NetworkClient>([this](const LobbySnapshot &snapshot) { Update(snapshot); }, log_,
                                                   [this](const NetworkMessage &message, const LobbySnapshot &snapshot) {
@@ -209,8 +376,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                                                   });
         matching_->Bind([this](const std::string &command, unsigned value,
                                const std::map<std::string, std::string> &settings) {
-            if (command == "match" || command == "cancel") client_->SubmitLobby(
-                client_->snapshot().lobby_revision, command, value);
+            if (command == "match" || command == "cancel")
+                client_->SubmitLobby(client_->snapshot().lobby_revision, command, value);
             else client_->NativeRequest(command, value, settings);
         });
         Update(Snapshot());
@@ -226,7 +393,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         match_intro_.reset();
         action_view_.reset();
         settlement_view_.reset();
-        if (window_ &&IsWindow(window_)) DestroyWindow(window_);
+        if (window_ && IsWindow(window_)) DestroyWindow(window_);
         if (exit_vote_) DestroyWindow(exit_vote_);
         if (exit_font_) DeleteObject(exit_font_);
         if (font_) DeleteObject(font_);
@@ -269,12 +436,10 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::Show(bool visible) {
         if (!visible) {
-            hover_point_ = {-1, -1};
-            ResetActionClock();
-            CancelResultTimer();
+            sequencer_.set_hover_point(-1, -1);
+            ApplyEffects(sequencer_.ResetActionClock());
+            ApplyEffects(sequencer_.CancelResultTimer());
             StopSound();
-        }
-        if (!visible) {
             ClearPresentationQueue();
             matching_->Reset();
             if (service_lobby_) service_lobby_->Show(false);
@@ -293,11 +458,13 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         UpdateLobbyMusic();
     }
 
-    void LobbyView::Disconnect() { if (client_->active() || Snapshot().reconnect_available) client_->Disconnect(); }
+    void LobbyView::Disconnect() {
+        if (client_->active() || Snapshot().reconnect_available) client_->Disconnect();
+    }
 
     void LobbyView::Save() {
-        if (!WritePrivateProfileStringW(L"REBUILD", L"NetworkAnimation", animation_enabled_ ? L"1" : L"0",
-                                        config_.c_str()))
+        if (!WritePrivateProfileStringW(L"REBUILD", L"NetworkAnimation",
+                                        sequencer_.animation_enabled() ? L"1" : L"0", config_.c_str()))
             throw std::runtime_error("Cannot save server preferences");
     }
 
@@ -309,9 +476,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::ConfigureArtwork(const std::filesystem::path &directory, int width) {
         CancelHandDrag();
-        captions_.Clear();
-        KillTimer(window_, 8);
+        sequencer_.captions().Clear();
         CancelSelection();
+        SyncTimers();
         action_view_->Configure(directory, width);
         match_intro_->Configure(directory, width);
         StopSound();
@@ -346,12 +513,14 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         matching_->Move(r);
         matching_->Show(!game && !service && (!session.official || session.phase == LobbyPhase::Error));
         if (service_lobby_) service_lobby_->Show(service && !session.game.started && !session.recovering &&
-                                               lobby_ready && IsWindowVisible(window_));
+                                                 lobby_ready && IsWindowVisible(window_));
         for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
         const auto board = BoardBounds();
         settlement_view_->Move(board);
         action_view_->Move(board);
-        if (game && !show_results_) {
+        const bool intro_active = match_intro_ && match_intro_->Active();
+        const bool table_anim = table_.Animating();
+        if (game && !sequencer_.show_results()) {
             if (Snapshot().variant_active) {
                 const auto &s = Snapshot();
                 const auto target = FitNativeCanvas(board, canvas_width_);
@@ -362,27 +531,35 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 const auto place = [&](int id, int x) {
                     MoveWindow(controls_.at(id), target.left + x * (target.right - target.left) / canvas_width_,
                                target.top + y * (target.bottom - target.top) / (canvas_width_ * 3 / 4),
-                               bw * (target.right - target.left) / canvas_width_, bh * (target.bottom - target.top) / (canvas_width_ * 3 / 4), TRUE);
+                               bw * (target.right - target.left) / canvas_width_,
+                               bh * (target.bottom - target.top) / (canvas_width_ * 3 / 4), TRUE);
                     ShowWindow(controls_.at(id), SW_SHOW);
                 };
                 if (s.variant.phase == VariantPhase::Missing && LocalTableInput() && !Moving())
                     for (int suit = 0; suit < 3; ++suit) {
-                        const auto found = std::find_if(s.actions.choices.begin(), s.actions.choices.end(), [suit](const OnlineAction &a) { return a.kind == "dingque" && a.suit == suit; });
+                        const auto found = std::find_if(s.actions.choices.begin(), s.actions.choices.end(),
+                            [suit](const OnlineAction &a) { return a.kind == "dingque" && a.suit == suit; });
                         if (found != s.actions.choices.end()) {
                             place(5170 + suit, anchor.x + 65 - (2 - suit) * stride);
-                            EnableWindow(controls_.at(5170 + suit), LocalTableInput() && s.actions.pending.empty());
+                            EnableWindow(controls_.at(5170 + suit),
+                                         sequencer_.IsActionButtonEnabled(5170 + suit, session, intro_active, table_anim));
                         }
                     }
                 if (s.variant.phase == VariantPhase::Exchange && LocalTableInput() && !Moving() &&
-                    selection_.group == "exchange" && selection_.Confirm(s.actions) != static_cast<std::size_t>(-1)) {
+                    sequencer_.selection().group == "exchange" &&
+                    sequencer_.selection().Confirm(s.actions) != static_cast<std::size_t>(-1)) {
                     place(5173, anchor.x + 65);
-                    EnableWindow(controls_.at(5173), LocalTableInput() && selection_.Confirm(s.actions) != static_cast<std::size_t>(-1));
+                    EnableWindow(controls_.at(5173),
+                                 sequencer_.IsActionButtonEnabled(5173, session, intro_active, table_anim));
                 }
                 if (!s.game.settlement.receipts.empty() || !s.last_settlement.receipts.empty()) {
-                    MoveWindow(controls_.at(5174), 12, 50, 80, 26, TRUE); ShowWindow(controls_.at(5174), SW_SHOW);
+                    MoveWindow(controls_.at(5174), 12, 50, 80, 26, TRUE);
+                    ShowWindow(controls_.at(5174), SW_SHOW);
                 }
                 if (s.variant.phase == VariantPhase::Ended) {
-                    place(5129, anchor.x + 65); EnableWindow(controls_.at(5129), s.actions.pending.empty() && !s.recovering && !s.table_paused);
+                    place(5129, anchor.x + 65);
+                    EnableWindow(controls_.at(5129),
+                                 sequencer_.IsActionButtonEnabled(5129, session, intro_active, table_anim));
                 }
             }
             if (Snapshot().phase == LobbyPhase::MatchComplete) {
@@ -390,10 +567,9 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 ShowWindow(controls_.at(5137), SW_SHOW);
             }
             const auto target = FitNativeCanvas(board, canvas_width_);
-            for (const auto &p: BuildActionPlacements(Snapshot().actions, canvas_width_,
-                                                      table_.ActionAnchor(Snapshot().game))) {
+            const auto anchor = table_.ActionAnchor(Snapshot().game);
+            for (const auto &p: BuildActionPlacements(Snapshot().actions, canvas_width_, {anchor.x, anchor.y})) {
                 if (SuppressCallPrompt()) continue;
-                // Only original action artwork; no inspector, discard or next toolbar.
                 if (p.button == 5120 || p.button == 5129) continue;
                 const int x = target.left + p.rect.left * (target.right - target.left) / canvas_width_;
                 const int y = target.top + p.rect.top * (target.bottom - target.top) / (canvas_width_ * 3 / 4);
@@ -403,15 +579,12 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 ShowWindow(controls_.at(p.button), SW_SHOW);
             }
         }
-        action_view_->Set(selection_, Snapshot().actions, Snapshot().game,
-                          game && !show_results_ && !SuppressCallPrompt() && !match_intro_->Active() && !opening_.
-                          Active() && !Moving());
-        // Introduction owns the final sibling visibility until its finish callback.
+        action_view_->Set(sequencer_.selection(), Snapshot().actions, Snapshot().game,
+                          game && !sequencer_.show_results() && !SuppressCallPrompt() && !intro_active &&
+                          !sequencer_.opening().Active() && !Moving());
         match_intro_->Move(r);
-        const auto &live = client_->snapshot();
-        if (game && live.exit_allowed && live.phase == LobbyPhase::Game && !match_intro_->Active()) {
+        if (game && session.exit_allowed && session.phase == LobbyPhase::Game && !intro_active) {
             const auto target = FitNativeCanvas(board, canvas_width_);
-            // Original 0047d7c5: x=10, y=004a6450, preserve measured text size.
             HDC dc = GetDC(window_);
             const auto old = SelectObject(dc, exit_font_);
             SIZE size{};
@@ -420,7 +593,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             ReleaseDC(window_, dc);
             const int y = std::min<int>(r.bottom - 22, target.bottom - (canvas_width_ == 1440 ? 57 : 32));
             MoveWindow(controls_.at(0xbc6), target.left + 10, y, size.cx + 16, size.cy + 8, TRUE);
-            EnableWindow(controls_.at(0xbc6), !live.exit_pending && !live.exit_voting && !live.recovering);
+            EnableWindow(controls_.at(0xbc6),
+                         sequencer_.IsActionButtonEnabled(0xbc6, session, intro_active, table_anim));
             ShowWindow(controls_.at(0xbc6), SW_SHOW);
             BringWindowToTop(controls_.at(0xbc6));
         }
@@ -436,105 +610,64 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
 
     void LobbyView::SetOriginalDisplay(bool enabled) {
         CancelHandDrag();
-        captions_.Clear();
-        KillTimer(window_, 8);
+        sequencer_.captions().Clear();
         CancelSelection();
         StopSound();
         match_intro_->Cancel();
         (void) enabled;
-        original_display_ = true;
+        sequencer_.set_original_display(true);
         table_.SetOriginalDisplay(true);
+        SyncTimers();
         Arrange();
         InvalidateRect(window_, nullptr, FALSE);
     }
 
     void LobbyView::Submit(std::size_t index) {
-        if (client_->snapshot().table_paused || client_->snapshot().exit_pending) return;
-        if (match_intro_->Active() || opening_.Active() || Moving() || Snapshot().actions.revision != client_->
-            snapshot().actions.revision) return;
-        const auto &a = Snapshot().actions;
-        if (!a.enabled || !a.pending.empty() || index >= a.choices.size()) return;
-        if (Snapshot().recovering) return;
-        if (show_results_ && (a.choices[index].kind != "next" || settlement_view_->Animating())) return;
-        if (a.choices[index].kind == "riichi") {
-            AnnounceRiichi();
-            suppress_self_reach_ = true;
-        }
-        client_->SubmitAction(action_revision_, index);
+        if (!client_) return;
+        ApplyEffects(sequencer_.Submit(index, client_->snapshot(), MakeContext(), table_.Animating()));
     }
 
     void LobbyView::PreferenceInput(bool double_click) {
-        if (!LocalTableInput() || Moving() || selection_.Active() || pressed_tile_ >= 0 || pressed_auto_ >= 0 ||
-            hand_dragged_) return;
-        preferences_ = ClientPreferences::Load(config_); // Original 0047abe8/0047b5fd reads FLAGS0 at the input branch.
+        if (!LocalTableInput() || Moving() || sequencer_.selection().Active() ||
+            sequencer_.pressed_tile() >= 0 || sequencer_.pressed_auto() >= 0 || sequencer_.hand_dragged())
+            return;
+        preferences_ = ClientPreferences::Load(config_);
         const auto &snapshot = Snapshot();
         const auto index = PreferenceShortcut(preferences_, double_click, snapshot.game, snapshot.actions);
         if (index != static_cast<std::size_t>(-1)) {
-            log_(std::string("ONLINE SHORTCUT ") + (double_click ? "double" : "right") + " revision=" + std::to_string(
-                     snapshot.actions.revision));
+            log_(std::string("ONLINE SHORTCUT ") + (double_click ? "double" : "right") + " revision=" +
+                 std::to_string(snapshot.actions.revision));
             Submit(index);
         }
     }
 
-    void LobbyView::AnnounceRiichi() {
-        const auto &s = Snapshot();
-        if (riichi_sound_revision_ == s.actions.revision) return;
-        riichi_sound_revision_ = s.actions.revision;
-        ReplayEvent event;
-        event.kind = ReplayEventKind::Reach;
-        event.attributes["step"] = "1";
-        event.who = 0;
-        if (captions_.Accept(event)) {
-            SetTimer(window_, 8, 15, nullptr);
-            InvalidateRect(window_, nullptr, FALSE);
-        }
-        for (auto id: ReplaySounds(event, s.game.players[0].gender, effects_only_, individual_voices_)) PlaySoundId(id);
-        log_("ONLINE RIICHI ANNOUNCE revision=" + std::to_string(riichi_sound_revision_));
-    }
-
-    void LobbyView::CancelResultTimer() {
-        KillTimer(window_, 5);
-        result_deadline_ = 0;
-    }
-
     void LobbyView::CancelSelection() {
-        if (selection_.group == "riichi") riichi_sound_revision_ = 0;
-        selection_.Clear();
-        action_filter_ = "discard";
+        const auto fx = sequencer_.CancelSelection();
         if (client_ && action_view_) {
-            action_view_->Set(selection_, Snapshot().actions, Snapshot().game, false);
+            action_view_->Set(sequencer_.selection(), Snapshot().actions, Snapshot().game, false);
             InvalidateRect(window_, nullptr, FALSE);
         }
+        if (fx.release_capture && GetCapture() == window_) ReleaseCapture();
     }
 
     bool LobbyView::LocalTableInput() const {
-        if (!client_ || show_results_ || match_intro_->Active() || opening_.Active() || start_barrier_)
-            return false;
-        const auto &s = Snapshot();
-        return s.phase == LobbyPhase::Game && s.game.initialized && s.actions.enabled && s.actions.pending.empty() && !s.game.ended && !s.game.players[0].retired && !s.recovering
-               && !client_->snapshot().table_paused && !client_->snapshot().exit_pending;
+        return client_ && sequencer_.LocalTableInput(client_->snapshot(), match_intro_ && match_intro_->Active());
     }
 
     bool LobbyView::AutomaticInput() const {
-        // Original WC_ITEM_CHECK children have their own input path (004a9080),
-        // independent of hand actions, animation and the local start barrier.
-        if (!client_ || show_results_) return false;
-        const auto &s = Snapshot();
-        return s.phase == LobbyPhase::Game && s.game.initialized && !s.recovering && !client_->snapshot().table_paused
-               && !client_->snapshot().exit_pending;
+        return client_ && sequencer_.AutomaticInput(client_->snapshot());
     }
 
     void LobbyView::CancelHandDrag() {
-        pressed_tile_ = pressed_auto_ = -1;
-        hand_dragged_ = false;
-        if (GetCapture() == window_) ReleaseCapture();
+        const auto fx = sequencer_.CancelHandDrag();
+        if (fx.release_capture && GetCapture() == window_) ReleaseCapture();
     }
 
     bool LobbyView::HandleKey(UINT key) {
         if (!IsWindowVisible(window_) || !client_) return false;
         if (service_lobby_ && service_lobby_->HandleKey(key)) return true;
         if (settlement_view_->HandleKey(key)) return true;
-        if (!selection_.Active()) return key == VK_ESCAPE && !Snapshot().actions.pending.empty();
+        if (!sequencer_.selection().Active()) return key == VK_ESCAPE && !Snapshot().actions.pending.empty();
         if (key == VK_ESCAPE) {
             CancelSelection();
             UpdateActions();
@@ -545,102 +678,18 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         return false;
     }
 
-    void LobbyView::ResetActionClock() {
-        clock_active_ = false;
-        clock_deadline_ = 0;
-        clock_warning_second_ = -1;
-        KillTimer(window_, 3);
-    }
-
     void LobbyView::ActionClockTick() {
-        if (!clock_active_ || !clock_deadline_ || !client_) return;
-        const auto &s = client_->snapshot();
-        if (s.actions.revision != clock_revision_ || !s.actions.pending.empty() || s.game.ended || s.recovering || s.
-            actions.choices.empty()) {
-            ResetActionClock();
-            return;
-        }
-        const auto now = GetTickCount64();
-        const auto remaining = now >= clock_deadline_ ? 0 : clock_deadline_ - now;
-        const int second = static_cast<int>((remaining + 999) / 1000);
-        // FUN_004a9c40: SE_TICK tests total base + reserve <= 2000ms,
-        // includes zero, and never sounds for an infinite/finished action.
-        if (second <= 2 && second != clock_warning_second_) {
-            clock_warning_second_ = second;
-            PlaySoundId(108);
-        }
-        if (!remaining) KillTimer(window_, 3);
-    }
-
-    void LobbyView::ReceiveActionClock(const NetworkMessage &message, const LobbySnapshot &snapshot) {
-        if (message.tag != "CLOCK") return;
-        ResetActionClock();
-        if (snapshot.phase != LobbyPhase::Game || !snapshot.actions.enabled || snapshot.actions.choices.empty() ||
-            snapshot.game.ended || snapshot.recovering)
-            return;
-        const auto it = message.attributes.find("ms");
-        if (it == message.attributes.end()) return;
-        int ms = 0;
-        const auto &text = it->second;
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), ms);
-        if (parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() || ms < -1 || ms > 86400000) return;
-        clock_active_ = true;
-        clock_revision_ = snapshot.actions.revision;
-        clock_base_ms_ = -1;
-        if (const auto base = message.attributes.find("base_ms"); base != message.attributes.end()) {
-            int value = 0;
-            const auto read = std::from_chars(base->second.data(), base->second.data() + base->second.size(), value);
-            if (read.ec == std::errc() && read.ptr == base->second.data() + base->second.size() && value >= 0 && value
-                <= 300000) clock_base_ms_ = value;
-        }
-        clock_deadline_ = ms < 0 ? 0 : GetTickCount64() + static_cast<ULONGLONG>(ms);
-        clock_base_deadline_ = GetTickCount64() + static_cast<ULONGLONG>(std::max(0, clock_base_ms_));
-        if (clock_deadline_) SetTimer(window_, 3, 100, nullptr);
+        if (!client_) return;
+        ApplyEffects(sequencer_.ActionClockTick(client_->snapshot(), MakeContext()));
     }
 
     TableInteraction LobbyView::Interaction(const LobbySnapshot &snapshot) {
-        TableInteraction result;
-        result.automatic = automatic_;
-        if (snapshot.variant_active && snapshot.variant.Preparing()) {
-            if (snapshot.variant.phase == VariantPhase::Exchange) {
-                const auto &direction = snapshot.variant.direction;
-                result.hint = (direction == "clockwise" ? L"顺时针" : direction == "counterclockwise" ? L"逆时针" : L"对家") +
-                    std::wstring(L"换三张  ") + std::to_wstring(selection_.selected.size()) + L" / 3";
-            } else result.hint = L"请选择定缺花色";
-            if ((!snapshot.actions.pending.empty() || snapshot.actions.choices.empty()) && !snapshot.recovering)
-                result.hint = L"选择完毕，等待其他玩家";
-        }
-        result.hovered_button = HitAutomaticButton(hover_point_.x, hover_point_.y);
-        if (!LocalTableInput()) return result;
-        result.hovered = table_.HitTile(BoardBounds(), snapshot.game, hover_point_.x, hover_point_.y);
-        // Local hover/manual order remain available during opponent queue waits.
-        // Playable colours and requests still require the presented live revision.
-        if (Moving() || snapshot.actions.revision != client_->snapshot().actions.revision) return result;
-        const std::string kind = action_filter_ == "riichi" ? "riichi" : "discard";
-        for (const auto &choice: snapshot.actions.choices)
-            if (choice.kind == kind && choice.tiles.size() == 1)
-                result.playable.push_back(choice.tiles[0]);
-        if (selection_.HandSelection()) result.playable = selection_.Selectable(snapshot.actions);
-        result.selected = selection_.selected;
-        result.selecting = selection_.HandSelection();
-        result.restrict_discards = !snapshot.variant_active && (!result.playable.empty() || action_filter_ == "riichi") &&
-                                   !result.selecting;
-        if (clock_active_ &&clock_revision_ == snapshot.actions.revision && snapshot.actions.pending.empty())
-        {
-            const auto now = GetTickCount64();
-            if (!clock_deadline_) result.countdown = L"\u221e+0";
-            else {
-                const auto remaining = clock_deadline_ > now ? clock_deadline_ - now : 0;
-                const auto base = clock_base_ms_ < 0
-                                      ? remaining
-                                      : std::min(remaining, clock_base_deadline_ > now
-                                                                ? clock_base_deadline_ - now
-                                                                : 0);
-                result.countdown = std::to_wstring((base + 999) / 1000) + L"+" + std::to_wstring(
-                                       (remaining - base + 999) / 1000);
-            }
-        }
-        return result;
+        const auto [hx, hy] = sequencer_.hover_point();
+        return sequencer_.BuildInteraction(
+            snapshot, client_->snapshot(), match_intro_ && match_intro_->Active(), table_.Animating(),
+            HitAutomaticButton(hx, hy),
+            [&] { return table_.HitTile(BoardBounds(), snapshot.game, hx, hy); },
+            GetTickCount64());
     }
 
     int LobbyView::HitAutomaticButton(int x, int y) const {
@@ -659,125 +708,43 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
     }
 
     bool LobbyView::SuppressCallPrompt() const {
-        const auto &a = Snapshot().actions;
-        return (automatic_[1] || automatic_[2]) &&
-               std::any_of(a.choices.begin(), a.choices.end(),
-                           [](const OnlineAction &c) { return c.kind == "skip"; }) &&
-               std::none_of(a.choices.begin(), a.choices.end(), [](const OnlineAction &c) { return c.kind == "ron"; });
+        return client_ && sequencer_.SuppressCallPrompt(client_->snapshot());
     }
 
     void LobbyView::AutomaticAction() {
-        const auto &s = Snapshot();
-        if (s.variant_active && s.variant.Preparing()) return;
-        if (!IsWindowVisible(window_) || match_intro_->Active() || opening_.Active() || Moving() || s.phase !=
-            LobbyPhase::Game ||
-            !s.actions.enabled || !s.actions.pending.empty() || s.game.ended || s.recovering || client_->snapshot().
-            table_paused)
-            return;
-        const auto &choices = s.actions.choices;
-        for (std::size_t i = 0; i < choices.size(); ++i) if (
-            automatic_[3] && (choices[i].kind == "ron" || choices[i].kind == "tsumo")) {
-            Submit(i);
-            return;
-        }
-        const bool ron = std::any_of(choices.begin(), choices.end(),
-                                     [](const OnlineAction &c) { return c.kind == "ron"; });
-        for (std::size_t i = 0; i < choices.size(); ++i) {
-            const auto &c = choices[i];
-            if ((automatic_[1] || automatic_[2]) && !ron && c.kind == "skip") {
-                Submit(i);
-                return;
-            }
-            // Preserve explicit win/kan/riichi decisions; tsumogiri only handles an ordinary draw.
-            if ((automatic_[2] || s.game.players[0].reach >= 2) && c.kind == "discard" && c.tiles == std::vector<int>{
-                    s.game.players[0].drawn_tile
-                } &&
-                std::all_of(choices.begin(), choices.end(),
-                            [](const OnlineAction &a) { return a.kind == "discard"; })) {
-                if (!automatic_discard_at_ || GetTickCount64() < automatic_discard_at_) return;
-                log_("ONLINE AUTO DISCARD tile=" + std::to_string(s.game.players[0].drawn_tile) + " tick=" +
-                     std::to_string(GetTickCount64()));
-                Submit(i);
-                return;
-            }
-        }
-    }
-
-    void LobbyView::UpdateAutomaticTimer() {
-        const auto &snapshot = Snapshot();
-        const bool needed = snapshot.actions.enabled && !snapshot.actions.choices.empty() && !snapshot.game.ended &&
-                            (automatic_[1] || automatic_[2] || automatic_[3] || snapshot.game.players[0].reach >= 2);
-        if (needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, 4, 100, nullptr) != 0;
-        else if (!needed && automatic_timer_) {
-            KillTimer(window_, 4);
-            automatic_timer_ = false;
-        }
+        if (!client_) return;
+        ApplyEffects(sequencer_.AutomaticAction(client_->snapshot(), MakeContext(), table_.Animating()));
     }
 
     void LobbyView::ApplyAutomaticSort() {
-        if (!sort_refresh_pending_) return;
-
-        sort_refresh_pending_ = false;
-        table_.SetAutoSort(automatic_[0], Snapshot().game);
-        if (animation_enabled_ &&table_.Animating()) motion_timer_.Start(window_, 6);
-        else table_.CancelAnimation();
-        UpdateActionAvailability();
-        const auto bounds = BoardBounds();
-        InvalidateRect(window_, &bounds, FALSE);
+        if (!client_) return;
+        ApplyEffects(sequencer_.ApplyAutomaticSort(client_->snapshot(), MakeMotion()));
     }
 
     void LobbyView::UpdateActionAvailability() {
-        const auto &a = Snapshot().actions;
-        const auto group = [](const std::string &kind) {
-            return kind.find("kan") != std::string::npos ? std::string("kan") : kind;
-        };
-        const char *kinds[]{"discard", "chi", "pon", "kan", "riichi", "ron", "tsumo", "draw", "skip", "next"};
-        const bool ready = !SuppressCallPrompt() && !match_intro_->Active() && !opening_.Active() && !Moving() && !
-                           show_results_ && !Snapshot().table_paused && !Snapshot().recovering && a.enabled && a.pending.empty();
+        if (!client_) return;
+        const auto &live = client_->snapshot();
+        const bool intro_active = match_intro_ && match_intro_->Active();
+        const bool table_anim = table_.Animating();
         for (int i = 1; i <= 8; ++i)
-            EnableWindow(controls_[5120 + i], ready &&
-                                              std::any_of(a.choices.begin(), a.choices.end(),
-                                                          [&](const OnlineAction &c) {
-                                                              return group(c.kind) == kinds[i];
-                                                          }));
-        EnableWindow(controls_[5151],
-                     ready && !start_barrier_ && std::any_of(a.choices.begin(), a.choices.end(),
-                                                             [](const OnlineAction &c) { return c.kind == "nuki"; }));
+            EnableWindow(controls_[5120 + i],
+                         sequencer_.IsActionButtonEnabled(5120 + i, live, intro_active, table_anim));
+        EnableWindow(controls_[5151], sequencer_.IsActionButtonEnabled(5151, live, intro_active, table_anim));
     }
 
     void LobbyView::UpdateActions() {
-        const auto &actions = Snapshot().actions;
-        const bool selecting = selection_.Active();
-        selection_.Sync(actions);
-        if (Snapshot().variant_active && Snapshot().variant.phase == VariantPhase::Exchange && !selection_.Active())
-            selection_.Open(actions, "exchange");
-        if (Compact() && Snapshot().game.initialized && !Snapshot().variant_active &&
-            !selection_.Active() && !SuppressCallPrompt())
-            selection_.Open(actions, "call");
-        action_revision_ = actions.revision;
-        if (selecting && !selection_.Active()) action_filter_ = "discard";
+        if (!client_) return;
+        (void) sequencer_.UpdateActions(client_->snapshot(), Compact());
         UpdateActionAvailability();
     }
 
     void LobbyView::Command(int id) {
-        if (pressed_action_ == id) {
-            pressed_action_ = -1;
-            if (button_revision_ != Snapshot().actions.revision) return;
-        }
-        if (id == 5174) { show_results_ = true; Update(Snapshot()); return; }
-        if (id >= 5170 && id <= 5173) {
-            if (!LocalTableInput()) return;
-            if (id == 5173) {
-                const auto index = selection_.Confirm(Snapshot().actions);
-                if (index != static_cast<std::size_t>(-1)) Submit(index);
-            } else {
-                const auto &choices = Snapshot().actions.choices;
-                for (std::size_t i = 0; i < choices.size(); ++i)
-                    if (choices[i].kind == "dingque" && choices[i].suit == id - 5170) { Submit(i); break; }
-            }
-            return;
-        }
+        if (!client_) return;
         if (id == 0xbc6) {
+            if (sequencer_.pressed_action() == id) {
+                sequencer_.pressed_action() = -1;
+                if (sequencer_.button_revision() != Snapshot().actions.revision) return;
+            }
             client_->ExitGame();
             return;
         }
@@ -790,220 +757,20 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             client_->SubmitLobby(Snapshot().lobby_revision, "return");
             return;
         }
-        if (client_->snapshot().table_paused) return;
-        if (id == 5150) {
-            CancelSelection();
-            UpdateActions();
-            Arrange();
-            return;
-        }
-        if (SuppressCallPrompt() && id >= 5121 && id <= 5128) return;
-        if ((id >= 5120 && id < 5130) || id == 5151) {
-            if (match_intro_->Active() || opening_.Active() || Moving() || (
-                    show_results_ && (id != 5129 || settlement_view_->Animating()))) return;
-            const char *kinds[]{"discard", "chi", "pon", "kan", "riichi", "ron", "tsumo", "draw", "skip", "next"};
-            const auto &choices = Snapshot().actions.choices;
-            const std::string wanted = id == 5151 ? "nuki" : kinds[id - 5120];
-            if (std::none_of(choices.begin(), choices.end(), [&](const OnlineAction &c) {
-                return c.kind == wanted || (wanted == "kan" && c.kind.find("kan") != std::string::npos);
-            }))
-                return;
-            if (id == 5124) AnnounceRiichi();
-            action_filter_ = wanted;
-            UpdateActions();
-            if (Compact() && id == 5123) {
-                selection_.Open(Snapshot().actions, "kan");
-                const auto unique = selection_.UniqueCall(Snapshot().actions, (Snapshot().game.type & 2) == 0);
-                if (unique != static_cast<std::size_t>(-1)) Submit(unique);
-                else { Arrange(); action_view_->Focus(); InvalidateRect(window_, nullptr, FALSE); }
-                return;
-            }
-            if (id == 5121 || id == 5122) {
-                const auto &snapshot = Snapshot();
-                selection_.Open(snapshot.actions, wanted);
-                const auto unique = selection_.UniqueCall(snapshot.actions, (snapshot.game.type & 2) == 0);
-                if (unique != static_cast<std::size_t>(-1)) {
-                    Submit(unique);
-                    return;
-                }
-            }
-            if (Compact() && (id == 5121 || id == 5122 || id == 5124)) {
-                log_("ACTION SELECT group=" + wanted + " revision=" + std::to_string(action_revision_));
-                if (id == 5124) selection_.Open(Snapshot().actions, wanted);
-                Arrange();
-                SetFocus(window_);
-                InvalidateRect(window_, nullptr, FALSE);
-                return;
-            }
-            CancelSelection();
-            action_filter_ = wanted;
-            if (id >= 5125) {
-                for (std::size_t i = 0; i < choices.size(); ++i) if (choices[i].kind == wanted) {
-                    Submit(i);
-                    break;
-                }
-            }
-            return;
-        }
+        ApplyEffects(sequencer_.HandleCommand(id, client_->snapshot(), Compact(), MakeContext(), MakeMotion()));
     }
 
     const LobbySnapshot &LobbyView::Snapshot() const {
-        return displaying_ ? displayed_ : client_->snapshot();
+        return sequencer_.Snapshot(client_->snapshot());
     }
 
     void LobbyView::ClearPresentationQueue() {
-        CancelHandDrag();
-        captions_.Clear();
-        KillTimer(window_, 8);
-        presentation_queue_.clear();
-        pause_ticks_ = draw_end_ticks_ = 0;
-        displaying_ = false;
-        automatic_discard_at_ = 0;
-        KillTimer(window_, 10);
-        table_.SetDrawEndSlots(14);
-        KillTimer(window_, 7);
+        ApplyEffects(sequencer_.ClearPresentationQueue(MakeMotion()));
     }
 
     void LobbyView::Update(const LobbySnapshot &incoming) {
-        if (incoming.actions.revision != action_revision_) hover_point_ = {-1, -1};
-        const bool paused = client_->snapshot().table_paused;
-        if (paused && !paused_at_) {
-            paused_at_ = GetTickCount64();
-            opening_.ResumeClock(AnimationNow());
-            CancelHandDrag();
-            CancelSelection();
-        } else if (!paused && paused_at_) {
-            const auto now = GetTickCount64(), delay = now - paused_at_;
-            const auto remaining = [&](ULONGLONG deadline) {
-                return static_cast<UINT>(deadline > now ? deadline - now : 1);
-            };
-            if (result_deadline_) result_deadline_ += delay;
-            if (automatic_discard_at_) automatic_discard_at_ += delay;
-            if (result_deadline_) SetTimer(window_, 5, remaining(result_deadline_), nullptr);
-            if (automatic_discard_at_) SetTimer(window_, 10, remaining(automatic_discard_at_), nullptr);
-            paused_at_ = 0;
-            opening_.ResumeClock(AnimationNow());
-        }
-        table_.SetPaused(paused);
-        settlement_view_->SetPaused(paused);
-        match_intro_->SetPaused(paused);
-        UpdateExitVote();
-        // A restored result can be visible directly from the live snapshot.
-        if (!incoming.game.initialized && (displaying_ || show_results_)) {
-            ClearPresentationQueue();
-            CancelSelection();
-            CancelResultTimer();
-            show_results_ = false;
-        }
-        // Leaving a table (including official EXIT/END without a TABLEEND frame) must
-        // stop opening wall animations, tile motion, deferred cues and active sound effects.
-        if (!incoming.recovering && !incoming.game.started && !incoming.game.initialized &&
-            (opening_.Active() || table_.Animating() || match_intro_->Active() ||
-             !deferred_sounds_.empty() || audio_.Active() || start_barrier_ || start_sound_pending_)) {
-            ClearPresentationQueue();
-            CancelSelection();
-            CancelResultTimer();
-            show_results_ = false;
-            suppress_self_reach_ = false;
-            start_barrier_ = false;
-            start_sound_pending_ = false;
-            match_intro_pending_ = true;
-            StopSound();
-        }
-        if (incoming.variant_active && (incoming.table_paused || incoming.recovering)) {
-            hover_point_ = {-1, -1}; CancelHandDrag(); CancelSelection();
-        }
-        if (matching_) matching_->SetSnapshot(incoming);
-        if (service_lobby_) service_lobby_->SetServiceSnapshot(incoming);
-        if (incoming.phase == LobbyPhase::Disconnected || incoming.phase == LobbyPhase::Error || incoming.recovering)
-            ClearPresentationQueue();
-        if (displaying_) {
-            if (presentation_queue_.empty() && incoming.game.events == displayed_.game.events)
-                displayed_ = incoming;
-            const auto &live = client_->snapshot();
-            displayed_.table_paused = live.table_paused;
-            for (int seat = 0; seat < 4; ++seat)
-                displayed_.game.players[seat].connected = live.game.players[seat].connected;
-        }
-        const auto &snapshot = displaying_ ? displayed_ : incoming;
-        if ((pressed_auto_ >= 0 ? !AutomaticInput() : !LocalTableInput()) || (pressed_tile_ >= 0 && std::find(
-                                                                                  snapshot.game.players[0].known_hand.
-                                                                                  begin(),
-                                                                                  snapshot.game.players[0].known_hand.
-                                                                                  end(), pressed_tile_) == snapshot.game
-                                                                              .players[0].known_hand.end()))
-            CancelHandDrag();
-        if (snapshot.actions.revision != riichi_sound_revision_) riichi_sound_revision_ = 0;
-        if (snapshot.phase != LobbyPhase::Game || snapshot.recovering || snapshot.game.ended || show_results_)
-            CancelSelection();
-        const auto &live = client_->snapshot();
-        if (clock_active_ && (live.phase != LobbyPhase::Game || live.recovering || live.table_paused ||
-                              live.actions.revision != clock_revision_ || !live.actions.pending.empty() || live.actions.
-                              choices.empty()))
-            ResetActionClock();
-        UpdateAutomaticTimer();
-        if (snapshot.phase == LobbyPhase::Disconnected || snapshot.phase == LobbyPhase::Error || snapshot.recovering) {
-            CancelResultTimer();
-            suppress_self_reach_ = false;
-            StopSound(snapshot.recovering && match_intro_->Resuming());
-        }
-        if (snapshot.phase == LobbyPhase::Disconnected) {
-            match_intro_pending_ = true;
-            resume_preparation_pending_ = false;
-        }
-        if (snapshot.actions.revision != sound_action_revision_) {
-            sound_action_revision_ = snapshot.actions.revision;
-            if (snapshot.phase == LobbyPhase::Game && snapshot.actions.enabled && !SuppressCallPrompt() &&
-                std::any_of(snapshot.actions.choices.begin(), snapshot.actions.choices.end(),
-                            [](const OnlineAction &c) {
-                                return c.kind == "chi" || c.kind == "pon" || c.kind.find("kan") != std::string::npos ||
-                                       c.kind == "riichi" || c.kind == "tsumo" || c.kind == "ron" || c.kind == "nuki";
-                            }) && event_sound_allowed_)
-                PlaySoundId(106);
-        }
-        const auto &settlement = snapshot.game.settlement.receipts.empty()
-                                     ? snapshot.last_settlement
-                                     : snapshot.game.settlement;
-        const bool result_available = !settlement.receipts.empty();
-        if (!result_available) {
-            CancelResultTimer();
-            show_results_ = false;
-        }
-        std::array<std::string, 4> result_names;
-        for (int i = 0; i < 4; ++i) result_names[i] = snapshot.game.settlement.receipts.empty()
-                                                          ? snapshot.last_result_names[i]
-                                                          : snapshot.game.players[i].name;
-        const bool history = snapshot.game.settlement.receipts.empty();
-        settlement_view_->SetContinuation(
-            !history && snapshot.actions.enabled && snapshot.game.ended && !snapshot.game.complete);
-        settlement_view_->SetContext(history ? snapshot.last_result_dealer : snapshot.game.dealer,
-                                     history ? snapshot.last_result_honba : snapshot.game.honba,
-                                     history ? snapshot.last_result_sticks : snapshot.game.sticks);
-        settlement_view_->Set(settlement, result_names,
-                              snapshot.game.settlement.receipts.empty()
-                                  ? snapshot.last_result_red
-                                  : (snapshot.game.type & 2) == 0);
-        settlement_view_->SetConfirmEnabled(
-            !paused && !snapshot.recovering && !client_->snapshot().exit_pending && snapshot.actions.pending.empty() &&
-            (!snapshot.game.complete || snapshot.phase == LobbyPhase::MatchComplete));
-        settlement_view_->SetRoundFinished(!history && snapshot.game.variant && snapshot.game.ended);
-        settlement_view_->Show(show_results_ && result_available);
-        if (show_results_ && result_available && !history && snapshot.game.ended) table_.PresentSettlement();
-        if (result_pending_ && show_results_ &&result_available) settlement_view_->Present();
-        result_pending_ = false;
-        UpdateActions();
-        Arrange();
-        if (incoming.recovering && !incoming.silent_recovery && (!incoming.native_service || resume_preparation_pending_) &&
-            incoming.game.started && original_display_ && IsWindowVisible(window_)) {
-            const bool beginning = !match_intro_->Resuming();
-            auto state = OnlineTableState(incoming.game);
-            if (incoming.official && incoming.game.has_dealer) state.initialized = true;
-            match_intro_->Resume(state, incoming.game.type);
-            if (beginning) log_("ONLINE RESUME PREPARATION BEGIN");
-        }
-        InvalidateRect(window_, nullptr, FALSE);
-        UpdateLobbyMusic();
-        if (connection_changed_) connection_changed_(incoming);
+        if (!client_) return;
+        ApplyEffects(sequencer_.SyncSnapshot(incoming, client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
     void LobbyView::StopSound(bool preserve_resume) {
@@ -1013,28 +780,25 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             match_intro_->Cancel();
         }
         opening_timer_.Stop();
-        opening_.Cancel();
-        opening_flowers_ = {};
-        deferred_sounds_.clear();
+        sequencer_.ResetForStopSound();
         table_.CancelAnimation();
-        result_pending_ = false;
         if (settlement_view_) settlement_view_->CancelPresentation();
         KillTimer(window_, 2);
         StopAudio();
     }
 
     void LobbyView::StopAudio() {
-        deferred_sounds_.clear();
+        sequencer_.deferred_sounds().clear();
         try { audio_.Stop(); } catch (const std::exception &e) {
             log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
         }
     }
 
     void LobbyView::SetQuickAudio(bool mute_effects, bool mute_music) {
-        if (effects_muted_ != mute_effects) {
-            effects_muted_ = mute_effects;
+        if (sequencer_.effects_muted() != mute_effects) {
+            sequencer_.set_effects_muted(mute_effects);
             if (mute_effects) StopAudio();
-            settlement_view_->SetSoundEnabled(EffectsEnabled());
+            settlement_view_->SetSoundEnabled(sequencer_.EffectsEnabled());
         }
         if (music_muted_ != mute_music) {
             music_muted_ = mute_music;
@@ -1054,7 +818,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 key = *offline_lobby_music_ ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
             } else if (client_ && IsWindowVisible(window_)) {
                 const auto &s = client_->snapshot();
-                const auto &game = displaying_ ? displayed_.game : s.game;
+                const auto &game = sequencer_.displaying() ? sequencer_.displayed().game : s.game;
                 if ((s.phase == LobbyPhase::Game || s.phase == LobbyPhase::MatchComplete) && game.initialized &&
                     (!s.recovering || s.silent_recovery)) {
                     const int last = static_cast<int>(((game.type & 8u) | 6u) >> 1) - ((game.type & 16u) ? 1 : 0);
@@ -1095,17 +859,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         UpdateLobbyMusic();
     }
 
-    void LobbyView::PlaySoundId(unsigned id, unsigned delay) {
-        if (!EffectsEnabled() || !audio_error_.empty() || !IsWindowVisible(window_)) return;
-        if (opening_.Active() && id != 104 && id != 105 && id != 102 && id != 112) {
-            if (deferred_sounds_.size() < 256) deferred_sounds_.push_back(id);
-            else {
-                audio_error_ = "Online sound queue capacity exceeded";
-                log_("ONLINE AUDIO ERROR " + audio_error_);
-                StopAudio();
-            }
-            return;
-        }
+    void LobbyView::ScheduleSound(unsigned id, unsigned delay) {
+        if (!sequencer_.EffectsEnabled() || !audio_error_.empty() || !IsWindowVisible(window_)) return;
         try {
             if (!sound_loaded_) {
                 sounds_.Load(resource_directory_, canvas_width_, config_);
@@ -1121,432 +876,35 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
     }
 
+    void LobbyView::PlaySoundId(unsigned id, unsigned delay) {
+        OnlineSequencerEffects fx;
+        sequencer_.QueueOrEmitSound(id, fx, IsWindowVisible(window_) != FALSE, audio_error_.empty());
+        if (fx.audio_queue_overflow) {
+            audio_error_ = "Online sound queue capacity exceeded";
+            log_("ONLINE AUDIO ERROR " + audio_error_);
+            StopAudio();
+            return;
+        }
+        for (unsigned sound_id: fx.play_sounds) ScheduleSound(sound_id, delay);
+    }
+
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
         if (snapshot.silent_recovery && snapshot.recovering) return;
-        if (snapshot.variant_active) {
-            if (message.tag == "VGO") {
-                ClearPresentationQueue(); StopSound(); CancelResultTimer();
-                start_barrier_ = false; variant_events_ = {}; variant_hand_ = 0;
-                show_results_ = false; match_intro_pending_ = true;
-                return;
-            }
-            if (message.tag == "VSTATE") {
-                if (!snapshot.variant.Preparing() || snapshot.actions.revision != Snapshot().actions.revision)
-                    CancelHandDrag();
-                if (snapshot.recovering || !IsWindowVisible(window_)) {
-                    ClearPresentationQueue();
-                    PresentVariantState(snapshot);
-                    return;
-                }
-                presentation_queue_.push_back({message, snapshot, EffectsEnabled() && audio_error_.empty()});
-                SetTimer(window_, 7, 15, nullptr);
-                if (!opening_.Active() && !match_intro_->Active() && !pause_ticks_ && !draw_end_ticks_ &&
-                    !table_.Animating() && !start_barrier_) PresentationTick();
-                // PREPARE waits for the initial snapshot to be installed before confirming.
-                if (start_barrier_ && (!displaying_ || snapshot.variant.hand_number != variant_hand_)) {
-                    auto item = std::move(presentation_queue_.back()); presentation_queue_.clear();
-                    displayed_ = std::move(item.snapshot); displaying_ = true;
-                    event_sound_allowed_ = item.sound_allowed;
-                    PresentVariantState(displayed_);
-                }
-                return;
-            }
-            if (message.tag == "CLOCK") { ReceiveActionClock(message, snapshot); return; }
-        }
-        // Native RESTORE also repairs a stale action within a running connection.
-        // Only a login/reconnect opens the original recovery preparation window.
-        if (message.tag == "RESTORE") resume_preparation_pending_ = match_intro_pending_;
-        if (message.tag == "EXITVOTE" && snapshot.exit_voting)
+        if (!snapshot.variant_active && message.tag == "EXITVOTE" && snapshot.exit_voting)
             exit_vote_deadline_ = GetTickCount64() + snapshot.exit_vote_ms;
-        if (message.tag == "TABLEEND") {
-            ClearPresentationQueue();
-            CancelSelection();
-            CancelResultTimer();
-            show_results_ = false;
-            StopSound();
-            start_barrier_ = false;
-            match_intro_pending_ = true;
-            return;
-        }
-        if (message.tag == "EXITVOTE" || message.tag == "PAUSED") return;
-        if (message.tag == "INIT" || message.tag == "REINIT") {
-            // ASM 00493133: INIT and REINIT share the preference initialization.
-            if (message.tag == "INIT" || !snapshot.silent_recovery) {
-                preferences_ = ClientPreferences::Load(config_);
-                // User-authorized per-hand defaults. Original INIT clears fa2/fa3
-                // and reloads fa4 from FLAGS0; fa1 originally persists after creation.
-                automatic_ = {true, false, false, false};
-                sort_refresh_pending_ = false;
-                table_.SetAutoSort(true, snapshot.game);
-                log_("ONLINE AUTO RESET sort=1 no_call=0 tsumogiri=0 win=0");
-            }
-            table_.CancelAnimation();
-        }
-        ReceiveActionClock(message, snapshot);
-        const auto &tag = message.tag;
-        const bool reset = tag == "GO" || tag == "INIT" || tag == "REINIT";
-        if (reset || snapshot.recovering || !IsWindowVisible(window_)) ClearPresentationQueue();
-        if (tag == "INIT" && IsWindowVisible(window_)) {
-            displayed_ = snapshot;
-            displaying_ = true;
-        }
-        const bool tile = !tag.empty() && std::string("TUVWtuvwDEFGdefg").find(tag[0]) != std::string::npos &&
-                          std::all_of(tag.begin() + 1, tag.end(), [](char c) { return c >= '0' && c <= '9'; });
-        const bool event = tile || tag == "N" || tag == "DORA" || tag == "REACH" || tag == "FURITEN" || tag == "AGARI"
-                           || tag == "RYUUKYOKU" || tag == "PROF";
-        if (snapshot.game.initialized && !snapshot.recovering && IsWindowVisible(window_) && (
-                event || !presentation_queue_.empty())) {
-            // Immutable public snapshots keep packet bursts from replacing a visible
-            // discard/draw. Receive/validation and the server clock keep running.
-            presentation_queue_.push_back({message, snapshot, EffectsEnabled() && audio_error_.empty()});
-            SetTimer(window_, 7, 15, nullptr);
-            if (!opening_.Active() && !match_intro_->Active() && !pause_ticks_ && !draw_end_ticks_ && !table_.
-                Animating()) PresentationTick();
-            return;
-        }
-        if (displaying_) displayed_ = snapshot;
-        event_sound_allowed_ = true;
-        PresentGameEvent(message, snapshot);
+        ApplyEffects(sequencer_.OnGameEvent(message, snapshot, client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
     void LobbyView::PresentationTick() {
-        if (client_->snapshot().table_paused) return;
-        if (opening_.Active() || match_intro_->Active() || start_barrier_) return;
-        if (pause_after_motion_ &&table_.Animating()) return;
-        if (pause_ticks_) {
-            --pause_ticks_;
-            return;
-        }
-        if (table_.Animating()) return;
-        if (draw_end_ticks_) {
-            const unsigned before = 14 - draw_end_ticks_ / 2;
-            --draw_end_ticks_;
-            const unsigned slots = 14 - draw_end_ticks_ / 2;
-            table_.SetDrawEndSlots(slots);
-            if (slots != before) {
-                const unsigned seats = DrawEndChangedSeats(OnlineTableState(Snapshot().game), slots - 1);
-                if (seats && event_sound_allowed_) PlaySoundId(104);
-                log_("ONLINE DRAW SLOT index=" + std::to_string(slots - 1) + " seats=" + std::to_string(seats) +
-                     " tick=" + std::to_string(GetTickCount64()));
-            }
-            InvalidateRect(window_, nullptr, FALSE);
-            if (draw_end_ticks_) return;
-            log_("ONLINE DRAW TABLE DONE tick=" + std::to_string(GetTickCount64()));
-            // FUN_004aad30 posts WM_TIMER/100 immediately for RYUUKYOKU.
-            result_deadline_ = GetTickCount64();
-            SetTimer(window_, 5, 1, nullptr);
-            return;
-        }
-        if (presentation_queue_.empty()) {
-            KillTimer(window_, 7);
-            Update(client_->snapshot());
-            return;
-        }
-        auto item = std::move(presentation_queue_.front());
-        presentation_queue_.pop_front();
-        displayed_ = std::move(item.snapshot);
-        displaying_ = true;
-        event_sound_allowed_ = item.sound_allowed;
-        log_("ONLINE PRESENT tag=" + item.message.tag + " tick=" + std::to_string(GetTickCount64()));
-        PresentGameEvent(item.message, displayed_);
-        Update(displayed_);
-    }
-
-    void LobbyView::PresentVariantState(const LobbySnapshot &snapshot) {
-        const auto &state = snapshot.variant;
-        const bool new_hand = state.hand_number != variant_hand_;
-        const auto cues = variant_events_.Consume(state, snapshot.recovering);
-        const bool live = !snapshot.recovering && IsWindowVisible(window_);
-        if (new_hand) {
-            variant_hand_ = state.hand_number;
-            CancelResultTimer(); show_results_ = false;
-            automatic_ = {true, false, false, false};
-            table_.SetAutoSort(true, snapshot.game);
-        }
-        if (variant_events_.resynchronized || new_hand || !live) {
-            CancelResultTimer(); StopSound();
-            opening_flowers_ = {};
-            captions_.Clear(); table_.SetDrawEndSlots(14);
-            table_.Accept(snapshot.game, ReplayEvent{}, false);
-            show_results_ = snapshot.game.ended;
-            if (new_hand && live && !snapshot.game.ended && (animation_enabled_ || EffectsEnabled())) {
-                table_.BeginOpening(opening_, snapshot.game, original_display_);
-                if (!state.Sichuan() && !state.events.empty() && state.events.back().kind == "start")
-                    for (int seat = 0; seat < 4; ++seat)
-                        opening_flowers_[state.Relative(seat)] = !state.players[seat].flowers.empty();
-                opening_.ResumeClock(AnimationNow());
-                if (state.hand_number == 1) {
-                    if (start_barrier_) start_sound_pending_ = true;
-                    else if (event_sound_allowed_) PlaySoundId(112);
-                }
-                opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
-            }
-            if (new_hand && live && !snapshot.game.ended && match_intro_pending_) {
-                match_intro_pending_ = false;
-                if (original_display_ && snapshot.actions.enabled) {
-                    RECT area{}; GetClientRect(window_, &area);
-                    match_intro_->Move(area);
-                    match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type);
-                    log_("ONLINE MATCH INTRO BEGIN");
-                }
-            }
-            if (start_barrier_ && live && !match_intro_->Active()) client_->ConfirmMatchStart();
-            return;
-        }
-        ReplayEvent presentation; presentation.tag = "VARIANT";
-        std::array<bool, 4> flower_caption{};
-        for (const auto &cue: cues) {
-            const auto event = VariantReplayEvent(cue, state);
-            // Automatic continuations have their own snapshots, so a draw cannot replace a call.
-            if (event.kind != ReplayEventKind::Metadata) presentation = event;
-            if (captions_.Accept(event)) SetTimer(window_, 8, 15, nullptr);
-            if (cue.kind == "exchange" || cue.kind == "dingque") {
-                captions_.AcceptText(TextKey::caption_complete, event.who); SetTimer(window_, 8, 15, nullptr);
-                if (event_sound_allowed_) PlaySoundId(106);
-            } else if (cue.kind == "flower") {
-                if (!flower_caption[event.who]) {
-                    flower_caption[event.who] = true;
-                    captions_.AcceptText(TextKey::caption_kita, event.who); SetTimer(window_, 8, 15, nullptr);
-                    if (event_sound_allowed_) PlaySoundId(107);
-                }
-            }
-            if (event_sound_allowed_) PlayEventSound(event, snapshot);
-        }
-        pause_ticks_ = ActionPauseTicks(presentation);
-        pause_after_motion_ = presentation.kind == ReplayEventKind::Draw;
-        const bool draw_end = snapshot.game.ended && !snapshot.game.settlement.receipts.empty() &&
-            snapshot.game.settlement.receipts.back().who < 0;
-        if (draw_end) presentation.kind = ReplayEventKind::DrawEnd;
-        try {
-            table_.Accept(snapshot.game, presentation, animation_enabled_ && !draw_end && !state.Preparing());
-            if (table_.Animating()) motion_timer_.Start(window_, 6, kTableTickMs);
-        } catch (const std::exception &error) {
-            table_.CancelAnimation(); motion_timer_.Stop();
-            log_(std::string("VARIANT ANIMATION FALLBACK ") + error.what());
-        }
-        if (presentation.kind == ReplayEventKind::Draw && presentation.who == 0) {
-            automatic_discard_at_ = GetTickCount64() + kAutomaticDiscardWaitMs;
-            SetTimer(window_, 10, kAutomaticDiscardWaitMs, nullptr);
-        }
-        if (presentation.kind == ReplayEventKind::Win) {
-            pause_ticks_ = 134; pause_after_motion_ = false;
-            if (snapshot.game.ended) {
-                result_deadline_ = GetTickCount64() + 2000;
-                SetTimer(window_, 5, 2000, nullptr);
-            }
-        } else if (draw_end) {
-            draw_end_ticks_ = 28; table_.SetDrawEndSlots(0);
-            SetTimer(window_, 7, 15, nullptr);
-        }
-    }
-
-    void LobbyView::PresentGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
-        if (message.tag == "VSTATE") { PresentVariantState(snapshot); return; }
-        if (message.tag == "RESTORED") {
-            StopSound();
-            match_intro_pending_ = false;
-            sound_action_revision_ = snapshot.actions.revision;
-            resume_preparation_pending_ = false;
-            show_results_ = snapshot.game.ended;
-            table_.SetPreferences(preferences_, config_, false);
-            table_.Accept(snapshot.game, ReplayEvent{}, false);
-            return;
-        }
-        if (message.tag == "GO") {
-            match_intro_->Cancel();
-            match_intro_pending_ = true;
-            start_barrier_ = false;
-            start_sound_pending_ = false;
-        }
-        if (snapshot.official && message.tag == "TAIKYOKU" && match_intro_pending_ && !snapshot.recovering) {
-            match_intro_pending_ = false;
-            if (original_display_ && IsWindowVisible(window_)) {
-                auto state = OnlineTableState(snapshot.game);
-                state.initialized = true;
-                start_barrier_ = true;
-                RECT area{};
-                GetClientRect(window_, &area);
-                match_intro_->Move(area);
-                match_intro_->Begin(state, snapshot.game.type);
-                table_.Prepare();
-            } else client_->ConfirmMatchStart();
-            return;
-        }
-        if (message.tag == "PREPARE") {
-            start_barrier_ = true;
-            return;
-        }
-        if (message.tag == "START") {
-            start_barrier_ = false;
-            opening_.ResumeClock(AnimationNow());
-            if (start_sound_pending_) {
-                start_sound_pending_ = false;
-                PlaySoundId(112);
-            }
-            log_("ONLINE ALL READY START");
-            UpdateActions();
-            Arrange();
-            return;
-        }
-        if (message.tag == "AGARI" || message.tag == "RYUUKYOKU" || message.tag == "PROF") match_intro_->Cancel();
-        if (message.tag == "REINIT") {
-            CancelResultTimer();
-            suppress_self_reach_ = false;
-            match_intro_pending_ = false;
-            sound_action_revision_ = snapshot.actions.revision;
-            table_.Accept(snapshot.game, ReplayEvent{}, false);
-            StopSound();
-            return; // Restored choices do not replay the availability hint.
-        }
-        if (!snapshot.game.initialized || snapshot.recovering || !IsWindowVisible(window_)) return;
-        ReplayEvent event;
-        event.tag = message.tag;
-        event.attributes = message.attributes;
-        if (event.tag == "INIT") {
-            CancelResultTimer();
-            suppress_self_reach_ = false;
-            StopSound();
-            event.kind = ReplayEventKind::Init;
-        } else if (event.tag == "N") event.kind = ReplayEventKind::Meld;
-        else if (event.tag == "REACH") event.kind = ReplayEventKind::Reach;
-        else if (event.tag == "AGARI") event.kind = ReplayEventKind::Win;
-        else if (event.tag == "RYUUKYOKU") event.kind = ReplayEventKind::DrawEnd;
-        else if (!event.tag.empty() && std::string("TUVWtuvwDEFGdefg").find(event.tag[0]) != std::string::npos &&
-                 std::all_of(event.tag.begin() + 1, event.tag.end(), [](char c) { return c >= '0' && c <= '9'; })) {
-            const auto found = std::string("TUVWtuvwDEFGdefg").find(event.tag[0]);
-            event.kind = found < 8 ? ReplayEventKind::Draw : ReplayEventKind::Discard;
-            event.who = static_cast<int>(found % 4);
-        } else return;
-        const bool result = event.kind == ReplayEventKind::Win || event.kind == ReplayEventKind::DrawEnd;
-        if (event.attributes.count("who")) event.who = std::stoi(event.attributes.at("who"));
-        // Keep captions independent of audio and tile motion cancellation.
-        if (!(event.kind == ReplayEventKind::Reach && event.who == 0 && suppress_self_reach_) && captions_.
-            Accept(event)) {
-            SetTimer(window_, 8, 15, nullptr);
-            log_("ONLINE CAPTION id=" + std::to_string(ActionCaptionResource(event)) + " who=" +
-                 std::to_string(event.who));
-        }
-        pause_ticks_ = ActionPauseTicks(event);
-        pause_after_motion_ = event.kind == ReplayEventKind::Draw;
-        const bool replaced = table_.Animating();
-        try {
-            table_.Accept(snapshot.game, event,
-                          animation_enabled_ && !show_results_ && !opening_.Active());
-            if (table_.Animating()) {
-                log_("ONLINE ANIMATION BEGIN tag=" + event.tag + " replaced=" + std::to_string(replaced));
-                motion_timer_.Start(window_, 6, kTableTickMs);
-            } else motion_timer_.Stop();
-        } catch (const std::exception &e) {
-            log_(std::string("ONLINE ANIMATION FALLBACK ") + e.what());
-            table_.CancelAnimation();
-            motion_timer_.Stop();
-        }
-        if (event.kind == ReplayEventKind::Draw && event.who == 0) {
-            // FUN_00491fe0 -> WC_ITEM_COUNT, auto flag at +0x25. The native
-            // first timer beat is 1000ms from draw dispatch, including movement.
-            automatic_discard_at_ = GetTickCount64() + kAutomaticDiscardWaitMs;
-            if (!SetTimer(window_, 10, kAutomaticDiscardWaitMs, nullptr)) throw std::runtime_error(
-                "Cannot start automatic discard wait");
-            log_("ONLINE AUTO DRAW WAIT until=" + std::to_string(automatic_discard_at_));
-        } else if (event.kind == ReplayEventKind::Init || event.kind == ReplayEventKind::DrawEnd ||
-                   event.kind == ReplayEventKind::Win || (event.kind == ReplayEventKind::Discard && event.who == 0)) {
-            automatic_discard_at_ = 0;
-            KillTimer(window_, 10);
-        }
-        result_pending_ = result;
-        if (result) {
-            if (opening_.Active() || snapshot.game.settlement.receipts.size() == 1) StopAudio();
-            opening_timer_.Stop();
-            opening_.Cancel();
-            deferred_sounds_.clear();
-            settlement_view_->CancelPresentation();
-            if (event.kind == ReplayEventKind::DrawEnd && !show_results_) {
-                draw_end_ticks_ = 28;
-                table_.SetDrawEndSlots(0);
-                SetTimer(window_, 7, 15, nullptr);
-                log_("ONLINE DRAW TABLE BEGIN tick=" + std::to_string(GetTickCount64()));
-            }
-            if (event.kind == ReplayEventKind::Win && !show_results_ && !result_deadline_) {
-                // FUN_004aad30 / ASM 004aaf28: AGARI waits 0x7d0 ms.
-                // This display timer is independent of audio and the action clock.
-                constexpr unsigned delay = 2000;
-                result_deadline_ = GetTickCount64() + delay;
-                if (!SetTimer(window_, 5, delay, nullptr)) throw std::runtime_error("Cannot start settlement delay");
-                log_("ONLINE RESULT WAIT ms=" + std::to_string(delay) + " tick=" + std::to_string(GetTickCount64()));
-            }
-        }
-        const bool intro = event.kind == ReplayEventKind::Init && match_intro_pending_ && original_display_ &&
-                           snapshot.actions.enabled;
-        if (event.kind == ReplayEventKind::Init && (intro || start_barrier_))
-            start_sound_pending_ = !ReplaySounds(event).empty();
-        else if (event_sound_allowed_) PlayEventSound(event, snapshot);
-        if (event.kind == ReplayEventKind::Init && (animation_enabled_ || EffectsEnabled())) {
-            table_.BeginOpening(opening_, snapshot.game, original_display_);
-            opening_.ResumeClock(AnimationNow());
-            opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
-            log_("ONLINE OPENING BEGIN wall=" + std::to_string(opening_.wall_tiles()));
-        }
-        if (event.kind == ReplayEventKind::Init && match_intro_pending_) {
-            match_intro_pending_ = false;
-            if (original_display_ && snapshot.actions.enabled) {
-                RECT area{};
-                GetClientRect(window_, &area);
-                match_intro_->Move(area);
-                match_intro_->Begin(OnlineTableState(snapshot.game), snapshot.game.type);
-                // The confirmation countdown is idle UI time: front-load the table
-                // pack read here instead of the first visible table frame.
-                table_.Prepare();
-                UpdateActions();
-                log_("ONLINE MATCH INTRO BEGIN");
-            }
-        }
-        // Native PREPARE is per hand; the match introduction is only per match.
-        // Once INIT has been installed, a hand without an introduction is ready
-        // immediately. Keep the opening frozen until the authority sends START.
-        if (event.kind == ReplayEventKind::Init && start_barrier_ && !match_intro_->Active() && !snapshot.recovering)
-            client_->ConfirmMatchStart();
+        if (!client_) return;
+        ApplyEffects(sequencer_.PresentationTick(client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
     void LobbyView::OpeningTick(double now) {
-        if (!client_ || !client_->snapshot().game.initialized) {
-            opening_timer_.Stop();
-            opening_.Cancel();
-            return;
-        }
-        if (match_intro_->Active() || start_barrier_ || client_->snapshot().table_paused) {
-            opening_.ResumeClock(now);
-            return;
-        }
-        if (opening_.Advance(now)) {
-            if (opening_.sound()) PlaySoundId(opening_.sound());
-            if (!opening_.Active()) {
-                log_("ONLINE OPENING DONE tick=" + std::to_string(GetTickCount64()));
-                bool flowers = false;
-                for (int seat = 0; seat < 4; ++seat) if (opening_flowers_[seat]) {
-                    captions_.AcceptText(TextKey::caption_kita, seat);
-                    flowers = true;
-                }
-                opening_flowers_ = {};
-                if (flowers) {
-                    SetTimer(window_, 8, 15, nullptr);
-                    if (event_sound_allowed_) PlaySoundId(107);
-                }
-                if (!deferred_sounds_.empty()) SetTimer(window_, 2, 25, nullptr);
-                UpdateActions();
-                Arrange();
-            }
-            InvalidateRect(window_, nullptr, FALSE);
-        }
-        if (!opening_.Active()) opening_timer_.Stop();
-    }
-
-    void LobbyView::PlayEventSound(const ReplayEvent &event, const LobbySnapshot &snapshot) {
-        const char gender = event.who >= 0 && event.who < 4 ? snapshot.game.players[event.who].gender : '?';
-        const bool own_reach = event.kind == ReplayEventKind::Reach && event.who == 0 && event.attributes.at("step") ==
-                               "1";
-        if (!(own_reach && suppress_self_reach_))
-            for (auto id: ReplaySounds(event, gender, effects_only_, individual_voices_)) PlaySoundId(id);
-        if (own_reach) suppress_self_reach_ = false;
+        if (!client_) return;
+        auto ctx = MakeContext();
+        ctx.anim_ms = now;
+        ApplyEffects(sequencer_.OpeningTick(client_->snapshot(), ctx));
     }
 
     void LobbyView::Paint(HDC dc, bool table_only) {
@@ -1554,11 +912,11 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         GetClientRect(window_, &r);
         if (!table_only) {
             FillRect(dc, &r, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
-            if (original_display_) {
+            if (sequencer_.original_display()) {
                 try {
-                    if (lobby_background_.bgra.empty()) lobby_background_ = BuildPreferredBackground(
-                                                            resource_directory_, config_, canvas_width_,
-                                                            canvas_width_ * 3 / 4, preferences_);
+                    if (lobby_background_.bgra.empty())
+                        lobby_background_ = BuildPreferredBackground(
+                            resource_directory_, config_, canvas_width_, canvas_width_ * 3 / 4, preferences_);
                     Gdiplus::Graphics graphics(dc);
                     auto &bg = lobby_background_;
                     Gdiplus::Bitmap bitmap(bg.width, bg.height, bg.width * 4, PixelFormat32bppARGB, bg.bgra.data());
@@ -1570,14 +928,14 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         }
         const auto old = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, original_display_ ? RGB(245, 245, 235) : RGB(25, 35, 45));
-        if (client_ && Snapshot().game.initialized && !show_results_)
-        {
+        SetTextColor(dc, sequencer_.original_display() ? RGB(245, 245, 235) : RGB(25, 35, 45));
+        if (client_ && Snapshot().game.initialized && !sequencer_.show_results()) {
             auto bounds = BoardBounds();
             try {
                 const auto interaction = Interaction(Snapshot());
                 table_.Paint(dc, bounds, Snapshot().game, Snapshot().actions.enabled,
-                             animation_enabled_ ? &opening_ : nullptr, &interaction, AnimationNow(), &captions_, GetDpiForWindow(window_));
+                             sequencer_.animation_enabled() ? &sequencer_.opening() : nullptr, &interaction,
+                             AnimationNow(), &sequencer_.captions(), GetDpiForWindow(window_));
                 artwork_error_.clear();
                 painted_countdown_ = interaction.countdown;
                 painted_hover_ = interaction.hovered;
@@ -1601,15 +959,15 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
             SetTextColor(dc, RGB(255, 220, 120));
             SetBkMode(dc, TRANSPARENT);
             RECT message{20, 20, r.right - 20, 65};
-            DrawTextW(dc, client_->snapshot().exit_voting ? L"对局已暂停，等待退出投票" : L"对局已暂停，等待断线玩家重新登录", -1, &message,
-                      DT_CENTER | DT_WORDBREAK);
+            DrawTextW(dc, client_->snapshot().exit_voting ? L"对局已暂停，等待退出投票" : L"对局已暂停，等待断线玩家重新登录",
+                      -1, &message, DT_CENTER | DT_WORDBREAK);
             SelectObject(dc, previous);
         }
     }
 
     void LobbyView::PaintAction(const DRAWITEMSTRUCT &item) {
         bool rendered = false;
-        if (original_display_ && ActionButtonText(item.CtlID, false)) {
+        if (sequencer_.original_display() && ActionButtonText(item.CtlID, false)) {
             try {
                 POINT point{};
                 GetCursorPos(&point);
@@ -1644,7 +1002,8 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
                 context.origin_y = (item.rcItem.top + item.rcItem.bottom) / 2.0 + offset;
                 context.device_clip = Gdiplus::RectF(static_cast<float>(item.rcItem.left), static_cast<float>(item.rcItem.top),
                     static_cast<float>(item.rcItem.right - item.rcItem.left), static_cast<float>(item.rcItem.bottom - item.rcItem.top));
-                SceneTextRun run; run.layout = layout;
+                SceneTextRun run;
+                run.layout = layout;
                 run.transform[4] = -ink.X - ink.Width / 2;
                 run.transform[5] = -ink.Y - ink.Height / 2;
                 renderer.Draw(graphics, context, run);
@@ -1710,7 +1069,7 @@ LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UIN
         SetTimer(window_, 11, 100, nullptr);
     }
 
-LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
+    LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
         auto *self = reinterpret_cast<LobbyView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<LobbyView *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
@@ -1723,7 +1082,6 @@ LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM 
         if (message == WM_CLOSE) return 0; // The server deadline resolves an abstention.
         return DefWindowProcW(window, message, wp, lp);
     }
-
 
     void LobbyView::Capture(HDC dc) {
         Paint(dc);
@@ -1746,7 +1104,7 @@ LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM 
         action_view_->Capture(dc);
     }
 
-LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         auto *self = reinterpret_cast<LobbyView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<LobbyView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -1756,10 +1114,10 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
         if (self) {
             try {
                 if (message == WM_ERASEBKGND) return 1; // Paint supplies the complete background.
-                if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN || (
-                        message == WM_TIMER && wparam == 9)) {
-                    if (self->original_display_ && self->hud_interaction_.Handle(
-                            window, self->BoardBounds(), 1440, message, lparam)) {
+                if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN ||
+                    (message == WM_TIMER && wparam == 9)) {
+                    if (self->sequencer_.original_display() &&
+                        self->hud_interaction_.Handle(window, self->BoardBounds(), 1440, message, lparam)) {
                         self->table_.SetRelativeScores(self->hud_interaction_.relative());
                         const auto bounds = self->BoardBounds();
                         InvalidateRect(window, &bounds, FALSE);
@@ -1776,13 +1134,14 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                         PaintOriginalButton(item, self->exit_font_, L"EXIT");
                         return TRUE;
                     }
-                    if (item.CtlType == ODT_BUTTON && (
-                            (item.CtlID >= 5121 && item.CtlID <= 5128) || item.CtlID == 5151 || (item.CtlID >= 5170 && item.CtlID <= 5173))) {
+                    if (item.CtlType == ODT_BUTTON &&
+                        ((item.CtlID >= 5121 && item.CtlID <= 5128) || item.CtlID == 5151 ||
+                         (item.CtlID >= 5170 && item.CtlID <= 5173))) {
                         self->PaintAction(item);
                         return TRUE;
                     }
                 }
-                if (message == WM_CTLCOLORSTATIC && self->original_display_) {
+                if (message == WM_CTLCOLORSTATIC && self->sequencer_.original_display()) {
                     const auto dc = reinterpret_cast<HDC>(wparam);
                     SetTextColor(dc, RGB(245, 245, 235));
                     SetBkColor(dc, RGB(24, 45, 44));
@@ -1803,8 +1162,8 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     return 0;
                 }
                 if (message == WM_APP + 26) {
-                    self->pressed_action_ = static_cast<int>(wparam);
-                    self->button_revision_ = self->Snapshot().actions.revision;
+                    self->sequencer_.pressed_action() = static_cast<int>(wparam);
+                    self->sequencer_.button_revision() = self->Snapshot().actions.revision;
                     return 0;
                 }
                 if (message == MM_WOM_DONE) {
@@ -1815,7 +1174,7 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     self->UpdateLobbyMusic();
                     return 0;
                 }
-                if (message == WM_RBUTTONUP && self->selection_.Active()) {
+                if (message == WM_RBUTTONUP && self->sequencer_.selection().Active()) {
                     self->CancelSelection();
                     self->UpdateActions();
                     self->Arrange();
@@ -1825,44 +1184,43 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
                     const auto board = self->BoardBounds();
                     const POINT point{x, y};
-                    // Original automatic controls are child HWNDs, so their double
-                    // clicks never reach the table procedure. Ours are painted.
-                    if (PtInRect(&board, point) && self->HitAutomaticButton(x, y) < 0) self->PreferenceInput(
-                        message == WM_LBUTTONDBLCLK);
+                    if (PtInRect(&board, point) && self->HitAutomaticButton(x, y) < 0)
+                        self->PreferenceInput(message == WM_LBUTTONDBLCLK);
                     return 0;
                 }
                 if (message == WM_MOUSEMOVE) {
-                    self->hover_point_ = {static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+                    const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
+                    self->sequencer_.set_hover_point(x, y);
                     TRACKMOUSEEVENT track{sizeof(TRACKMOUSEEVENT), TME_LEAVE, window, 0};
                     TrackMouseEvent(&track);
                     if (self->client_) {
-                        if (self->pressed_tile_ >= 0 && GetCapture() == window && self->LocalTableInput() &&
-                            (!self->table_.Animating() || self->table_.ManualAnimation()) && !self->selection_.
-                            Active()) {
-                            const int target = self->table_.HitTile(self->BoardBounds(), self->Snapshot().game,
-                                                                    self->hover_point_.x, self->hover_point_.y);
-                            if (self->table_.MoveHandTile(self->pressed_tile_, target, self->Snapshot().game)) {
-                                self->automatic_[0] = false;
-                                self->hand_dragged_ = true;
-                                if (self->animation_enabled_ && self->table_.Animating()) self->motion_timer_.Start(
-                                    window, 6);
+                        if (self->sequencer_.pressed_tile() >= 0 && GetCapture() == window &&
+                            self->LocalTableInput() &&
+                            (!self->table_.Animating() || self->table_.ManualAnimation()) &&
+                            !self->sequencer_.selection().Active()) {
+                            const int target = self->table_.HitTile(self->BoardBounds(), self->Snapshot().game, x, y);
+                            if (self->table_.MoveHandTile(self->sequencer_.pressed_tile(), target,
+                                                          self->Snapshot().game)) {
+                                self->sequencer_.set_automatic(0, false);
+                                self->sequencer_.hand_dragged() = true;
+                                if (self->sequencer_.animation_enabled() && self->table_.Animating())
+                                    self->motion_timer_.Start(window, 6);
                                 else self->table_.CancelAnimation();
                                 self->UpdateActionAvailability();
-                                self->log_(
-                                    "ONLINE HAND MOVE tile=" + std::to_string(self->pressed_tile_) + " target=" +
-                                    std::to_string(target) + " sort=0");
+                                self->log_("ONLINE HAND MOVE tile=" + std::to_string(self->sequencer_.pressed_tile()) +
+                                           " target=" + std::to_string(target) + " sort=0");
                                 InvalidateRect(window, nullptr, FALSE);
                             }
                         }
                         const auto interaction = self->Interaction(self->Snapshot());
-                        if (interaction.hovered != self->painted_hover_ || interaction.hovered_button != self->
-                            painted_auto_hover_)
+                        if (interaction.hovered != self->painted_hover_ ||
+                            interaction.hovered_button != self->painted_auto_hover_)
                             InvalidateRect(window, nullptr, FALSE);
                     }
                     return 0;
                 }
                 if (message == WM_MOUSELEAVE) {
-                    self->hover_point_ = {-1, -1};
+                    self->sequencer_.set_hover_point(-1, -1);
                     InvalidateRect(window, nullptr, FALSE);
                     return 0;
                 }
@@ -1873,23 +1231,26 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                 if (message == WM_LBUTTONDOWN && (self->AutomaticInput() || self->LocalTableInput())) {
                     self->CancelHandDrag();
                     const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
-                    self->pressed_auto_ = self->HitAutomaticButton(x, y);
-                    self->pressed_tile_ = self->pressed_auto_ < 0 && self->LocalTableInput()
-                                              ? self->table_.HitTile(self->BoardBounds(), self->Snapshot().game, x, y)
-                                              : -1;
-                    self->pressed_revision_ = self->Snapshot().actions.revision;
-                    if (self->pressed_tile_ >= 0 || self->pressed_auto_ >= 0) SetCapture(window);
+                    self->sequencer_.pressed_auto() = self->HitAutomaticButton(x, y);
+                    self->sequencer_.pressed_tile() = self->sequencer_.pressed_auto() < 0 && self->LocalTableInput()
+                                                          ? self->table_.HitTile(self->BoardBounds(),
+                                                                                 self->Snapshot().game, x, y)
+                                                          : -1;
+                    self->sequencer_.pressed_revision() = self->Snapshot().actions.revision;
+                    if (self->sequencer_.pressed_tile() >= 0 || self->sequencer_.pressed_auto() >= 0)
+                        SetCapture(window);
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == 11) {
                     self->UpdateExitVote();
                     return 0;
                 }
-                if (message == WM_TIMER && self->client_ && self->client_->snapshot().table_paused && wparam >= 2 &&
-                    wparam <= 10) return 0;
+                if (message == WM_TIMER && self->client_ && self->client_->snapshot().table_paused &&
+                    wparam >= 2 && wparam <= 10)
+                    return 0;
                 if (message == WM_TIMER && wparam == 8) {
-                    self->captions_.Tick();
-                    if (!self->captions_.Active()) KillTimer(window, 8);
+                    self->sequencer_.captions().Tick();
+                    self->SyncTimers();
                     const auto bounds = self->BoardBounds();
                     InvalidateRect(window, &bounds, FALSE);
                     return 0;
@@ -1914,14 +1275,9 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == 5) {
-                    if (!self->result_deadline_ || GetTickCount64() < self->result_deadline_) return 0;
-                    self->CancelResultTimer();
-                    const auto &s = self->Snapshot();
-                    if (!s.game.settlement.receipts.empty() && IsWindowVisible(window) &&
-                        (s.phase == LobbyPhase::Game || s.phase == LobbyPhase::MatchComplete)) {
-                        self->show_results_ = true;
-                        self->log_("ONLINE RESULT SHOW tick=" + std::to_string(GetTickCount64()));
-                        self->Update(s);
+                    if (self->client_) {
+                        self->ApplyEffects(self->sequencer_.ResultTimerExpired(
+                            self->client_->snapshot(), self->MakeContext(), self->MakeMotion()));
                     }
                     return 0;
                 }
@@ -1930,18 +1286,15 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == 2) {
-                    if (!self->opening_.Active() && !self->match_intro_->Active() && !self->start_barrier_ &&
-                        !self->deferred_sounds_.empty()) {
-                        const auto id = self->deferred_sounds_.front();
-                        self->deferred_sounds_.erase(self->deferred_sounds_.begin());
-                        self->PlaySoundId(id);
-                    }
+                    if (const auto id = self->sequencer_.PopDeferredSound(self->match_intro_->Active()))
+                        self->PlaySoundId(*id);
                     try { self->audio_.Poll(); } catch (const std::exception &e) {
                         self->audio_error_ = e.what();
                         self->log_("ONLINE AUDIO ERROR " + self->audio_error_);
                         self->StopAudio();
                     }
-                    if (self->deferred_sounds_.empty() && !self->audio_.Active()) KillTimer(window, 2);
+                    if (self->sequencer_.deferred_sounds().empty() && !self->audio_.Active())
+                        KillTimer(window, 2);
                     return 0;
                 }
                 if (message == WM_TIMER && wparam == 6) {
@@ -1958,58 +1311,59 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     }
                     return 0;
                 }
-                if (message == WM_LBUTTONUP && self->client_ && !self->show_results_) {
-                    const bool dragged = self->hand_dragged_;
-                    const int pressed_auto = self->pressed_auto_, pressed_tile = self->pressed_tile_;
-                    const auto pressed_revision = self->pressed_revision_;
+                if (message == WM_LBUTTONUP && self->client_ && !self->sequencer_.show_results()) {
+                    const bool dragged = self->sequencer_.hand_dragged();
+                    const int pressed_auto = self->sequencer_.pressed_auto();
+                    const int pressed_tile = self->sequencer_.pressed_tile();
+                    const auto pressed_revision = self->sequencer_.pressed_revision();
                     self->CancelHandDrag();
                     if (dragged) return 0;
                     const int button = self->HitAutomaticButton(static_cast<short>(LOWORD(lparam)),
                                                                 static_cast<short>(HIWORD(lparam)));
                     if (button >= 0 && button == pressed_auto) {
-                        self->automatic_[button] = !self->automatic_[button];
-
-                        if (button == 0 && !self->sort_refresh_pending_) {
-                            // Original 0047bc37 marks sorting dirty; the render
-                            // timer consumes the current checkbox state later.
-                            // One pending message coalesces clicks into that state.
-                            self->sort_refresh_pending_ = true;
+                        const bool next_value = !self->sequencer_.automatic()[button];
+                        self->sequencer_.set_automatic(button, next_value);
+                        if (button == 0 && !self->sequencer_.sort_refresh_pending()) {
+                            self->sequencer_.set_sort_refresh_pending(true);
                             self->UpdateActionAvailability();
                             PostMessageW(window, WM_APP + 17, 0, 0);
                         }
-                        self->log_(
-                            "ONLINE AUTO index=" + std::to_string(button) + " enabled=" + std::to_string(
-                                self->automatic_[button]));
+                        self->log_("ONLINE AUTO index=" + std::to_string(button) + " enabled=" +
+                                   std::to_string(next_value));
                         if (self->SuppressCallPrompt()) self->CancelSelection();
                         self->UpdateActions();
                         self->Arrange();
-                        self->UpdateAutomaticTimer();
+                        self->SyncTimers();
                         const auto bounds = self->BoardBounds();
                         InvalidateRect(window, &bounds, FALSE);
                         return 0;
                     }
-                    if (!self->LocalTableInput() || self->Moving() || pressed_revision != self->Snapshot().actions.
-                        revision) return 0;
+                    if (!self->LocalTableInput() || self->Moving() ||
+                        pressed_revision != self->Snapshot().actions.revision)
+                        return 0;
                     const auto bounds = self->BoardBounds();
                     const auto &snapshot = self->Snapshot();
                     const int tile = self->table_.HitTile(bounds, snapshot.game, static_cast<short>(LOWORD(lparam)),
                                                           static_cast<short>(HIWORD(lparam)));
                     if (tile != pressed_tile || tile < 0) return 0;
                     const auto &choices = snapshot.actions.choices;
-                    if (self->selection_.HandSelection()) {
-                        const auto index = self->selection_.Pick(snapshot.actions, tile);
-                        self->log_("ACTION HAND PICK tile=" + std::to_string(tile) + " count=" + std::to_string(
-                                       self->selection_.selected.size()));
+                    if (self->sequencer_.selection().HandSelection()) {
+                        const auto index = self->sequencer_.selection().Pick(snapshot.actions, tile);
+                        self->log_("ACTION HAND PICK tile=" + std::to_string(tile) + " count=" +
+                                   std::to_string(self->sequencer_.selection().selected.size()));
                         if (index != static_cast<std::size_t>(-1)) self->Submit(index);
-                        else { self->Arrange(); InvalidateRect(window, nullptr, FALSE); }
+                        else {
+                            self->Arrange();
+                            InvalidateRect(window, nullptr, FALSE);
+                        }
                         return 0;
                     }
-                    const std::string kind = self->action_filter_ == "riichi" ? "riichi" : "discard";
-                    for (std::size_t i = 0; i < choices.size(); ++i) if (
-                        choices[i].kind == kind && choices[i].tiles == std::vector<int>{tile}) {
-                        self->Submit(i);
-                        break;
-                    }
+                    const std::string kind = self->sequencer_.action_filter() == "riichi" ? "riichi" : "discard";
+                    for (std::size_t i = 0; i < choices.size(); ++i)
+                        if (choices[i].kind == kind && choices[i].tiles == std::vector<int>{tile}) {
+                            self->Submit(i);
+                            break;
+                        }
                     return 0;
                 }
                 if (message == WM_APP + 25) {
@@ -2024,9 +1378,9 @@ LRESULT CALLBACK LobbyView::Procedure(HWND window, UINT message, WPARAM wparam, 
                     RECT update{};
                     GetUpdateRect(window, &update, FALSE);
                     const auto board = self->BoardBounds();
-                    const bool table_only = self->Snapshot().game.initialized && !self->show_results_ &&
-                                            update.left >= board.left && update.top >= board.top && update.right <=
-                                            board.right && update.bottom <= board.bottom;
+                    const bool table_only = self->Snapshot().game.initialized && !self->sequencer_.show_results() &&
+                                            update.left >= board.left && update.top >= board.top &&
+                                            update.right <= board.right && update.bottom <= board.bottom;
                     self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only); });
                     return 0;
                 }

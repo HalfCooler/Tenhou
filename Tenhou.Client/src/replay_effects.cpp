@@ -1,6 +1,5 @@
 #include "replay_effects.hpp"
-#include "animation_clock.hpp"
-#include "wall_scene.hpp"
+#include "wall_geometry.hpp"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -41,12 +40,13 @@ namespace tenhou {
         }
 
         std::pair<int, int> HandFlightLanding(const TableTile &tile, const TableTile &back,
-                                              std::pair<int, int> target, TableArtwork &artwork, bool red) {
-            const auto &back_image = artwork.Get(back, red);
-            const auto &face_image = artwork.Get(tile, red);
+                                              std::pair<int, int> target, const TileGeometryCatalog &geometry,
+                                              bool red) {
+            const auto back_image = geometry.Bounds(back, red);
+            const auto face_image = geometry.Bounds(tile, red);
             if (tile.direction == 0 && tile.tile >= 0) {
-                return {target.first + (face_image.image.width - back_image.image.width) / 2,
-                        target.second + (face_image.image.height - back_image.image.height) / 2};
+                return {target.first + (face_image.width - back_image.width) / 2,
+                        target.second + (face_image.height - back_image.height) / 2};
             }
             return {target.first + back_image.x - face_image.x, target.second + back_image.y - face_image.y};
         }
@@ -143,7 +143,8 @@ namespace tenhou {
 
     ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
                                            const ReplayEvent &event, unsigned duration, int canvas_width,
-                                           const TileOrigin &origin, bool sort_self, TableArtwork *artwork, bool red) {
+                                           const TileOrigin &origin, bool sort_self,
+                                           const TileGeometryCatalog *geometry, bool red) {
         ReplayTransition result;
         const bool draw = event.kind == ReplayEventKind::Draw;
         const bool discard = event.kind == ReplayEventKind::Discard;
@@ -278,9 +279,9 @@ namespace tenhou {
             if (drawn || discarded || melded) {
                 auto sprite = tile;
                 auto landing = target;
-                if (drawn && artwork) {
+                if (drawn && geometry) {
                     sprite = HandBack(tile);
-                    landing = HandFlightLanding(tile, sprite, target, *artwork, red);
+                    landing = HandFlightLanding(tile, sprite, target, *geometry, red);
                 }
                 const auto speed = melded ? 40.f : SpeedForSteps(source.first - landing.first,
                                                                source.second - landing.second, drawn ? 12u : 8u);
@@ -305,9 +306,9 @@ namespace tenhou {
 
     void TablePresentation::Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
                                   unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self,
-                                  TableArtwork *artwork, bool red, unsigned playback_limit) {
+                                  const TileGeometryCatalog *geometry, bool red, unsigned playback_limit) {
         Cancel();
-        transition_ = BuildReplayTransition(before, after, event, duration, width, origin, sort_self, artwork, red);
+        transition_ = BuildReplayTransition(before, after, event, duration, width, origin, sort_self, geometry, red);
         started_ = now;
         playback_scale_ = playback_limit && transition_.duration > playback_limit
             ? double(transition_.duration) / playback_limit : 1;
@@ -360,7 +361,7 @@ namespace tenhou {
         return transition_.Frame(std::min(now < started_ ? 0 : (now - started_) * playback_scale_, double(transition_.duration)));
     }
 
-    void OpeningPresentation::Begin(const ReplayState &state, bool wall, TableArtwork *artwork, bool red) {
+    void OpeningPresentation::Begin(const ReplayState &state, bool wall, const TileGeometryCatalog *geometry, bool red) {
         initial_ = state;
         progress_ = sound_ = 0;
         next_step_ = 0;
@@ -401,12 +402,8 @@ namespace tenhou {
         sounds_.resize(hands_.size());
         sort_start_ = static_cast<unsigned>(hands_.size()) + 1;
         unsigned sort_ticks = 0;
-        if (artwork && artwork->width()) {
-            const auto position = [&](const TableTile &tile) {
-                const auto &image = artwork->Get(tile, red);
-                const auto offset = artwork->Offset(tile);
-                return std::make_pair(image.x + offset.x, image.y + offset.y);
-            };
+        if (geometry && geometry->loaded()) {
+            const auto position = [&](const TableTile &tile) { return geometry->Origin(tile, red); };
             const auto unsorted = BuildTableScene(initial_, false, false);
             if (wall_tiles_) {
                 auto wall_state = initial_;
@@ -421,7 +418,7 @@ namespace tenhou {
                         const int index = initial_.wall.initial_removed + static_cast<int>(packet.wall + slot - packet.begin);
                         const auto source = position(WallOrigin(initial_.wall, index, visible));
                         const auto sprite = HandBack(tile);
-                        const auto target = HandFlightLanding(tile, sprite, position(tile), *artwork, red);
+                        const auto target = HandFlightLanding(tile, sprite, position(tile), *geometry, red);
                         const auto speed = SpeedForSteps(source.first - target.first, source.second - target.second, 12);
                         auto &flight = deal_flights_[packet.who][slot];
                         flight = TileFlight(sprite, target.first, target.second, source.first, source.second, speed,
@@ -445,7 +442,7 @@ namespace tenhou {
                 sort_tiles_.push_back(std::move(animation));
             }
         }
-        if (!wall_tiles_ || !artwork || !artwork->width())
+        if (!wall_tiles_ || !geometry || !geometry->loaded())
             for (const auto &packet: packets_) sounds_[packet.step - 1] = 105;
         // The 0x65 gate follows the sort dispatch. Publish the settled hand
         // before 0x82 releases the first draw.
@@ -523,7 +520,7 @@ namespace tenhou {
         }
     }
 
-    std::vector<PositionedTile> OpeningPresentation::Scene(TableArtwork &artwork, bool red) const {
+    std::vector<PositionedTile> OpeningPresentation::Scene(const TileGeometryCatalog &geometry, bool red) const {
         std::vector<PositionedTile> scene;
         if (progress_ >= sort_start_ && !sort_tiles_.empty()) {
             for (const auto &tile: sort_tiles_) {
@@ -535,9 +532,8 @@ namespace tenhou {
         }
         const auto frame = Frame();
         for (const auto &tile: BuildTableScene(frame, progress_ >= sort_start_, progress_ >= sort_start_)) {
-            const auto &image = artwork.Get(tile, red);
-            const auto offset = artwork.Offset(tile);
-            PositionedTile placed{tile, image.x + offset.x, image.y + offset.y};
+            const auto origin = geometry.Origin(tile, red);
+            PositionedTile placed{tile, origin.first, origin.second};
             if (IsHand(tile)) {
                 const auto slot = static_cast<unsigned>(HandSlot(tile));
                 const auto start = deal_starts_[tile.direction][slot];

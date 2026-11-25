@@ -255,10 +255,10 @@ namespace tenhou {
             TableView view(parent, [](const std::string &) {}, resources / "p3-replay.ini");
             view.ConfigureArtwork(resources, 1440);
             // Keep the production replay PaintTable path and inject only a public state fixture.
-            view.session_ = std::make_unique<ReplaySession>(ReplayLog::Parse("<mjloggm ver=\"2.3\"><INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"0\" hai0=\"0,4,8,12,16,20,24,28,32,36,40,44,48\" hai1=\"1,5,9,13,17,21,25,29,33,37,41,45,49\" hai2=\"2,6,10,14,18,22,26,30,34,38,42,46,50\" hai3=\"3,7,11,15,19,23,27,31,35,39,43,47,51\"/></mjloggm>"));
-            view.session_->Step();
-            view.captions_.AcceptResource(478, 0);
-            for (int tick = 0; tick < 20; ++tick) view.captions_.Tick();
+            view.sequencer_.SetSession(std::make_unique<ReplaySession>(ReplayLog::Parse("<mjloggm ver=\"2.3\"><INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"0\" hai0=\"0,4,8,12,16,20,24,28,32,36,40,44,48\" hai1=\"1,5,9,13,17,21,25,29,33,37,41,45,49\" hai2=\"2,6,10,14,18,22,26,30,34,38,42,46,50\" hai3=\"3,7,11,15,19,23,27,31,35,39,43,47,51\"/></mjloggm>")), {1});
+            view.sequencer_.session()->Step();
+            view.sequencer_.captions().AcceptResource(478, 0);
+            for (int tick = 0; tick < 20; ++tick) view.sequencer_.captions().Tick();
             view.PaintTable(surface.dc, {0, 0, surface.width, surface.height});
             Require(view.artwork_error_.empty(), "P3 replay table renderer failed");
         }

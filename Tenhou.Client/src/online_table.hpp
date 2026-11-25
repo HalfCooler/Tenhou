@@ -1,37 +1,26 @@
 #pragma once
-#include "background.hpp"
+#include "animation_clock.hpp"
 #include "hand_projection.hpp"
 #include "online_game.hpp"
-#include "table_scene.hpp"
-#include "original_display.hpp"
 #include "replay_effects.hpp"
-#include "retained_scene.hpp"
-#include "cached_hud.hpp"
-#include "tile_shadow.hpp"
+#include "table_canvas_renderer.hpp"
 #include <windows.h>
+#include <memory>
 
 namespace tenhou {
     class ActionCaptions;
-    struct TableInteraction {
-        int hovered = -1;
-        std::vector<int> playable;
-        std::vector<int> selected;
-        bool selecting = false;
-        bool restrict_discards = false;
-        std::wstring countdown;
-        std::wstring hint;
-        std::array<bool, 4> automatic{true, false, false, false};
-        int hovered_button = -1;
-    };
 
     class OnlineTable {
     public:
-        std::size_t HudCacheHits() const { return hud_cache_.hits(); }
+        OnlineTable();
+        explicit OnlineTable(std::unique_ptr<ITableCanvasRenderer> renderer);
 
-        void SetReferenceRendering(bool enabled) {
-            native_buffer_.SetReferenceRendering(enabled);
-            reference_rendering_ = enabled;
-        }
+        void SetRenderer(std::unique_ptr<ITableCanvasRenderer> renderer);
+        ITableCanvasRenderer &Renderer() { return *renderer_; }
+        const ITableCanvasRenderer &Renderer() const { return *renderer_; }
+
+        std::size_t HudCacheHits() const { return renderer_->HudCacheHits(); }
+        void SetReferenceRendering(bool enabled) { renderer_->SetReferenceRendering(enabled); }
 
         POINT ActionAnchor(const OnlineState &online);
 
@@ -58,20 +47,18 @@ namespace tenhou {
         void SetPreferences(const ClientPreferences &preferences, const std::filesystem::path &config,
                             bool rebuild = true);
 
-        // Move the first _obj pack read/background build out of the first visible
-        // frame (called from the match-start confirmation window). Failures stay
-        // lazy: Paint retries and surfaces the resource error as before.
         void Prepare();
 
         void BeginOpening(OpeningPresentation &opening, const OnlineState &state, bool wall) {
             Prepare();
-            artwork_.SetRedTiles(state.red_tiles);
-            opening.Begin(OnlineTableState(state), wall, &artwork_, (state.type & 2) == 0);
+            auto &geometry = renderer_->EnsureGeometry(state.red_tiles);
+            opening.Begin(OnlineTableState(state), wall, &geometry, (state.type & 2) == 0);
         }
 
         void Paint(HDC dc, RECT bounds, const OnlineState &state, bool interactive = false,
                    const OpeningPresentation *opening = nullptr, const TableInteraction *interaction = nullptr,
-                   double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0);
+                   double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0,
+                   const std::vector<TableActionButton> *buttons = nullptr);
 
         int HitTile(RECT bounds, const OnlineState &state, int x, int y);
 
@@ -87,19 +74,10 @@ namespace tenhou {
         ReplayState Project(const OnlineState &state) { return hand_.Project(state); }
 
         HandProjection hand_;
-        std::filesystem::path directory_;
+        std::unique_ptr<ITableCanvasRenderer> renderer_;
         int width_ = 1440;
-        TableArtwork artwork_;
-        Image background_;
-        ClientPreferences preferences_;
-        std::filesystem::path config_;
-        RetainedScene native_buffer_;
-        CachedHud hud_cache_;
-        TileShadowLayer shadow_layer_;
-        DisplayArtwork display_artwork_;
         bool original_display_ = true;
         bool relative_scores_ = false;
-        bool reference_rendering_ = RetainedScene::Reference();
         TablePresentation presentation_;
         ReplayState previous_;
         bool settlement_presented_ = false;

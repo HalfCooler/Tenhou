@@ -18,7 +18,8 @@ namespace tenhou {
         static void OfficialCalls(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440);
-            view.sound_enabled_ = view.animation_enabled_ = false;
+            view.sequencer_.set_sound_enabled(false);
+            view.sequencer_.set_animation_enabled(false);
             view.Show(true);
             LobbySession session;
             session.official = session.interactive_games = session.recover_games = true;
@@ -111,27 +112,27 @@ namespace tenhou {
             view.match_intro_->Finish();
             receive("<INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"3\" "
                     "hai=\"4,8,12,16,17,18,20,24,32,36,40,44,48\" />");
-            view.opening_.Cancel();
+            view.sequencer_.opening().Cancel();
             receive("<W />");
             receive("<G19 t=\"7\" />");
             view.ClearPresentationQueue();
             view.Update(session.snapshot);
             const auto &actions = session.snapshot.actions;
             const auto interaction = view.Interaction(session.snapshot);
-            require(view.selection_.group == "call" && interaction.selecting && interaction.playable.size() == 7,
+            require(view.sequencer_.selection().group == "call" && interaction.selecting && interaction.playable.size() == 7,
                 "Chi and pon candidates were not selectable together without a button");
             require(std::any_of(actions.choices.begin(), actions.choices.end(), [](const OnlineAction &a) {
                 return a.kind == "open_kan";
             }), "Direct hand selection removed the open kan button action");
-            view.selection_.Pick(actions, 8);
-            require(view.selection_.Selectable(actions) == std::vector<int>({8, 12}) &&
-                view.selection_.selected == std::vector<int>{8}, "First picked tile did not constrain candidates");
-            const auto chi = view.selection_.Pick(actions, 12);
+            view.sequencer_.selection().Pick(actions, 8);
+            require(view.sequencer_.selection().Selectable(actions) == std::vector<int>({8, 12}) &&
+                view.sequencer_.selection().selected == std::vector<int>{8}, "First picked tile did not constrain candidates");
+            const auto chi = view.sequencer_.selection().Pick(actions, 12);
             require(chi < actions.choices.size() && actions.choices[chi].kind == "chi",
                 "Two compatible hand tiles did not confirm chi");
-            view.selection_.Open(actions, "call");
-            view.selection_.Pick(actions, 17);
-            const auto pon = view.selection_.Pick(actions, 18);
+            view.sequencer_.selection().Open(actions, "call");
+            view.sequencer_.selection().Pick(actions, 17);
+            const auto pon = view.sequencer_.selection().Pick(actions, 18);
             require(pon < actions.choices.size() && actions.choices[pon].kind == "pon",
                 "Two matching hand tiles did not confirm pon");
             session.SubmitAction(actions.revision, chi);
@@ -158,8 +159,8 @@ namespace tenhou {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
             view.ConfigureArtwork(resources, 1440);
-            view.sound_enabled_ = false;
-            view.animation_enabled_ = true;
+            view.sequencer_.set_sound_enabled(false);
+            view.sequencer_.set_animation_enabled(true);
             view.Show(true);
             LobbySession session;
             session.official = session.origin_lobby = session.interactive_games = session.match_games = true;
@@ -192,7 +193,7 @@ namespace tenhou {
             if (view.match_intro_->Active()) view.match_intro_->Finish();
             receive("<INIT seed=\"0,0,0,1,1,52\" ten=\"250,250,250,250\" oya=\"0\" "
                     "hai=\"0,4,8,12,16,20,24,28,32,36,40,44,48\" />");
-            require(view.opening_.Active() && !IsWindowVisible(service_viewport),
+            require(view.sequencer_.opening().Active() && !IsWindowVisible(service_viewport),
                     "Practice opening wall animation did not start cleanly");
 
             // Pressing EXIT during 码牌 enters AwaitReturn; opening animation must stop immediately,
@@ -204,7 +205,7 @@ namespace tenhou {
             const_cast<LobbySnapshot &>(view.client_->snapshot()) = session.snapshot;
             view.Update(session.snapshot);
             view.OpeningTick(AnimationNow() + 100);
-            require(!view.opening_.Active() && view.deferred_sounds_.empty(),
+            require(!view.sequencer_.opening().Active() && view.sequencer_.deferred_sounds().empty(),
                     "Pressing EXIT during wall setup did not stop opening animation/audio cues");
             require(!IsWindowVisible(service_viewport),
                     "Service lobby became clickable before AwaitReturn completed");
@@ -252,7 +253,7 @@ namespace tenhou {
         static void RecoveredContestReturn(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
-            view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
+            view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
             LobbySession session;
             session.require_native = session.origin_lobby = session.interactive_games = session.match_games = true;
             session.Connected("NoName", 'M');
@@ -275,19 +276,19 @@ namespace tenhou {
             receive("<RESTORED />");
 
             const HWND settlement = GetDlgItem(view.window_, 5400);
-            if (view.displaying_ || !view.show_results_ || !IsWindowVisible(settlement))
+            if (view.sequencer_.displaying() || !view.sequencer_.show_results() || !IsWindowVisible(settlement))
                 throw std::runtime_error("Recovered contest result did not use the live snapshot");
             session.SubmitLobby(session.snapshot.lobby_revision, "return");
             receive("<CHAT lobby=\"C00112233\" epoch=\"1\" seated=\"0\" />");
             if (session.snapshot.phase != LobbyPhase::Lobby || session.snapshot.last_settlement.receipts.empty() ||
-                view.show_results_ || IsWindowVisible(settlement))
+                view.sequencer_.show_results() || IsWindowVisible(settlement))
                 throw std::runtime_error("The recovered contest result stayed visible after return");
             view.Disconnect();
         }
 
         static void ProtocolOpening(HWND parent, const std::filesystem::path &resources, const std::string &rule) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
-            view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
+            view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
             LobbySession session; session.interactive_games = true;
             session.snapshot.native_service = true; session.snapshot.phase = LobbyPhase::Lobby;
             auto receive = [&](const NetworkMessage &message) {
@@ -314,18 +315,18 @@ namespace tenhou {
                 receive({"PREPARE", {}}); receive({"VSTATE", fields});
                 require(view.Snapshot().game.players[0].rank == 11 && view.Snapshot().game.players[1].rank == 0,
                     "Variant snapshot lost the relative seat ranks");
-                require(view.opening_.Active() && view.variant_hand_ == hand, "Protocol opening did not install the new hand");
+                require(view.sequencer_.opening().Active() && view.sequencer_.variant_hand() == hand, "Protocol opening did not install the new hand");
                 require(view.match_intro_->Active() == (hand == 1), "First match introduction was skipped or repeated between hands");
                 require(!IsWindowVisible(view.controls_.at(5173)), "Exchange confirmation appeared before dealing/selection");
                 if (hand == 1) {
-                    const auto steps = view.opening_.steps();
+                    const auto steps = view.sequencer_.opening().steps();
                     receive({"PAUSED", {{"show", "1"}, {"offline", "2"}}});
                     require(!view.Snapshot().game.players[1].connected && view.Snapshot().game.players[2].connected,
                         "Paused match did not mark the disconnected seat");
                     receive({"PAUSED", {{"show", "0"}, {"offline", "0"}}});
                     require(view.Snapshot().game.players[1].connected, "Resumed match retained an offline seat");
                     view.OpeningTick(AnimationNow() + 100);
-                    require(view.opening_.steps() == steps && view.match_intro_->Active(),
+                    require(view.sequencer_.opening().steps() == steps && view.match_intro_->Active(),
                         "Deal started before the match introduction was confirmed");
                 }
                 receive({"READYACK", {{"table", "opening-check"}, {"kind", "STARTREADY"}}});
@@ -334,17 +335,17 @@ namespace tenhou {
                     require(view.match_intro_->Active(), "Server START flashed away the local match introduction");
                     view.match_intro_->Finish();
                 }
-                require(session.snapshot.actions.choices.size() == 2 && !view.start_barrier_,
+                require(session.snapshot.actions.choices.size() == 2 && !view.sequencer_.start_barrier(),
                     "Ready acknowledgement erased the initial/next-hand actions");
-                if (sichuan) require(view.selection_.Active() && view.selection_.indices.size() == 2,
+                if (sichuan) require(view.sequencer_.selection().Active() && view.sequencer_.selection().indices.size() == 2,
                     "Ready acknowledgement invalidated the exchange selection");
                 const auto now = AnimationNow();
-                for (int tick = 1; tick <= 400 && view.opening_.Active(); ++tick)
+                for (int tick = 1; tick <= 400 && view.sequencer_.opening().Active(); ++tick)
                     view.OpeningTick(now + tick * kTableTickMs);
-                require(!view.opening_.Active() && !IsWindowVisible(view.controls_.at(5173)),
+                require(!view.sequencer_.opening().Active() && !IsWindowVisible(view.controls_.at(5173)),
                     "Exchange confirmation appeared without three selected tiles");
                 if (sichuan) {
-                    for (int tile: {0, 4, 8}) view.selection_.Pick(view.Snapshot().actions, tile);
+                    for (int tile: {0, 4, 8}) view.sequencer_.selection().Pick(view.Snapshot().actions, tile);
                     view.Arrange();
                     require(IsWindowVisible(view.controls_.at(5173)) && IsWindowEnabled(view.controls_.at(5173)),
                         "A legal three-tile exchange has no confirmation button");
@@ -352,25 +353,25 @@ namespace tenhou {
             }
             if (sichuan) {
                 const auto revision = view.Snapshot().actions.revision;
-                view.pressed_tile_ = 8; view.pressed_revision_ = revision;
+                view.sequencer_.pressed_tile() = 8; view.sequencer_.pressed_revision() = revision;
                 fields["seq"] = fields["event_seq"] = "3";
                 fields["events"] = "2:start:0:-1:-1;3:exchange:1:-1:-1";
                 receive({"VSTATE", fields});
-                require(view.Snapshot().actions.revision == revision && view.selection_.selected == std::vector<int>({0,4,8}) &&
-                    view.pressed_tile_ == 8 && view.selection_.Confirm(view.Snapshot().actions) == 0,
+                require(view.Snapshot().actions.revision == revision && view.sequencer_.selection().selected == std::vector<int>({0,4,8}) &&
+                    view.sequencer_.pressed_tile() == 8 && view.sequencer_.selection().Confirm(view.Snapshot().actions) == 0,
                     "Peer exchange interrupted the local selection or mouse press");
                 fields["phase"] = "missing"; fields["actions"] = "dingque:0;dingque:1;dingque:2"; fields["window"] = "2";
                 fields["seq"] = fields["event_seq"] = "4";
                 fields["events"] += ";4:exchange:2:-1:-1";
                 receive({"VSTATE", fields});
-                require(view.Snapshot().actions.revision != revision && !view.selection_.Active(),
+                require(view.Snapshot().actions.revision != revision && !view.sequencer_.selection().Active(),
                     "New preparation phase retained an old exchange request");
                 SendMessageW(view.window_, WM_APP + 26, 5170, 0);
-                const auto missing_revision = view.button_revision_;
+                const auto missing_revision = view.sequencer_.button_revision();
                 fields["seq"] = fields["event_seq"] = "5";
                 fields["events"] += ";5:dingque:3:-1:-1";
                 receive({"VSTATE", fields});
-                require(view.Snapshot().actions.revision == missing_revision && view.button_revision_ == missing_revision &&
+                require(view.Snapshot().actions.revision == missing_revision && view.sequencer_.button_revision() == missing_revision &&
                     IsWindowEnabled(view.controls_.at(5170)), "Peer dingque interrupted a pressed suit button");
                 fields["window"] = "3";
                 receive({"VSTATE", fields});
@@ -380,7 +381,7 @@ namespace tenhou {
         }
         static void Run(HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
-            view.ConfigureArtwork(resources, 1440); view.sound_enabled_ = false; view.Show(true);
+            view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
             LobbySnapshot snapshot; snapshot.variant_active = true; snapshot.phase = LobbyPhase::Game;
             snapshot.actions.enabled = true;
             auto &state = snapshot.variant; state.initialized = true; state.rule = "sichuan-bloodbattle";
@@ -396,51 +397,51 @@ namespace tenhou {
             };
             auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             receive("VGO"); receive("PREPARE"); receive("VSTATE");
-            require(view.opening_.Active() && view.start_barrier_ && view.displayed_.game.events == 1,
+            require(view.sequencer_.opening().Active() && view.sequencer_.start_barrier() && view.sequencer_.displayed().game.events == 1,
                 "Variant initial snapshot deadlocked behind PREPARE");
             require(view.match_intro_->Active(), "Variant first hand skipped the match introduction");
             view.match_intro_->Finish();
-            receive("START"); require(!view.start_barrier_, "Variant START did not release opening");
-            view.opening_.Cancel();
+            receive("START"); require(!view.sequencer_.start_barrier(), "Variant START did not release opening");
+            view.sequencer_.opening().Cancel();
             state.phase = VariantPhase::Turn; state.turn = 1; state.wall_front = 53; state.wall = 55;
             state.players[1].hidden = 14; state.seq = state.event_seq = 2;
             state.events.push_back({2, "draw", 1, -1, -1}); receive("VSTATE");
-            require(view.displayed_.game.events == 2 && view.table_.Animating(), "Variant draw did not animate");
+            require(view.sequencer_.displayed().game.events == 2 && view.table_.Animating(), "Variant draw did not animate");
             state.phase = VariantPhase::Claims; state.last_actor = 1; state.last_tile = 52;
             state.players[1].hidden = 13; state.players[1].river = {52}; state.seq = state.event_seq = 3;
             state.events.push_back({3, "discard", 1, 52, -1}); receive("VSTATE");
-            require(view.displayed_.game.events == 2 && view.presentation_queue_.size() == 1,
+            require(view.sequencer_.displayed().game.events == 2 && view.sequencer_.queue().size() == 1,
                 "Packet burst replaced the visible opponent draw");
             view.table_.CancelAnimation();
             for (int i = 0; i < 41; ++i) view.PresentationTick();
-            require(view.displayed_.game.events == 2, "Opponent draw lost its think wait");
-            view.PresentationTick(); require(view.displayed_.game.events == 3 && view.table_.Animating(),
+            require(view.sequencer_.displayed().game.events == 2, "Opponent draw lost its think wait");
+            view.PresentationTick(); require(view.sequencer_.displayed().game.events == 3 && view.table_.Animating(),
                 "Queued discard never animated after draw wait");
             snapshot.table_paused = true; receive("PAUSED");
-            const auto wait = view.pause_ticks_; view.PresentationTick();
-            require(view.pause_ticks_ == wait, "Paused table advanced its event queue");
+            const auto wait = view.sequencer_.pause_ticks(); view.PresentationTick();
+            require(view.sequencer_.pause_ticks() == wait, "Paused table advanced its event queue");
             snapshot.table_paused = false; snapshot.recovering = true; receive("VSTATE");
-            require(view.presentation_queue_.empty() && !view.table_.Animating() && !view.captions_.Active(),
+            require(view.sequencer_.queue().empty() && !view.table_.Animating() && !view.sequencer_.captions().Active(),
                 "Recovery replayed queued motion or declarations");
             snapshot.recovering = false; receive("RESTORED");
             ++state.hand_number; ++state.seq; ++state.event_seq; state.phase = VariantPhase::Exchange;
             state.events.push_back({state.event_seq, "start", 0, -1, -1});
             receive("PREPARE"); receive("VSTATE");
-            require(view.displayed_.variant.hand_number == 2 && view.opening_.Active(),
+            require(view.sequencer_.displayed().variant.hand_number == 2 && view.sequencer_.opening().Active(),
                 "Next-hand PREPARE deadlocked behind the previous displayed hand");
-            receive("START"); view.opening_.Cancel();
+            receive("START"); view.sequencer_.opening().Cancel();
             state.rule = "guobiao"; state.wall_total = 144; state.wall_front = 53; state.wall_tail = 2; state.wall = 89;
             state.phase = VariantPhase::Turn; ++state.hand_number; ++state.seq; ++state.event_seq;
             state.players[0].flowers = {136,140}; state.events.push_back({state.event_seq, "start", 0, -1, -1});
             receive("PREPARE"); receive("VSTATE"); receive("START");
-            require(view.opening_flowers_[0], "Fresh guobiao deal lost its automatic flower caption");
+            require(view.sequencer_.opening_flowers()[0], "Fresh guobiao deal lost its automatic flower caption");
             const auto now = AnimationNow();
-            for (int tick = 1; tick <= 400 && view.opening_.Active(); ++tick)
+            for (int tick = 1; tick <= 400 && view.sequencer_.opening().Active(); ++tick)
                 view.OpeningTick(now + tick * kTableTickMs);
-            require(!view.opening_.Active() && view.captions_.Frames().size() == 1 && view.captions_.Frames()[0].resource == 480,
+            require(!view.sequencer_.opening().Active() && view.sequencer_.captions().Frames().size() == 1 && view.sequencer_.captions().Frames()[0].resource == 480,
                 "Opening flowers never appeared at the end of the deal");
             snapshot.recovering = true; receive("VSTATE");
-            require(!view.captions_.Active() && !view.opening_flowers_[0], "Recovery repeated the opening flower effect");
+            require(!view.sequencer_.captions().Active() && !view.sequencer_.opening_flowers()[0], "Recovery repeated the opening flower effect");
             view.Disconnect();
         }
     };
