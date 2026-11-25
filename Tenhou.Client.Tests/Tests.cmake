@@ -45,7 +45,12 @@ add_executable(tenhou_presenter_check "${client_checks_directory}/presenter_chec
 target_link_libraries(tenhou_presenter_check PRIVATE tenhou_presenter)
 target_compile_options(tenhou_presenter_check PRIVATE /W4 /WX /utf-8 /EHsc)
 add_dependencies(tenhou_presenter_check tenhou_assets)
-add_custom_target(tenhou_client_checks DEPENDS tenhou_text_composition_check tenhou_text_samples tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check tenhou_offline_lobby_check tenhou_official_capture_check tenhou_presenter_check)
+add_executable(tenhou_render_bench "${client_checks_directory}/render_bench.cpp"
+    "${asset_generated_directory}/client_assets.rc")
+target_link_libraries(tenhou_render_bench PRIVATE tenhou_table tenhou_network)
+target_compile_options(tenhou_render_bench PRIVATE /W4 /WX /utf-8 /EHsc)
+add_dependencies(tenhou_render_bench tenhou_assets)
+add_custom_target(tenhou_client_checks DEPENDS tenhou_text_composition_check tenhou_text_samples tenhou_text_catalog_check tenhou_protocol_check tenhou_variant_ui_check tenhou_resource_check tenhou_variant_check tenhou_lobby_check tenhou_presentation_check tenhou_offline_lobby_check tenhou_official_capture_check tenhou_presenter_check tenhou_render_bench)
 enable_testing()
 add_test(NAME client_presenter COMMAND tenhou_presenter_check "${TENHOU_OUTPUT_DIRECTORY}/resources")
 add_test(NAME client_offline_lobby COMMAND tenhou_offline_lobby_check)

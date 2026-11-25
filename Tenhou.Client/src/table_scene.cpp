@@ -1,5 +1,6 @@
 #include "table_scene.hpp"
 #include "resource_manager.hpp"
+#include "shared_assets.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <objidl.h>
@@ -9,10 +10,11 @@ namespace tenhou {
     void TableArtwork::Load(const std::filesystem::path &directory, int width) {
         if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported table canvas");
         const int number = width == 1024 ? 0 : 2;
-        auto even = std::make_shared<ObjectPack>(
-            LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TablePackSd : AssetId::TablePack)));
-        auto odd = std::make_shared<ObjectPack>(
-            LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TableCompanionPackSd : AssetId::TableCompanionPack)));
+        ResourceManager manager(directory);
+        auto even = SharedAssets().GetObjectPack(
+            manager.Path(width == 1024 ? AssetId::TablePackSd : AssetId::TablePack));
+        auto odd = SharedAssets().GetObjectPack(
+            manager.Path(width == 1024 ? AssetId::TableCompanionPackSd : AssetId::TableCompanionPack));
         if (even->signature != "obj" + std::to_string(number) || odd->signature != "obj" + std::to_string(number + 1))
             throw std::runtime_error("Wrong table object pack resolution");
         even_ = std::move(even);
@@ -20,6 +22,7 @@ namespace tenhou {
         geometry_.LoadPacks(even_, odd_, width);
         variants_.Configure(directory);
         cache_.clear();
+        lru_.clear();
         flight_cache_.clear();
         cached_bytes_ = 0;
         frame_ = 1;
@@ -28,14 +31,12 @@ namespace tenhou {
 
     void TableArtwork::BeginFrame() {
         if (flight_cache_.size() > 192) flight_cache_.clear();
-        while (cached_bytes_ > cache_budget_) {
-            auto victim = cache_.end();
-            for (auto it = cache_.begin(); it != cache_.end(); ++it)
-                if (it->second.used != frame_ && (victim == cache_.end() || it->second.used < victim->second.used))
-                    victim = it;
-            if (victim == cache_.end()) break; // Pin every resource used by the visible frame.
-            cached_bytes_ -= victim->second.image.image.bgra.size();
-            cache_.erase(victim);
+        while (cached_bytes_ > cache_budget_ && !lru_.empty()) {
+            const auto &victim = lru_.back();
+            if (victim.used == frame_) break; // Pin every resource used by the visible frame.
+            cached_bytes_ -= victim.image.image.bgra.size();
+            cache_.erase(victim.key);
+            lru_.pop_back();
             ++evictions_;
         }
         ++frame_;
@@ -47,8 +48,9 @@ namespace tenhou {
         const bool flower = variant >= 40;
         const auto found = cache_.find(key);
         if (found != cache_.end()) {
-            found->second.used = frame_;
-            return found->second.image;
+            found->second->used = frame_;
+            lru_.splice(lru_.begin(), lru_, found->second);
+            return found->second->image;
         }
         const bool direct = flower || variant == 34 || variant == 37;
         const auto &pack = direct ? *odd_ : *even_;
@@ -88,7 +90,30 @@ namespace tenhou {
                 throw std::runtime_error("Cannot compose flower face");
         }
         cached_bytes_ += decoded.image.bgra.size();
-        return cache_.emplace(key, Cached{std::move(decoded), frame_}).first->second.image;
+        lru_.push_front(Cached{key, std::move(decoded), frame_});
+        cache_[key] = lru_.begin();
+        return lru_.front().image;
+    }
+
+    const ObjectImage &TableArtwork::GetBody(const TableTile &tile) {
+        const auto raw_key = ImageKey(tile, false);
+        const unsigned variant = (raw_key >> 16) & 0xff;
+        const unsigned body_variant = (variant == 37) ? 37u : 34u;
+        const std::uint32_t key = (raw_key & 0xff00ffffu) | (body_variant << 16);
+        const auto found = cache_.find(key);
+        if (found != cache_.end()) {
+            found->second->used = frame_;
+            lru_.splice(lru_.begin(), lru_, found->second);
+            return found->second->image;
+        }
+        const auto entry = odd_->key_index.find(key);
+        if (entry == odd_->key_index.end())
+            throw std::runtime_error("Missing table body resource key " + std::to_string(key));
+        auto decoded = DecodeObject(*odd_, entry->second, even_.get(), true, &rgb_);
+        cached_bytes_ += decoded.image.bgra.size();
+        lru_.push_front(Cached{key, std::move(decoded), frame_});
+        cache_[key] = lru_.begin();
+        return lru_.front().image;
     }
 
     const ObjectImage &TableArtwork::GetFlight(const TileFlightImage &flight, bool red) {

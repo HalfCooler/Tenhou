@@ -1,5 +1,7 @@
 #include "background.hpp"
 #include "resource_manager.hpp"
+#include "shared_assets.hpp"
+#include "win32_utf.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -108,44 +110,46 @@ namespace tenhou {
 
     Image BuildPreferredBackground(const std::filesystem::path &directory, const std::filesystem::path &config,
                                    int width, int height, const ClientPreferences &preferences) {
-        const auto number = [&](unsigned index, int fallback) {
-            const auto &text = preferences.background_lhsv[index];
-            if (text.empty()) return fallback;
-            wchar_t *end = nullptr;
-            const auto value = wcstol(text.c_str(), &end, 10);
-            return end == text.c_str() ? fallback : static_cast<int>(value);
-        };
-        std::array < std::array < float, 3 >, 3 > hsv{};
-        for (unsigned band = 0; band < 3; ++band)
-            hsv[band] = {
-                float(std::clamp(number(1 + band * 3, 0), 0, 359)),
-                float(std::clamp(number(2 + band * 3, 255), 0, 256) * double(1.0f / 255.0f)),
-                float(std::clamp(number(3 + band * 3, 255), 0, 256) * double(1.0f / 255.0f))
+        return *SharedAssets().GetBackground(directory, config, width, height, preferences, [&]() -> Image {
+            const auto number = [&](unsigned index, int fallback) {
+                const auto &text = preferences.background_lhsv[index];
+                if (text.empty()) return fallback;
+                char *end = nullptr;
+                const auto value = std::strtol(text.c_str(), &end, 10);
+                return end == text.c_str() ? fallback : static_cast<int>(value);
             };
-        auto source = preferences.background_source == L"./BG1"
-                          ? ResourceManager(directory).Path(AssetId::BackgroundAlternate)
-                          : std::filesystem::path(preferences.background_source);
-        if (source.empty()) source = ResourceManager(directory).Path(AssetId::Background);
-        else if (source.is_relative() && preferences.background_source != L"./BG1")
-            source = config.parent_path() / source;
-        // The original #FF0000 preset uses a red solid source, then adjusts HSV.
-        const float strength = float(std::sqrt(float(width >> 10)) * (10 - std::clamp(number(0, 2), 0, 10)));
-        if (preferences.background_source == L"#FF0000") {
-            Image image;
-            image.width = width;
-            image.height = height;
-            image.bgra.resize(std::size_t(width) * height * 4);
-            const auto rgb = AdjustOriginalHsv(0xff, hsv[0][0], hsv[0][1], hsv[0][2]);
-            for (std::size_t i = 0; i < image.bgra.size(); i += 4) {
-                image.bgra[i] = static_cast<std::uint8_t>(rgb >> 16);
-                image.bgra[i + 1] = static_cast<std::uint8_t>(rgb >> 8);
-                image.bgra[i + 2] = static_cast<std::uint8_t>(rgb);
-                image.bgra[i + 3] = 255;
+            std::array<std::array<float, 3>, 3> hsv{};
+            for (unsigned band = 0; band < 3; ++band)
+                hsv[band] = {
+                    float(std::clamp(number(1 + band * 3, 0), 0, 359)),
+                    float(std::clamp(number(2 + band * 3, 255), 0, 256) * double(1.0f / 255.0f)),
+                    float(std::clamp(number(3 + band * 3, 255), 0, 256) * double(1.0f / 255.0f))
+                };
+            auto source = preferences.background_source == "./BG1"
+                              ? ResourceManager(directory).Path(AssetId::BackgroundAlternate)
+                              : PathFromUtf8(preferences.background_source);
+            if (source.empty()) source = ResourceManager(directory).Path(AssetId::Background);
+            else if (source.is_relative() && preferences.background_source != "./BG1")
+                source = config.parent_path() / source;
+            // The original #FF0000 preset uses a red solid source, then adjusts HSV.
+            const float strength = float(std::sqrt(float(width >> 10)) * (10 - std::clamp(number(0, 2), 0, 10)));
+            if (preferences.background_source == "#FF0000") {
+                Image image;
+                image.width = width;
+                image.height = height;
+                image.bgra.resize(std::size_t(width) * height * 4);
+                const auto rgb = AdjustOriginalHsv(0xff, hsv[0][0], hsv[0][1], hsv[0][2]);
+                for (std::size_t i = 0; i < image.bgra.size(); i += 4) {
+                    image.bgra[i] = static_cast<std::uint8_t>(rgb >> 16);
+                    image.bgra[i + 1] = static_cast<std::uint8_t>(rgb >> 8);
+                    image.bgra[i + 2] = static_cast<std::uint8_t>(rgb);
+                    image.bgra[i + 3] = 255;
+                }
+                ApplyBackgroundLighting(image, strength, 600);
+                return image;
             }
-            ApplyBackgroundLighting(image, strength, 600);
-            return image;
-        }
-        return BuildBackground(source, width, height, strength, 600, &hsv);
+            return BuildBackground(source, width, height, strength, 600, &hsv);
+        });
     }
 
     void ApplyBackgroundLighting(Image &image, float strength, float light_y) {

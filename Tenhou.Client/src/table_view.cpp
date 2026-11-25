@@ -20,10 +20,9 @@ namespace tenhou {
         }
         if (change == PreferenceChange::Sound) {
             audio_.SetVolumePercent(preferences.se_volume);
-            const auto voice_mode = GetPrivateProfileIntW(
-                L"RESOURCE", L"SE_NOVOICE",
-                GetPrivateProfileIntW(L"REBUILD", L"SoundEffectsOnly", 0, config_path_.c_str()),
-                config_path_.c_str());
+            const auto voice_mode = PreferenceInt(
+                config_path_, "RESOURCE", "SE_NOVOICE",
+                PreferenceInt(config_path_, "REBUILD", "SoundEffectsOnly", 0));
             sequencer_.set_voice_mode(voice_mode);
             sound_loaded_ = false;
             audio_error_.clear();
@@ -139,8 +138,8 @@ namespace tenhou {
         settlement_view_->SetSoundStopper([this] {
             try { audio_.Stop(); } catch (const std::exception &e) { SoundError(e); }
         });
-        sequencer_.set_animation_enabled(GetPrivateProfileIntW(L"REBUILD", L"ReplayAnimation", 1, config_path_.c_str()) != 0);
-        sequencer_.set_sound_enabled(GetPrivateProfileIntW(L"REBUILD", L"ReplaySound", 0, config_path_.c_str()) != 0);
+        sequencer_.set_animation_enabled(PreferenceInt(config_path_, "REBUILD", "ReplayAnimation", 1) != 0);
+        sequencer_.set_sound_enabled(PreferenceInt(config_path_, "REBUILD", "ReplaySound", 0) != 0);
         settlement_view_->SetSoundEnabled(EffectsEnabled());
         settlement_view_->SetAnimationEnabled(sequencer_.animation_enabled());
         SendMessageW(animate_control_, BM_SETCHECK, sequencer_.animation_enabled() ? BST_CHECKED : BST_UNCHECKED, 0);
@@ -242,8 +241,8 @@ namespace tenhou {
     }
 
     void TableView::Resize(int width, int height) {
-        width = kDefaultClientWidth;
-        height = kDefaultClientHeight;
+        width = std::max(1, width);
+        height = std::max(1, height);
         width_ = width;
         height_ = height;
         MoveWindow(viewport_, 0, 0, width, height, TRUE);
@@ -542,11 +541,8 @@ namespace tenhou {
     }
 
     void TableView::SaveSettings() {
-        if (!WritePrivateProfileStringW(L"REBUILD", L"ReplayAnimation",
-                                        sequencer_.animation_enabled() ? L"1" : L"0", config_path_.c_str()) ||
-            !WritePrivateProfileStringW(L"REBUILD", L"ReplaySound",
-                                        sequencer_.sound_enabled() ? L"1" : L"0", config_path_.c_str()))
-            throw std::runtime_error("Cannot save replay effects settings");
+        WritePreferenceInt(config_path_, "REBUILD", "ReplayAnimation", sequencer_.animation_enabled() ? 1 : 0);
+        WritePreferenceInt(config_path_, "REBUILD", "ReplaySound", sequencer_.sound_enabled() ? 1 : 0);
     }
 
     void TableView::CancelEffects() {
@@ -598,6 +594,36 @@ namespace tenhou {
 
     void TableView::OpeningTick() {
         ApplyEffects(sequencer_.OpeningTick(AnimationNow(), match_intro_->Active()));
+    }
+
+    bool TableView::PaintTableToWindow(HWND surface_parent, RECT bounds) {
+        if (!surface_parent) return false;
+        const auto *session = sequencer_.session();
+        if (!session || !session->state().initialized) return false;
+        try {
+            const auto &session_state = session->state();
+            const auto &geometry = renderer_->EnsureGeometry(session_state.red_tiles);
+            const auto frame = BuildReplayTableRenderFrame(
+                canvas_width_, {bounds.left, bounds.top, bounds.right, bounds.bottom}, session_state, geometry,
+                sequencer_.presentation(), sequencer_.opening(), sequencer_.captions(),
+                sequencer_.red_tiles(), sequencer_.original_display(), sequencer_.animation_enabled(),
+                hud_interaction_.relative(), sequencer_.draw_end_ticks(), AnimationNow(),
+                GetDpiForWindow(viewport_));
+            if (!renderer_->RenderToWindow(surface_parent, frame)) return false;
+            if (!artwork_loaded_logged_) {
+                artwork_loaded_logged_ = true;
+                log_("REPLAY ARTWORK canvas=" + std::to_string(canvas_width_));
+            }
+            artwork_error_.clear();
+            if (!painted_) {
+                log_("PAINT offline replay rendered");
+                painted_ = true;
+            }
+            return true;
+        } catch (const std::exception &) {
+            renderer_->HideWindowSurface();
+            return false;
+        }
     }
 
     void TableView::PaintTable(HDC dc, RECT bounds, HWND surface_parent) {
@@ -772,6 +798,15 @@ namespace tenhou {
                     const auto board = view->BoardBounds();
                     const bool table_only = update.left >= board.left && update.top >= board.top &&
                                             update.right <= board.right && update.bottom <= board.bottom;
+                    const auto *session = view->sequencer_.session();
+                    if (table_only && session && session->state().initialized) {
+                        PAINTSTRUCT ps{};
+                        BeginPaint(window, &ps);
+                        const bool presented = view->PaintTableToWindow(window, board);
+                        EndPaint(window, &ps);
+                        if (presented) return 0;
+                        InvalidateRect(window, &board, FALSE);
+                    }
                     view->paint_buffer_.Paint(window, [&](HDC dc) { view->Paint(dc, table_only, window); });
                     return 0;
                 }

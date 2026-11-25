@@ -536,12 +536,7 @@ namespace tenhou {
         for (const auto &span: item.spans) {
             TextLayout layout;
             if (span.key != TextKey::Count) layout = renderer.Layout(span.key);
-            else {
-                const int size = MultiByteToWideChar(CP_UTF8, 0, span.text.data(), static_cast<int>(span.text.size()), nullptr, 0);
-                std::wstring wide(size, L' ');
-                if (size) MultiByteToWideChar(CP_UTF8, 0, span.text.data(), static_cast<int>(span.text.size()), wide.data(), size);
-                layout = renderer.Layout(wide, span.style);
-            }
+            else layout = renderer.Layout(span.text, span.style);
             const auto &effects = layout.metrics.effects;
             if (!effects.IsEmptyArea()) {
                 left = runs.empty() ? cursor + effects.X : std::min(left, cursor + effects.X);

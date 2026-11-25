@@ -4,6 +4,7 @@
 #include "replay_effects.hpp"
 #include "background.hpp"
 #include "music_preferences.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <commdlg.h>
@@ -141,11 +142,11 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         ListView_InsertColumn(list, 2, &col);
         SendDlgItemMessageW(page, 0x3fa, TBM_SETRANGE, 0, MAKELPARAM(0, 200));
         SendDlgItemMessageW(page, 0x3fa, TBM_SETPOS, TRUE,
-                            GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str()));
+                            PreferenceInt(config_, "RESOURCE", "BGM_VOL", 100));
         SendDlgItemMessageW(page, 0x3f9, TBM_SETRANGE, 0, MAKELPARAM(0, 200));
         MusicList(page);
         for (int id: {0x408, 0x419, 0x416, 0x3f9}) EnableWindow(GetDlgItem(page, id), FALSE);
-        const auto label = std::to_wstring(GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str()));
+        const auto label = std::to_wstring(PreferenceInt(config_, "RESOURCE", "BGM_VOL", 100));
         SetDlgItemTextW(page, 0x428, label.c_str());
     }
 
@@ -161,13 +162,14 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             item.pszText = const_cast<wchar_t *>(names[i]);
             item.lParam = i + 1;
             ListView_InsertItem(list, &item);
-            auto file = PreferenceString(config_, L"RESOURCE", MusicKeys()[i]);
-            if (file.empty() || file == L"default") file = L"（标准）";
-            else if (file == L"none") file = L"无";
-            else file = std::filesystem::path(file).filename().wstring();
+            const auto raw_file = PreferenceString(config_, "RESOURCE", MusicKeys()[i]);
+            std::wstring file;
+            if (raw_file.empty() || raw_file == "default") file = L"（标准）";
+            else if (raw_file == "none") file = L"无";
+            else file = PathFromUtf8(raw_file).filename().wstring();
             ListView_SetItemText(list, i, 1, file.data());
             auto level = std::to_wstring(
-                GetPrivateProfileIntW(L"RESOURCE", MusicOption(MusicKeys()[i]).c_str(), 60, config_.c_str()));
+                PreferenceInt(config_, "RESOURCE", MusicOption(MusicKeys()[i]), 60));
             ListView_SetItemText(list, i, 2, level.data());
         }
         if (selected >= 0) ListView_SetItemState(list, selected, LVIS_SELECTED | LVIS_FOCUSED,
@@ -184,9 +186,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         }
         const auto path = MusicPath(resources_, config_, MusicKeys()[row]);
         if (path.empty()) return;
-        audio_.SetVolumePercent(static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str())));
-        const auto level = GetPrivateProfileIntW(L"RESOURCE", MusicOption(MusicKeys()[row]).c_str(), 60,
-                                                 config_.c_str());
+        audio_.SetVolumePercent(PreferenceInt(config_, "RESOURCE", "BGM_VOL", 100));
+        const auto level = PreferenceInt(config_, "RESOURCE", MusicOption(MusicKeys()[row]), 60);
         audio_.Play(0, std::make_shared<SoundClip>(DecodeMusic(ReadFile(path))), true, level * .01);
         SetTimer(page, 101, 25, nullptr);
     }
@@ -195,7 +196,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         const int row = ListView_GetNextItem(GetDlgItem(page, 0x40d), -1, LVNI_SELECTED);
         if (row < 0) return;
         const auto key = MusicKeys()[row];
-        std::wstring value;
+        std::string value;
         if (command == 0x419) {
             wchar_t file[32768]{};
             OPENFILENAMEW dialog{};
@@ -210,7 +211,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                 return;
             }
             DecodeMusic(ReadFile(file));
-            value = file;
+            value = WideToUtf8(file);
         } else {
             HMENU menu = CreatePopupMenu();
             AppendMenuW(menu, MF_STRING, 100, L"标准");
@@ -223,11 +224,11 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             auto chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, r.right, r.top, 0, page, nullptr);
             DestroyMenu(menu);
             if (!chosen) return;
-            if (chosen == 200) value = L"none";
+            if (chosen == 200) value = "none";
             else if (chosen == 300 || chosen == 400)
-                value = ResourceManager(resources_).Path(chosen == 300 ? AssetId::LobbyMusic : AssetId::LobbyMusicAlternate).wstring();
+                value = PathToUtf8(ResourceManager(resources_).Path(chosen == 300 ? AssetId::LobbyMusic : AssetId::LobbyMusicAlternate));
         }
-        WritePreference(config_, L"RESOURCE", key, value.empty() ? nullptr : value.c_str());
+        WritePreference(config_, "RESOURCE", key, value.empty() ? nullptr : value.c_str());
         initializing_ = true;
         MusicList(page);
         initializing_ = false;
@@ -238,13 +239,13 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     void SettingsView::MusicVolume(HWND page, int control) {
         const int value = static_cast<int>(SendDlgItemMessageW(page, control, TBM_GETPOS, 0, 0));
         if (control == 0x3fa) {
-            WritePreferenceInt(config_, L"RESOURCE", L"BGM_VOL", value);
+            WritePreferenceInt(config_, "RESOURCE", "BGM_VOL", value);
             const auto label = std::to_wstring(value);
             SetDlgItemTextW(page, 0x428, label.c_str());
         } else {
             const auto row = ListView_GetNextItem(GetDlgItem(page, 0x40d), -1, LVNI_SELECTED);
             if (row < 0) return;
-            WritePreferenceInt(config_, L"RESOURCE", MusicOption(MusicKeys()[row]).c_str(), value);
+            WritePreferenceInt(config_, "RESOURCE", MusicOption(MusicKeys()[row]), value);
             initializing_ = true;
             MusicList(page);
             initializing_ = false;
@@ -254,9 +255,9 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     }
 
     void SettingsView::InitReplay(HWND page) {
-        const auto path = PreferenceString(config_, L"LOG", L"PATH");
+        const auto path = PreferenceString(config_, "LOG", "PATH");
         CheckDlgButton(page, 0x420, path.empty() ? BST_UNCHECKED : BST_CHECKED);
-        if (!path.empty()) SetDlgItemTextW(page, 0x419, path.c_str());
+        if (!path.empty()) SetDlgItemTextW(page, 0x419, Utf8ToWide(path).c_str());
         else ReplayCommand(page, 0x408);
         for (int id: {0x419, 0x41a, 6, 0x408}) EnableWindow(GetDlgItem(page, id), !path.empty());
     }
@@ -270,8 +271,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             if (path.is_relative()) path = config_.parent_path() / path;
             std::filesystem::create_directories(path);
             if (!std::filesystem::is_directory(path)) throw std::runtime_error("牌谱路径不是文件夹");
-            WritePreference(config_, L"LOG", L"PATH", path.c_str());
-        } else WritePreference(config_, L"LOG", L"PATH", nullptr);
+            WritePreference(config_, "LOG", "PATH", PathToUtf8(path).c_str());
+        } else WritePreference(config_, "LOG", "PATH", nullptr);
     }
 
     void SettingsView::ReplayCommand(HWND page, int command) {
@@ -325,9 +326,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     void SettingsView::InitSound(HWND page) {
         for (const auto *text: {L"标准", L"以效果音替代语音", L"分别指定各席语音"})
             SendDlgItemMessageW(page, 0x426, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text));
-        const int previous = GetPrivateProfileIntW(L"REBUILD", L"SoundEffectsOnly", 0, config_.c_str()) ? 1 : 0;
-        const int mode = std::clamp(
-            static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE", previous, config_.c_str())), 0, 2);
+        const int previous = PreferenceInt(config_, "REBUILD", "SoundEffectsOnly", 0) ? 1 : 0;
+        const int mode = std::clamp(PreferenceInt(config_, "RESOURCE", "SE_NOVOICE", previous), 0, 2);
         SendDlgItemMessageW(page, 0x426, CB_SETCURSEL, mode, 0);
         const auto list = GetDlgItem(page, 0x40d);
         ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
@@ -375,10 +375,11 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             item.pszText = name.data();
             item.lParam = id;
             ListView_InsertItem(list, &item);
-            auto path = PreferenceString(config_, L"RESOURCE", name.c_str());
-            if (path.empty()) path = L"(标准)";
-            else if (_wcsicmp(path.c_str(), L"none") == 0) path = L"无";
-            else path = std::filesystem::path(path).filename().wstring();
+            const auto raw_path = PreferenceString(config_, "RESOURCE", found->second);
+            std::wstring path;
+            if (raw_path.empty()) path = L"(标准)";
+            else if (AsciiCaseEqual(raw_path, "none")) path = L"无";
+            else path = PathFromUtf8(raw_path).filename().wstring();
             ListView_SetItemText(list, row, 1, path.data());
             ++row;
         }
@@ -407,8 +408,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     void SettingsView::SoundOverride(HWND page, int command) {
         const unsigned id = SelectedSound(page);
         if (!id) return;
-        const auto key = Wide(SoundKeys().at(id));
-        std::wstring path;
+        const auto &key = SoundKeys().at(id);
+        std::string path;
         if (command == 0x419) {
             wchar_t file[32768]{};
             OPENFILENAMEW dialog{};
@@ -423,9 +424,9 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                 return;
             }
             DecodeSound(ReadFile(file)); // Reject unsupported files before altering a working preference.
-            path = file;
-        } else if (command == 0x427) path = L"none";
-        WritePreference(config_, L"RESOURCE", key.c_str(), command == 0x408 ? nullptr : path.c_str());
+            path = WideToUtf8(file);
+        } else if (command == 0x427) path = "none";
+        WritePreference(config_, "RESOURCE", key, command == 0x408 ? nullptr : path.c_str());
         // Validation above belongs to the selected file. A different broken
         // override must not prevent repairing this alias one key at a time.
         changed_(PreferenceChange::Sound);
@@ -434,15 +435,15 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                          ? std::wstring(L"(标准)")
                          : command == 0x427
                                ? std::wstring(L"无")
-                               : std::filesystem::path(path).filename().wstring();
+                               : PathFromUtf8(path).filename().wstring();
         ListView_SetItemText(GetDlgItem(page, 0x40d), row, 1, label.data());
         Preview(page);
     }
 
     void SettingsView::Volume(HWND page) {
         const int volume = static_cast<int>(SendDlgItemMessageW(page, 0x3fa, TBM_GETPOS, 0, 0));
-        if (volume == 100) WritePreference(config_, L"RESOURCE", L"SE_VOL", nullptr);
-        else WritePreferenceInt(config_, L"RESOURCE", L"SE_VOL", volume);
+        if (volume == 100) WritePreference(config_, "RESOURCE", "SE_VOL", nullptr);
+        else WritePreferenceInt(config_, "RESOURCE", "SE_VOL", volume);
         audio_.SetVolumePercent(volume);
         changed_(PreferenceChange::Sound);
         const auto label = std::to_wstring(volume) + (volume == 100 ? L"(标准)" : L"");
@@ -480,7 +481,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                 SendDlgItemMessageW(page, sliders[i], TBM_SETTICFREQ, i == 0 ? 10 : i == 3 ? 1 : 8, 0);
             }
             BackgroundLayer(page, false);
-            SetDlgItemTextW(page, 0x3f4, appearance_.background_lhsv[0].c_str());
+            SetDlgItemTextW(page, 0x3f4, Utf8ToWide(appearance_.background_lhsv[0]).c_str());
             SendDlgItemMessageW(page, 0x3fa, TBM_SETPOS, TRUE, GetDlgItemInt(page, 0x3f4, nullptr, FALSE));
             CheckDlgButton(page, 0x420, (appearance_.flags & 0x2000) ? BST_CHECKED : BST_UNCHECKED);
         }
@@ -494,12 +495,12 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                 if (IsWindowEnabled(GetDlgItem(page, edits[i]))) {
                     wchar_t value[80]{};
                     GetDlgItemTextW(page, edits[i], value, 80);
-                    text = value;
+                    text = WideToUtf8(value);
                 }
             } else {
                 EnableWindow(GetDlgItem(page, edits[i]), !text.empty());
                 EnableWindow(GetDlgItem(page, sliders[i]), !text.empty());
-                SetDlgItemTextW(page, edits[i], text.c_str());
+                SetDlgItemTextW(page, edits[i], Utf8ToWide(text).c_str());
                 SendDlgItemMessageW(page, sliders[i], TBM_SETPOS, TRUE, GetDlgItemInt(page, edits[i], nullptr, FALSE));
             }
         }
@@ -526,21 +527,21 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                 SetDlgItemInt(page, 0x405, (rgb >> 16) & 255, FALSE);
                 SetDlgItemInt(page, 0x3ee, 6, FALSE); // Original 004175b0 resets shadow with every preset.
             }
-            const wchar_t *keys[]{L"TileRed", L"TileGreen", L"TileBlue"};
-            for (unsigned i = 0; i < 3; ++i) WritePreferenceInt(config_, L"REBUILD", keys[i],
+            const char *keys[]{"TileRed", "TileGreen", "TileBlue"};
+            for (unsigned i = 0; i < 3; ++i) WritePreferenceInt(config_, "REBUILD", keys[i],
                                                                 static_cast<int>(GetDlgItemInt(
                                                                     page, 0x403 + i, nullptr, FALSE)));
-            WritePreferenceInt(config_, L"RESOURCE", L"HAI_SDW",
+            WritePreferenceInt(config_, "RESOURCE", "HAI_SDW",
                                static_cast<int>(GetDlgItemInt(page, 0x3ee, nullptr, FALSE)));
             changed_(PreferenceChange::Artwork);
         } else if (command == 0x420) {
             auto prefs = ClientPreferences::Load(config_); // Preserve every unrelated flag.
             prefs.flags = (prefs.flags & ~0x2000u) | (IsDlgButtonChecked(page, 0x420) == BST_CHECKED ? 0x2000u : 0);
-            WritePreferenceInt(config_, L"STATUS", L"FLAGS0", static_cast<int>(prefs.flags));
+            WritePreferenceInt(config_, "STATUS", "FLAGS0", static_cast<int>(prefs.flags));
             changed_(PreferenceChange::Artwork);
         } else {
             BackgroundLayer(page, true);
-            appearance_.background_lhsv[0] = std::to_wstring(GetDlgItemInt(page, 0x3f4, nullptr, FALSE));
+            appearance_.background_lhsv[0] = std::to_string(GetDlgItemInt(page, 0x3f4, nullptr, FALSE));
             if (command == 0x408) {
                 HMENU menu = CreatePopupMenu();
                 AppendMenuW(menu, MF_STRING, 100, L"标准");
@@ -567,37 +568,37 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                         if (CommDlgExtendedError()) throw std::runtime_error("Cannot open background file dialog");
                         return;
                     }
-                    appearance_.background_source = file;
+                    appearance_.background_source = WideToUtf8(file);
                     // Image dimensions determine the original three-layer default.
                     Gdiplus::Bitmap input(file);
                     if (input.GetLastStatus() != Gdiplus::Ok) throw std::runtime_error("Cannot load background image");
-                    appearance_.background_lhsv = {L"2", L"0", L"255", L"255", L"", L"", L"", L"", L"", L""};
+                    appearance_.background_lhsv = {"2", "0", "255", "255", "", "", "", "", "", ""};
                     if (input.GetWidth() == 1024 && input.GetHeight() == 3840)
                         appearance_.background_lhsv = {
-                            L"2", L"0", L"255", L"255", L"0", L"255", L"255", L"0", L"255", L"255"
+                            "2", "0", "255", "255", "0", "255", "255", "0", "255", "255"
                         };
                 } else {
-                    appearance_.background_source = selected == 200 ? L"#FF0000" : selected == 300 ? L"./BG1" : L"";
+                    appearance_.background_source = selected == 200 ? "#FF0000" : selected == 300 ? "./BG1" : "";
                     appearance_.background_lhsv = {
-                        L"2", selected == 200 ? L"240" : L"0", selected == 200 ? L"16" : L"255",
-                        selected == 200 ? L"128" : L"255", L"", L"", L"", L"", L"", L""
+                        "2", selected == 200 ? "240" : "0", selected == 200 ? "16" : "255",
+                        selected == 200 ? "128" : "255", "", "", "", "", "", ""
                     };
                     if (selected == 300) appearance_.background_lhsv = {
-                                             L"2", L"0", L"255", L"255", L"0", L"255", L"255", L"0", L"255", L"255"
+                                             "2", "0", "255", "255", "0", "255", "255", "0", "255", "255"
                                          };
                 }
             }
             BuildPreferredBackground(resources_, config_, 1440, 1080, appearance_);
             // Validate before persistence/cache notification.
             const auto lhsv = appearance_.BackgroundLhsv();
-            WritePreference(config_, L"RESOURCE", L"BG_LHSV", lhsv.c_str());
-            WritePreference(config_, L"RESOURCE", L"BG_SRC",
+            WritePreference(config_, "RESOURCE", "BG_LHSV", lhsv.c_str());
+            WritePreference(config_, "RESOURCE", "BG_SRC",
                             appearance_.background_source.empty() ? nullptr : appearance_.background_source.c_str());
             changed_(PreferenceChange::Artwork);
             if (command == 0x408) {
                 initializing_ = true;
                 BackgroundLayer(page, false);
-                SetDlgItemTextW(page, 0x3f4, appearance_.background_lhsv[0].c_str());
+                SetDlgItemTextW(page, 0x3f4, Utf8ToWide(appearance_.background_lhsv[0]).c_str());
                 SendDlgItemMessageW(page, 0x3fa, TBM_SETPOS, TRUE, GetDlgItemInt(page, 0x3f4, nullptr, FALSE));
                 initializing_ = false;
             }
@@ -678,8 +679,7 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
                     for (int control: {0x408, 0x419, 0x416, 0x3f9}) EnableWindow(GetDlgItem(page, control), row >= 0);
                     if (row >= 0) {
                         SendDlgItemMessageW(page, 0x3f9, TBM_SETPOS, TRUE,
-                                            GetPrivateProfileIntW(L"RESOURCE", MusicOption(MusicKeys()[row]).c_str(),
-                                                                  60, config_.c_str()));
+                                            PreferenceInt(config_, "RESOURCE", MusicOption(MusicKeys()[row]), 60));
                         KillTimer(page, 100);
                         SetTimer(page, 100, 200, nullptr);
                     }
@@ -791,10 +791,10 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
                 const bool checked = IsDlgButtonChecked(page, control) == BST_CHECKED;
                 auto prefs = ClientPreferences::Load(config_);
                 try {
-                    if (control == 0x420) WritePreference(config_, L"STATUS", L"HIDDENID", checked ? L"1" : nullptr);
+                    if (control == 0x420) WritePreference(config_, "STATUS", "HIDDENID", checked ? "1" : nullptr);
                     else {
                         prefs.SetChecked(control, checked);
-                        WritePreferenceInt(config_, L"STATUS", L"FLAGS0", static_cast<int>(prefs.flags));
+                        WritePreferenceInt(config_, "STATUS", "FLAGS0", static_cast<int>(prefs.flags));
                     }
                 } catch (...) {
                     InitOther(page);
@@ -808,7 +808,7 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
             if (message == WM_COMMAND) {
                 const int control = LOWORD(wparam);
                 if (control == 0x426 && HIWORD(wparam) == CBN_SELCHANGE) {
-                    WritePreferenceInt(config_, L"RESOURCE", L"SE_NOVOICE",
+                    WritePreferenceInt(config_, "RESOURCE", "SE_NOVOICE",
                                        static_cast<int>(SendDlgItemMessageW(page, control, CB_GETCURSEL, 0, 0)));
                     SoundList(page);
                     changed_(PreferenceChange::Sound);

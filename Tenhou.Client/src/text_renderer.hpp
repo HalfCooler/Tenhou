@@ -25,7 +25,7 @@ namespace tenhou {
         bool native_bold() const;
         bool private_font() const;
         // Unicode scalar values, including supplementary planes; no fallback fonts.
-        std::vector<std::uint32_t> MissingGlyphs(std::wstring_view text) const;
+        std::vector<std::uint32_t> MissingGlyphs(std::string_view utf8_text) const;
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;
@@ -83,7 +83,7 @@ namespace tenhou {
         TextRenderer(const TextRenderer &) = delete;
         TextRenderer &operator=(const TextRenderer &) = delete;
         TextLayout Layout(TextKey key);
-        TextLayout Layout(std::wstring_view text, TextStyleKey style);
+        TextLayout Layout(std::string_view utf8_text, TextStyleKey style);
         // All action captions, including completion, share this visual-center anchor.
         SceneTextRun Caption(TextKey key, Gdiplus::PointF center, double scale = 1, double opacity = 1);
         // Conservative physical raster bounds; uses exactly the same geometry as Draw.

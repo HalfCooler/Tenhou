@@ -118,15 +118,21 @@ namespace tenhou {
                                              const ShadowPack &pack) {
         std::vector<TileShadow> result;
         if (artwork.width() != 1440) return result; // This fixed resource is HD only.
-        for (const auto &placed: scene) {
+        result.reserve(scene.size());
+
+        // Pre-index top wall tiles (slot < 17) so lower wall sprites skip in O(1).
+        bool wall_top[4][2][17]{};
+        for (const auto &placed : scene) {
+            const auto &t = placed.tile;
+            if (t.family == 'y' && t.direction >= 0 && t.direction < 4 && t.slot >= 0 && t.slot < 17)
+                wall_top[t.direction][t.wall_extra ? 1 : 0][t.slot] = true;
+        }
+
+        for (const auto &placed : scene) {
             if (placed.flight) continue;
             const auto &t = placed.tile;
-            if (t.family == 'y' && t.slot >= 17 && std::any_of(scene.begin(), scene.end(),
-                                                               [&](const PositionedTile &other) {
-                                                                   return other.tile.family == 'y' && other.tile.
-                                                                          direction == t.direction && other.tile.slot ==
-                                                                           t.slot - 17 && other.tile.wall_extra == t.wall_extra;
-                                                               }))
+            if (t.family == 'y' && t.slot >= 17 && t.slot < 34 && t.direction >= 0 && t.direction < 4 &&
+                wall_top[t.direction][t.wall_extra ? 1 : 0][t.slot - 17])
                 continue; // Lower sprite belongs to the same top placeholder.
             const auto &image = artwork.Get(t);
             TileShadow entry;
@@ -136,7 +142,7 @@ namespace tenhou {
             entry.code = t.tile < 0 ? 0xfe : t.tile;
             char ground_family = t.family;
             int ground_slot = t.slot, kind = 0;
-            if (t.family == 'n' && std::string(t.role) == "hand" && t.slot <= 17) {
+            if (t.family == 'n' && std::string_view(t.role) == "hand" && t.slot <= 17) {
                 entry.family = 't';
                 entry.slot = 17 - t.slot;
                 if (t.tile < 0) entry.code = 0xfd;
@@ -152,9 +158,43 @@ namespace tenhou {
             entry.ground = pack.Get({ground_family, ground_slot, kind, t.direction});
             result.push_back(entry);
         }
-        const auto find = [&](char f, int s, int d)-> TileShadow * {
-            for (auto &item: result) if (item.family == f && item.slot == s && item.placed.tile.direction == d) return &
-                    item;
+
+        // O(1) flat slot index matching first-occurrence semantics of the original linear scan.
+        auto family_index = [](char f) -> int {
+            switch (f) {
+                case 't': return 0;
+                case 'y': return 1;
+                case 'k': return 2;
+                case 'n': return 3;
+                default: return -1;
+            }
+        };
+        constexpr int kMaxSlot = 84;
+        constexpr int kMaxWallPos = 32;
+        int slot_index[4][4][kMaxSlot];
+        int wall_pos_index[4][kMaxWallPos];
+        std::memset(slot_index, -1, sizeof(slot_index));
+        std::memset(wall_pos_index, -1, sizeof(wall_pos_index));
+        for (std::size_t idx = 0; idx < result.size(); ++idx) {
+            const auto &item = result[idx];
+            const int fi = family_index(item.family);
+            const int d = item.placed.tile.direction;
+            if (fi >= 0 && d >= 0 && d < 4 && item.slot >= 0 && item.slot < kMaxSlot && slot_index[fi][d][item.slot] < 0)
+                slot_index[fi][d][item.slot] = static_cast<int>(idx);
+            if (item.family == 'y' && d >= 0 && d < 4) {
+                const int wpos = item.slot + item.placed.tile.wall_extra;
+                if (wpos >= 0 && wpos < kMaxWallPos && wall_pos_index[d][wpos] < 0)
+                    wall_pos_index[d][wpos] = static_cast<int>(idx);
+            }
+        }
+        const auto find = [&](char f, int s, int d) -> TileShadow * {
+            const int fi = family_index(f);
+            if (fi >= 0 && d >= 0 && d < 4 && s >= 0 && s < kMaxSlot) {
+                const int idx = slot_index[fi][d][s];
+                return idx >= 0 ? &result[static_cast<std::size_t>(idx)] : nullptr;
+            }
+            for (auto &item : result)
+                if (item.family == f && item.slot == s && item.placed.tile.direction == d) return &item;
             return nullptr;
         };
         const auto mask = [&](const TileShadow &e, int slot, int kind) {
@@ -164,7 +204,7 @@ namespace tenhou {
         // FUN_00487350, with original placeholders projected from the visible scene.
         // Separate receiver and extra masks are required; they are not alpha on the
         // source tile. Translations are the receiver placeholder's native offsets.
-        for (auto &current: result) {
+        for (auto &current : result) {
             const auto d = current.placed.tile.direction;
             if (current.family == 'k') {
                 const int slot = current.slot % 40;
@@ -203,11 +243,10 @@ namespace tenhou {
                 }
             } else if (current.family == 'y') {
                 TileShadow *previous = nullptr;
-                for (auto &candidate: result)
-                    if (candidate.family == 'y' && candidate.placed.tile.direction == d &&
-                        candidate.slot + candidate.placed.tile.wall_extra == current.slot + current.placed.tile.wall_extra - 1) {
-                        previous = &candidate; break;
-                    }
+                const int prev_pos = current.slot + current.placed.tile.wall_extra - 1;
+                if (d >= 0 && d < 4 && prev_pos >= 0 && prev_pos < kMaxWallPos && wall_pos_index[d][prev_pos] >= 0) {
+                    previous = &result[static_cast<std::size_t>(wall_pos_index[d][prev_pos])];
+                }
                 // At the extra eighteenth stack, project the last available
                 // neighbour masks by the same native step as the reused sprite.
                 const auto previous_mask = [&](int kind, std::shared_ptr<ShadowMask> &storage) -> const ShadowMask * {
@@ -233,7 +272,7 @@ namespace tenhou {
         return result;
     }
 
-    Image ComposeTileShadows(const std::vector<TileShadow> &scene, RECT r, int strength) {
+    Image ComposeTileShadows(const std::vector<TileShadow> &scene, CanvasRect r, int strength) {
         Image result;
         result.width = r.right - r.left;
         result.height = r.bottom - r.top;
@@ -292,7 +331,7 @@ namespace tenhou {
         return result;
     }
 
-    void PaintTileShadows(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, RECT region, int strength) {
+    void PaintTileShadows(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, CanvasRect region, int strength) {
         if (!strength) return;
         auto pixels = ComposeTileShadows(scene, region, strength);
         if (pixels.bgra.empty()) return;
@@ -312,25 +351,127 @@ namespace tenhou {
 
     const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, int strength) {
         if (!strength || scene.empty()) return nullptr;
-        bool changed = strength_ != strength || scene.size() != previous_.size();
-        if (!changed)
-            for (std::size_t i = 0; i < scene.size(); ++i) {
-                const auto &a = scene[i];
-                const auto &b = previous_[i];
-                if (a.dx != b.dx || a.dy != b.dy || a.ground != b.ground || a.extra != b.extra) {
-                    changed = true;
-                    break;
+        constexpr int kCanvasW = 1440, kCanvasH = 1080;
+        const bool full_rebuild = strength_ != strength || pixels_.width != kCanvasW || pixels_.height != kCanvasH ||
+                                  pixels_.bgra.size() != static_cast<std::size_t>(kCanvasW) * kCanvasH * 4;
+
+        CanvasRect dirty{kCanvasW, kCanvasH, 0, 0};
+        auto include_item = [&](const TileShadow &item) {
+            if (!item.ground) return;
+            for (const auto *mask: {item.ground, item.extra}) {
+                if (!mask) continue;
+                dirty.left = std::min(dirty.left, std::max(0, mask->x + item.dx));
+                dirty.top = std::min(dirty.top, std::max(0, mask->y + item.dy));
+                dirty.right = std::max(dirty.right, std::min(kCanvasW, mask->x + item.dx + mask->width));
+                dirty.bottom = std::max(dirty.bottom, std::min(kCanvasH, mask->y + item.dy + mask->height));
+            }
+        };
+
+        if (full_rebuild) {
+            dirty = {0, 0, kCanvasW, kCanvasH};
+        } else {
+            auto same_cast = [](const TileShadow &a, const TileShadow &b) {
+                return a.dx == b.dx && a.dy == b.dy && a.ground == b.ground && a.extra == b.extra;
+            };
+            // Fast path: identical vector in identical order.
+            bool identical = (scene.size() == previous_.size());
+            if (identical) {
+                for (std::size_t i = 0; i < scene.size(); ++i) {
+                    if (!same_cast(scene[i], previous_[i])) { identical = false; break; }
                 }
             }
-        if (changed) {
-            // Keep the original full-canvas four-byte raster grouping stable when
-            // retained painting clips a moving tile. A crop changes scalar tails.
-            auto pixels = ComposeTileShadows(scene, {0, 0, 1440, 1080}, strength);
-            pixels_ = std::move(pixels);
-            previous_ = scene;
-            strength_ = strength;
-            ++revision_;
+            if (identical) return &pixels_;
+
+            // Compute exact dirty union of all masks added, removed, or moved between previous_ and scene.
+            for (const auto &a: scene) {
+                bool found = false;
+                for (const auto &b: previous_) {
+                    if (same_cast(a, b)) { found = true; break; }
+                }
+                if (!found) include_item(a);
+            }
+            for (const auto &b: previous_) {
+                bool found = false;
+                for (const auto &a: scene) {
+                    if (same_cast(a, b)) { found = true; break; }
+                }
+                if (!found) include_item(b);
+            }
+            if (dirty.left >= dirty.right || dirty.top >= dirty.bottom) {
+                previous_ = scene;
+                return &pixels_;
+            }
         }
+
+        if (full_rebuild) {
+            pixels_.width = kCanvasW;
+            pixels_.height = kCanvasH;
+            pixels_.bgra.assign(static_cast<std::size_t>(kCanvasW) * kCanvasH * 4, 0);
+        }
+
+        // Pad horizontally by 4px so 4-byte SIMD-style lane grouping matches full-canvas alignment.
+        const int pad_left = std::max(0, dirty.left - 4);
+        const int pad_right = std::min(kCanvasW, dirty.right + 4);
+        const int pad_w = pad_right - pad_left;
+        const int dirty_h = dirty.bottom - dirty.top;
+        scratch_coverage_.assign(static_cast<std::size_t>(pad_w) * dirty_h, 0);
+
+        for (const auto &item: scene) {
+            if (!item.ground) continue;
+            for (const auto *mask: {item.ground, item.extra}) {
+                if (!mask) continue;
+                const int x = mask->x + item.dx, y = mask->y + item.dy;
+                if (x + mask->width <= pad_left || x >= pad_right ||
+                    y + mask->height <= dirty.top || y >= dirty.bottom)
+                    continue;
+                const int full_start = std::max(0, -x);
+                const int full_end = std::min(mask->width, kCanvasW - x);
+                const int row_begin = std::max(0, dirty.top - y);
+                const int row_end = std::min(mask->height, dirty.bottom - y);
+                const int col_lo = std::max(full_start, dirty.left - x);
+                const int col_hi = std::min(full_end, dirty.right - x);
+                const int aligned_start = full_start + ((col_lo - full_start) & ~3);
+                const int four_end = full_end - 3;
+                for (int row = row_begin; row < row_end; ++row) {
+                    auto *dst_row = scratch_coverage_.data() + static_cast<std::size_t>(row + y - dirty.top) * pad_w;
+                    const auto *src_row = mask->pixels.data() + static_cast<std::size_t>(row) * mask->stride;
+                    int col = aligned_start;
+                    for (; col < col_hi && col < four_end; col += 4) {
+                        auto *destination = dst_row + (col + x - pad_left);
+                        const auto *source = src_row + col;
+                        unsigned a = 0, b = 0;
+                        std::memcpy(&a, destination, 4);
+                        std::memcpy(&b, source, 4);
+                        const auto select =
+                            (0x80808080u - (
+                                 ((b >> 1 & 0x7f7f7f7fu) - (a >> 1 & 0x7f7f7f7fu)) >> 7 & 0x01010101u)) ^ 0x80808080u;
+                        const unsigned merged = (~select & b) | (select & a);
+                        std::memcpy(destination, &merged, 4);
+                    }
+                    for (; col < col_hi; ++col) {
+                        auto &value = dst_row[col + x - pad_left];
+                        value = std::max(value, src_row[col]);
+                    }
+                }
+            }
+        }
+
+        const auto palette = OriginalShadowPalette(strength);
+        const int x_offset = dirty.left - pad_left;
+        const int dirty_w = dirty.right - dirty.left;
+        for (int row = 0; row < dirty_h; ++row) {
+            const auto *cov = scratch_coverage_.data() + static_cast<std::size_t>(row) * pad_w + x_offset;
+            auto *dst = pixels_.bgra.data() +
+                        (static_cast<std::size_t>(dirty.top + row) * kCanvasW + dirty.left) * 4;
+            for (int col = 0; col < dirty_w; ++col) {
+                dst[col * 4 + 3] = static_cast<std::uint8_t>(palette[cov[col] + 2] >> 24);
+            }
+        }
+
+        previous_ = scene;
+        strength_ = strength;
+        last_dirty_ = dirty;
+        ++revision_;
         return &pixels_;
     }
 

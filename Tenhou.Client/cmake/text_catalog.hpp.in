@@ -33,7 +33,7 @@ inline constexpr TextPaletteEntry kTextPalette[]{
 @color_entries@};
 struct TextStyle {
     TextStyleKey key;
-    std::wstring_view font;
+    std::string_view font;
     double size_pt, spacing_pt;
     bool bold;
     TextColor fill, outline;
@@ -43,14 +43,14 @@ struct TextStyle {
 };
 inline constexpr TextStyle kTextStyles[]{
 @style_entries@};
-struct TextLabelDefinition { TextLabelKey key; std::wstring_view label; std::string_view utf8; };
+struct TextLabelDefinition { TextLabelKey key; std::string_view label; };
 inline constexpr TextLabelDefinition kTextLabels[]{
 @label_entries@};
 struct TextDefinition {
     TextKey key;
     unsigned origin_id;
     TextLabelKey label_key;
-    std::wstring_view label;
+    std::string_view label;
     TextCategory category;
     TextStyleKey style;
     TextComposition composition;
@@ -79,10 +79,10 @@ inline constexpr unsigned kInfoReferenceOriginId = @info_reference@;
 inline constexpr std::optional<double> kInfoBackgroundAlpha = std::nullopt;
 inline constexpr std::optional<double> kInfoPaddingPt = std::nullopt;
 struct ChiSelectionDefinition {
-    std::wstring_view main, secondary;
+    std::string_view main, secondary;
     std::optional<double> secondary_size_pt, offset_pt;
 };
-inline constexpr ChiSelectionDefinition kChiSelection{L@chi_main_literal@, L@chi_secondary_literal@, @chi_secondary_size@, std::nullopt};
+inline constexpr ChiSelectionDefinition kChiSelection{@chi_main_literal@, @chi_secondary_literal@, @chi_secondary_size@, std::nullopt};
 inline constexpr std::string_view kTextSourceSha256 = "@source_sha@";
 inline constexpr std::string_view kTextSourceWorksheet = @worksheet_literal@;
 
@@ -90,13 +90,12 @@ constexpr const TextDefinition *FindText(TextKey key) {
     const auto index = static_cast<std::size_t>(key);
     return index < std::size(kTextDefinitions) ? &kTextDefinitions[index] : nullptr;
 }
-constexpr std::wstring_view TextLabel(TextKey key) {
+constexpr std::string_view TextLabel(TextKey key) {
     const auto *text = FindText(key);
-    return text ? text->label : std::wstring_view{};
+    return text ? text->label : std::string_view{};
 }
 constexpr std::string_view TextUtf8(TextKey key) {
-    const auto *text = FindText(key);
-    return text ? kTextLabels[static_cast<std::size_t>(text->label_key)].utf8 : std::string_view{};
+    return TextLabel(key);
 }
 constexpr const TextStyle *FindTextStyle(TextStyleKey key) {
     const auto index = static_cast<std::size_t>(key);

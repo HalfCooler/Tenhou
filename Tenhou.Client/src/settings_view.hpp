@@ -2,6 +2,7 @@
 #include "client_preferences.hpp"
 #include "resource_manager.hpp"
 #include "replay_audio.hpp"
+#include <windows.h>
 #include <commctrl.h>
 #include <functional>
 

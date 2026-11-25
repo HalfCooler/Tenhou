@@ -50,21 +50,24 @@ namespace tenhou {
     std::vector<TileShadow> BuildTileShadows(const std::vector<PositionedTile> &scene, TableArtwork &artwork,
                                              const ShadowPack &pack);
 
-    Image ComposeTileShadows(const std::vector<TileShadow> &scene, RECT region, int strength);
+    Image ComposeTileShadows(const std::vector<TileShadow> &scene, CanvasRect region, int strength);
 
     Image ShadeTile(const Image &image, int x, int y, const ShadowMask &mask, int strength);
 
-    void PaintTileShadows(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, RECT region, int strength);
+    void PaintTileShadows(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, CanvasRect region, int strength);
 
     class TileShadowLayer {
     public:
         void Paint(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, int strength);
         const Image *Raster(const std::vector<TileShadow> &scene, int strength);
         std::size_t revision() const { return revision_; }
+        CanvasRect last_dirty() const { return last_dirty_; }
 
     private:
         std::vector<TileShadow> previous_;
         Image pixels_;
+        Bytes scratch_coverage_;
+        CanvasRect last_dirty_{};
         int strength_ = -1;
         std::size_t revision_ = 0;
     };

@@ -1,5 +1,6 @@
 #include "action_selection_view.hpp"
 #include "network_protocol.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -87,7 +88,7 @@ namespace tenhou {
             EnableWindow(buttons_[i], valid);
             MoveWindow(buttons_[i], 8 + (i % 3) * w, 30 + (i / 3) * h, w - 4, h - 4, TRUE);
             if (valid) SetWindowTextW(buttons_[i],
-                                      NetworkWide(actions_.choices.at(selection_.indices[n]).label).c_str());
+                                      Utf8ToWide(actions_.choices.at(selection_.indices[n]).label).c_str());
         }
         MoveWindow(buttons_[6], 8, r.bottom - 32, 60, 26, TRUE);
         MoveWindow(buttons_[7], 74, r.bottom - 32, 60, 26, TRUE);
@@ -164,7 +165,7 @@ namespace tenhou {
             RECT label{6, r.bottom - 24, r.right - 4, r.bottom};
             DrawTextW(item.hDC, caption, -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
         } catch (const std::exception &) {
-            const auto text = NetworkWide(a.label);
+            const auto text = Utf8ToWide(a.label);
             DrawTextW(item.hDC, text.c_str(), -1, &r, DT_WORDBREAK);
         }
         SelectObject(item.hDC, old);

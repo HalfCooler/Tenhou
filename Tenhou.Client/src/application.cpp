@@ -7,11 +7,13 @@
 #include "offline_lobby_view.hpp"
 #include "settings_view.hpp"
 #include "window_layout.hpp"
+#include "monotonic_clock.hpp"
+#include "shared_assets.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shellapi.h>
 #include <commdlg.h>
-#include <mmsystem.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -21,20 +23,29 @@
 
 namespace tenhou {
     namespace {
-        constexpr const char *kWindowClass = "TENHOU_CLIENT";
-        constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW & ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+        constexpr wchar_t kWindowClass[] = L"TENHOU_CLIENT";
+        constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW;
         constexpr UINT kReplay = 4004, kWelcome = 4001, kSettings = 4023;
         constexpr UINT kOfflineLobby = 4024;
         constexpr UINT kAudioMeter = 4030, kToggleEffects = 4031, kToggleMusic = 4032;
+        // System menu custom commands (must keep low 4 bits zero per WM_SYSCOMMAND docs).
+        constexpr UINT kSysSize1024 = 0x1010;
+        constexpr UINT kSysSize1280 = 0x1020;
+        constexpr UINT kSysSize1440 = 0x1030;
+        constexpr UINT kSysSize1920 = 0x1040;
+        constexpr UINT kSysSize2560 = 0x1050;
+        constexpr UINT kSysFullscreen = 0x1060;
+        constexpr UINT kSysToggleHd = 0x1070;
         constexpr UINT_PTR kAudioTimer = 1;
         constexpr int kMeterWidth = 14, kMeterHeight = 16, kMeterInterior = 14;
         constexpr unsigned kMeterPeriodMs = 50;
+        constexpr std::uint64_t kMaxLogBytes = 4u * 1024u * 1024u;
 
         std::filesystem::path ExecutableDirectory() {
-            std::vector<char> buffer(32768);
-            const DWORD size = GetModuleFileNameA(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            std::vector<wchar_t> buffer(32768);
+            const DWORD size = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
             if (!size || size >= buffer.size()) throw std::runtime_error("Cannot resolve executable directory");
-            return std::filesystem::path(std::string(buffer.data(), size)).parent_path();
+            return std::filesystem::path(std::wstring(buffer.data(), size)).parent_path();
         }
     } // namespace
 
@@ -58,6 +69,21 @@ namespace tenhou {
                     options.service_lobby = true;
                     continue;
                 }
+                if (name == L"--hd") {
+                    options.hd_artwork = true;
+                    continue;
+                }
+                if (name == L"--classic") {
+                    options.hd_artwork = false;
+                    continue;
+                }
+                if (name == L"--width" || name == L"--height") {
+                    if (++i >= count) throw std::runtime_error("启动参数缺少数值");
+                    const int v = std::stoi(arguments[i]);
+                    if (name == L"--width") options.initial_width = v;
+                    else options.initial_height = v;
+                    continue;
+                }
                 if (name != L"--config-dir" && name != L"--resources" && name != L"--replay") throw std::runtime_error(
                     "不支持的启动参数");
                 if (++i >= count) throw std::runtime_error("启动参数缺少路径");
@@ -79,15 +105,25 @@ namespace tenhou {
         if (options_.config_directory.empty()) options_.config_directory = executable_directory_;
         std::filesystem::create_directories(options_.config_directory);
         config_path_ = options_.config_directory / L"config.ini";
-        width_ = kDefaultClientWidth;
-        height_ = kDefaultClientHeight;
+        const int saved_w = PreferenceInt(config_path_, "REBUILD", "Width", kDefaultClientWidth);
+        const int saved_h = PreferenceInt(config_path_, "REBUILD", "Height", kDefaultClientHeight);
+        width_ = std::clamp(options_.initial_width > 0 ? options_.initial_width : saved_w, kMinClientWidth, 7680);
+        height_ = std::clamp(options_.initial_height > 0 ? options_.initial_height : saved_h, kMinClientHeight, 4320);
+        start_maximized_ = options_.initial_width <= 0 && options_.initial_height <= 0 &&
+                           PreferenceInt(config_path_, "REBUILD", "Maximized", 0) != 0;
+        start_fullscreen_ = options_.initial_width <= 0 && options_.initial_height <= 0 &&
+                            PreferenceInt(config_path_, "REBUILD", "Fullscreen", 0) != 0;
+        if (options_.hd_artwork.has_value()) {
+            WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", *options_.hd_artwork ? 1 : 0);
+        }
+        hd_artwork_ = PreferenceInt(config_path_, "REBUILD", "HdArtwork", 0) != 0;
         screen_width_ = 1440;
         view_ = options_.replay.empty() ? "welcome" : "replay";
-        sound_effects_only_ = GetPrivateProfileIntW(L"REBUILD", L"SoundEffectsOnly", 0, config_path_.c_str()) != 0;
+        sound_effects_only_ = PreferenceInt(config_path_, "REBUILD", "SoundEffectsOnly", 0) != 0;
         resource_directory_ = options_.resource_directory.empty()
-                                  ? std::filesystem::path(PreferenceString(
-                                      config_path_, L"REBUILD", L"ResourceDirectory",
-                                      (executable_directory_ / L"resources").c_str()))
+                                  ? PathFromUtf8(PreferenceString(
+                                      config_path_, "REBUILD", "ResourceDirectory",
+                                      PathToUtf8(executable_directory_ / L"resources")))
                                   : options_.resource_directory;
         if (resource_directory_.is_relative()) resource_directory_ = options_.config_directory / resource_directory_;
         resource_directory_ = std::filesystem::absolute(resource_directory_).lexically_normal();
@@ -95,22 +131,62 @@ namespace tenhou {
 
     Application::~Application() {
         settings_.reset();
-        PlaySoundA(nullptr, nullptr, 0);
         welcome_.reset();
         table_.reset();
         offline_lobby_.reset();
         lobby_.reset();
+        SharedAssets().Clear();
+        if (log_.is_open()) log_.flush();
         if (gdiplus_token_) Gdiplus::GdiplusShutdown(gdiplus_token_);
         if (font_) DeleteObject(font_);
         if (mutex_) CloseHandle(mutex_);
     }
 
+    void Application::OpenLog() {
+        log_path_ = options_.config_directory / L"rebuild.log";
+        std::error_code ec;
+        const auto existing = std::filesystem::file_size(log_path_, ec);
+        log_bytes_ = ec ? 0 : existing;
+        if (log_bytes_ >= kMaxLogBytes) {
+            auto backup = log_path_;
+            backup += L".1";
+            std::filesystem::remove(backup, ec);
+            ec.clear();
+            std::filesystem::rename(log_path_, backup, ec);
+            log_bytes_ = 0;
+        }
+        log_.open(log_path_, std::ios::app | std::ios::binary);
+        if (!log_) throw std::runtime_error("Cannot open rebuild.log in " + PathToUtf8(options_.config_directory));
+    }
+
+    void Application::RotateLogIfNeeded() {
+        if (log_bytes_ < kMaxLogBytes || log_path_.empty()) return;
+        log_.flush();
+        log_.close();
+        std::error_code ec;
+        auto backup = log_path_;
+        backup += L".1";
+        std::filesystem::remove(backup, ec);
+        ec.clear();
+        std::filesystem::rename(log_path_, backup, ec);
+        log_bytes_ = 0;
+        log_.open(log_path_, std::ios::trunc | std::ios::binary);
+    }
 
     void Application::Log(const std::string &message) {
+        if (!log_.is_open()) return;
+        RotateLogIfNeeded();
         SYSTEMTIME time{};
         GetLocalTime(&time);
-        log_ << time.wHour << ':' << time.wMinute << ':' << time.wSecond << ' ' << message << '\n';
-        log_.flush();
+        std::ostringstream line;
+        line << time.wHour << ':' << time.wMinute << ':' << time.wSecond << ' ' << message << '\n';
+        const auto text = line.str();
+        log_.write(text.data(), static_cast<std::streamsize>(text.size()));
+        log_bytes_ += text.size();
+        if (message.rfind("ERROR", 0) == 0 || message.rfind("START", 0) == 0 ||
+            message.rfind("EXIT", 0) == 0 || message.find("ERROR") != std::string::npos) {
+            log_.flush();
+        }
     }
 
     void Application::Check(bool success, const char *action) const {
@@ -129,14 +205,14 @@ namespace tenhou {
         });
         std::vector<std::uint8_t> identity(canonical.size() * sizeof(wchar_t));
         std::memcpy(identity.data(), canonical.data(), identity.size());
-        const std::string instance_name = "Local\\TenhouRebuild.Config." + Sha256(identity);
+        const std::wstring instance_name = Utf8ToWide("Local\\TenhouRebuild.Config." + Sha256(identity));
         instance_property_ = instance_name;
-        mutex_ = CreateMutexA(nullptr, FALSE, instance_name.c_str());
+        mutex_ = CreateMutexW(nullptr, FALSE, instance_name.c_str());
         const DWORD mutex_error = GetLastError();
-        Check(mutex_ != nullptr, "CreateMutexA");
+        Check(mutex_ != nullptr, "CreateMutexW");
         if (mutex_error == ERROR_ALREADY_EXISTS) {
-            EnumWindows([](HWND window, LPARAM context)-> BOOL {
-                if (GetPropA(window, reinterpret_cast<const char *>(context))) {
+            EnumWindows([](HWND window, LPARAM context) -> BOOL {
+                if (GetPropW(window, reinterpret_cast<const wchar_t *>(context))) {
                     ShowWindow(window, SW_RESTORE);
                     SetForegroundWindow(window);
                     return FALSE;
@@ -145,44 +221,64 @@ namespace tenhou {
             }, reinterpret_cast<LPARAM>(instance_name.c_str()));
             return 0;
         }
-        log_.open(options_.config_directory / "rebuild.log", std::ios::app);
-        if (!log_) throw std::runtime_error("Cannot open rebuild.log in " + options_.config_directory.string());
-        Log("START x86; 本机麻将客户端 0.27.0");
-        Log("CONFIG " + config_path_.string());
-        Log("RESOURCES " + resource_directory_.string());
+        OpenLog();
+        Log("START x64; 本机麻将客户端 0.27.0");
+        Log("CONFIG " + PathToUtf8(config_path_));
+        Log("RESOURCES " + PathToUtf8(resource_directory_));
         Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&gdiplus_token_, &startup, nullptr) != Gdiplus::Ok)
             throw std::runtime_error("GDI+ startup failed");
-        font_ = CreateFontA(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, "Segoe UI");
-        Check(font_ != nullptr, "CreateFontA");
-        WNDCLASSEXA window_class{sizeof(WNDCLASSEXA)};
+        font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        Check(font_ != nullptr, "CreateFontW");
+        WNDCLASSEXW window_class{sizeof(WNDCLASSEXW)};
         window_class.lpfnWndProc = WindowProc;
         window_class.hInstance = instance;
-        window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        window_class.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
         window_class.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
         window_class.lpszClassName = kWindowClass;
-        Check(RegisterClassExA(&window_class) != 0, "RegisterClassExA");
+        Check(RegisterClassExW(&window_class) != 0, "RegisterClassExW");
         RECT bounds{0, 0, width_, height_};
         Check(AdjustWindowRect(&bounds, kWindowStyle, FALSE) != FALSE, "AdjustWindowRect");
-        window_ = CreateWindowExA(0, kWindowClass, "Tenhou",
+        window_ = CreateWindowExW(0, kWindowClass, L"Tenhou Rebuild / Windows x64",
                                   kWindowStyle | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT,
                                   bounds.right - bounds.left, bounds.bottom - bounds.top,
                                   nullptr, nullptr, instance, this);
-        Check(window_ != nullptr, "CreateWindowExA");
-        Check(SetPropA(window_, instance_property_.c_str(), reinterpret_cast<HANDLE>(1)) != FALSE,
+        Check(window_ != nullptr, "CreateWindowExW");
+        Check(SetPropW(window_, instance_property_.c_str(), reinterpret_cast<HANDLE>(1)) != FALSE,
               "Set instance identity");
-        SetWindowTextW(window_, L"Tenhou Rebuild / Windows x64");
         DragAcceptFiles(window_, TRUE);
         RECT client_bounds{0, 0, width_, height_};
-        Check(AdjustWindowRectExForDpi(&client_bounds, kWindowStyle, FALSE, 0, GetDpiForWindow(window_)) != FALSE,
+        const UINT init_dpi = GetDpiForWindow(window_);
+        Check(AdjustWindowRectExForDpi(&client_bounds, kWindowStyle, FALSE, 0, init_dpi) != FALSE,
               "AdjustWindowRectExForDpi");
-        SetWindowPos(window_, nullptr, 0, 0, client_bounds.right - client_bounds.left,
-                     client_bounds.bottom - client_bounds.top,
-                     SWP_NOMOVE | SWP_NOZORDER);
+        int outer_w = client_bounds.right - client_bounds.left;
+        int outer_h = client_bounds.bottom - client_bounds.top;
+        // Clamp initial non-override window cleanly inside the monitor work area.
+        if (options_.initial_width <= 0 && options_.initial_height <= 0) {
+            MONITORINFO mi{sizeof(MONITORINFO)};
+            if (GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) {
+                const int work_w = mi.rcWork.right - mi.rcWork.left;
+                const int work_h = mi.rcWork.bottom - mi.rcWork.top;
+                const int chrome_w = outer_w - width_;
+                const int chrome_h = outer_h - height_;
+                const int max_cw = std::max(kMinClientWidth, work_w - chrome_w);
+                const int max_ch = std::max(kMinClientHeight, work_h - chrome_h);
+                if (width_ > max_cw || height_ > max_ch) {
+                    const double scale = std::min(double(max_cw) / width_, double(max_ch) / height_);
+                    width_ = std::max(kMinClientWidth, static_cast<int>(width_ * scale));
+                    height_ = std::max(kMinClientHeight, static_cast<int>(height_ * scale));
+                    outer_w = width_ + chrome_w;
+                    outer_h = height_ + chrome_h;
+                }
+            }
+        }
+        SetWindowPos(window_, nullptr, 0, 0, outer_w, outer_h, SWP_NOMOVE | SWP_NOZORDER);
+        SetupSystemMenu();
+        UpdateWindowTitle();
         welcome_ = std::make_unique<WelcomeView>(window_, [this](WelcomeView::Action action) {
             switch (action) {
-                case WelcomeView::Action::Exit: PostMessageA(window_, WM_CLOSE, 0, 0); break;
+                case WelcomeView::Action::Exit: PostMessageW(window_, WM_CLOSE, 0, 0); break;
                 case WelcomeView::Action::Settings: settings_->Open(); break;
                 case WelcomeView::Action::Lobby: Login(false); break;
                 case WelcomeView::Action::Register: Login(true); break;
@@ -229,9 +325,9 @@ namespace tenhou {
             } else if (s.phase == LobbyPhase::Error) {
                 if (s.server_error_receipt != 0) {
                     const auto notice = FormatServerError(s.server_error_code, s.server_error_text);
-                    welcome_->SetLoginState(false, notice.message);
+                    welcome_->SetLoginState(false, Utf8ToWide(notice.message));
                 } else {
-                    welcome_->SetLoginState(false, L"连接失败：" + NetworkWide(s.error));
+                    welcome_->SetLoginState(false, L"连接失败：" + Utf8ToWide(s.error));
                 }
             }
         });
@@ -245,8 +341,8 @@ namespace tenhou {
         ApplyPreferences(PreferenceChange::Other);
         ApplyPreferences(PreferenceChange::Sound);
         ApplyPreferences(PreferenceChange::Initial);
-        mute_effects_ = GetPrivateProfileIntW(L"REBUILD", L"MuteSE", 0, config_path_.c_str()) != 0;
-        mute_music_ = GetPrivateProfileIntW(L"REBUILD", L"MuteBGM", 0, config_path_.c_str()) != 0;
+        mute_effects_ = PreferenceInt(config_path_, "REBUILD", "MuteSE", 0) != 0;
+        mute_music_ = PreferenceInt(config_path_, "REBUILD", "MuteBGM", 0) != 0;
         lobby_->SetQuickAudio(mute_effects_, mute_music_);
         table_->SetEffectsMuted(mute_effects_);
         audio_meter_ = CreateWindowExW(0, L"BUTTON", L"立体声音量与音频开关",
@@ -255,15 +351,30 @@ namespace tenhou {
         Check(audio_meter_ != nullptr && SetTimer(window_, kAudioTimer, kMeterPeriodMs, nullptr) != 0, "Create audio meter");
         if (!options_.replay.empty()) table_->Load(options_.replay);
         SetView(options_.offline_lobby && options_.replay.empty() ? "offline_lobby" : view_);
-        ShowWindow(window_, show == SW_HIDE ? SW_SHOWNORMAL : show);
+        const int effective_show = show == SW_HIDE ? SW_SHOWNORMAL
+                                                   : (start_maximized_ && !start_fullscreen_ ? SW_SHOWMAXIMIZED : show);
+        ShowWindow(window_, effective_show);
+        if (start_fullscreen_) SetFullscreen(true);
         UpdateWindow(window_);
         MSG message{};
         BOOL result;
         while ((result = MotionTimer::GetMessage(&message)) > 0) {
             if (settings_->HandleMessage(message)) continue;
+            if (message.message == WM_KEYDOWN && message.wParam == VK_F11) {
+                SetFullscreen(!fullscreen_);
+                continue;
+            }
+            if (message.message == WM_SYSKEYDOWN && message.wParam == VK_RETURN && (message.lParam & (1 << 29))) {
+                SetFullscreen(!fullscreen_);
+                continue;
+            }
+            if (message.message == WM_KEYDOWN && message.wParam == VK_F6) {
+                ToggleHdArtwork();
+                continue;
+            }
             if (message.message == WM_KEYDOWN && offline_lobby_ &&
                 offline_lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
-            if (lobby_ &&lobby_->HandleExitVoteMessage(message)) continue;
+            if (lobby_ && lobby_->HandleExitVoteMessage(message)) continue;
             if (message.message == WM_KEYDOWN && lobby_ && lobby_->HandleKey(static_cast<UINT>(message.wParam)))
                 continue;
             if (message.message == WM_KEYDOWN && table_ && table_->HandleKey(static_cast<UINT>(message.wParam)))
@@ -272,29 +383,118 @@ namespace tenhou {
                 LoadResources();
                 continue;
             }
-            if (!IsDialogMessageA(window_, &message)) {
+            if (!IsDialogMessageW(window_, &message)) {
                 TranslateMessage(&message);
-                DispatchMessageA(&message);
+                DispatchMessageW(&message);
             }
         }
         if (result == -1) {
-            Log("ERROR GetMessageA");
+            Log("ERROR GetMessageW");
             return 1;
         }
         Log("EXIT code=" + std::to_string(exit_code_));
         return exit_code_;
     }
 
+    void Application::SetupSystemMenu() {
+        HMENU sys = GetSystemMenu(window_, FALSE);
+        if (!sys) return;
+        AppendMenuW(sys, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(sys, MF_STRING, kSysSize1024, L"窗口尺寸：1024×768");
+        AppendMenuW(sys, MF_STRING, kSysSize1280, L"窗口尺寸：1280×960");
+        AppendMenuW(sys, MF_STRING, kSysSize1440, L"窗口尺寸：1440×1080（标准）");
+        AppendMenuW(sys, MF_STRING, kSysSize1920, L"窗口尺寸：1920×1440");
+        AppendMenuW(sys, MF_STRING, kSysSize2560, L"窗口尺寸：2560×1440（宽屏）");
+        AppendMenuW(sys, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(sys, MF_STRING, kSysFullscreen, L"无边框全屏\tAlt+Enter / F11");
+        AppendMenuW(sys, MF_STRING, kSysToggleHd, L"高清矢量牌面与精灵 (HD)\tF6");
+        SyncSystemMenu();
+    }
+
+    void Application::SyncSystemMenu() {
+        HMENU sys = GetSystemMenu(window_, FALSE);
+        if (!sys) return;
+        CheckMenuItem(sys, kSysFullscreen, MF_BYCOMMAND | (fullscreen_ ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(sys, kSysToggleHd, MF_BYCOMMAND | (hd_artwork_ ? MF_CHECKED : MF_UNCHECKED));
+    }
+
+    void Application::UpdateWindowTitle() {
+        if (!window_) return;
+        SetWindowTextW(window_, hd_artwork_ ? L"Tenhou Rebuild / Windows x64 [HD]"
+                                            : L"Tenhou Rebuild / Windows x64");
+    }
+
+    void Application::ApplyClientSizePreset(int client_width, int client_height) {
+        if (fullscreen_) SetFullscreen(false);
+        if (IsZoomed(window_)) ShowWindow(window_, SW_RESTORE);
+        RECT frame{0, 0, client_width, client_height};
+        const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
+        const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
+        if (AdjustWindowRectExForDpi(&frame, style, GetMenu(window_) != nullptr, ex_style, GetDpiForWindow(window_))) {
+            width_ = client_width;
+            height_ = client_height;
+            SetWindowPos(window_, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            Layout();
+        }
+    }
+
+    void Application::SetFullscreen(bool enabled) {
+        if (fullscreen_ == enabled || !window_) return;
+        if (enabled) {
+            windowed_style_ = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
+            windowed_ex_style_ = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
+            windowed_placement_.length = sizeof(WINDOWPLACEMENT);
+            GetWindowPlacement(window_, &windowed_placement_);
+            MONITORINFO mi{sizeof(MONITORINFO)};
+            if (!GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) return;
+            SetWindowLongPtrW(window_, GWL_STYLE,
+                              (windowed_style_ & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN);
+            SetWindowLongPtrW(window_, GWL_EXSTYLE, windowed_ex_style_ & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+                                                                           WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+            SetWindowPos(window_, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                         mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                         SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+            fullscreen_ = true;
+        } else {
+            SetWindowLongPtrW(window_, GWL_STYLE, windowed_style_ ? windowed_style_ : (kWindowStyle | WS_CLIPCHILDREN));
+            SetWindowLongPtrW(window_, GWL_EXSTYLE, windowed_ex_style_);
+            SetWindowPlacement(window_, &windowed_placement_);
+            SetWindowPos(window_, nullptr, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            fullscreen_ = false;
+        }
+        SyncSystemMenu();
+        Layout();
+    }
+
+    void Application::ToggleHdArtwork() {
+        hd_artwork_ = !hd_artwork_;
+        WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", hd_artwork_ ? 1 : 0);
+        SyncSystemMenu();
+        UpdateWindowTitle();
+        ApplyPreferences(PreferenceChange::Artwork);
+        if (view_ == "welcome" && welcome_)
+            welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
+        Log(std::string("ARTWORK mode=") + (hd_artwork_ ? "HD" : "Classic"));
+    }
 
     void Application::Layout() {
-        const RECT client{0, 0, kDefaultClientWidth, kDefaultClientHeight};
-        if (welcome_) welcome_->Resize(client.right, client.bottom);
-        if (table_) table_->Resize(client.right, client.bottom);
-        if (lobby_) lobby_->Resize(client.right, client.bottom);
-        if (offline_lobby_) offline_lobby_->Resize(client.right, client.bottom);
-        // WC_SOUND, at (canvas width - 20, canvas height - 57 + 4) in HD.
-        if (audio_meter_) SetWindowPos(audio_meter_, HWND_TOP, client.right - 20, client.bottom - 53,
-                                      kMeterWidth, kMeterHeight, SWP_NOACTIVATE);
+        RECT client{};
+        GetClientRect(window_, &client);
+        const int cw = std::max(1, static_cast<int>(client.right));
+        const int ch = std::max(1, static_cast<int>(client.bottom));
+        if (!fullscreen_ && !IsIconic(window_) && !IsZoomed(window_) && cw >= kMinClientWidth && ch >= kMinClientHeight) {
+            width_ = cw;
+            height_ = ch;
+        }
+        if (welcome_) welcome_->Resize(cw, ch);
+        if (table_) table_->Resize(cw, ch);
+        if (lobby_) lobby_->Resize(cw, ch);
+        if (offline_lobby_) offline_lobby_->Resize(cw, ch);
+        // WC_SOUND, at (canvas width - 20, canvas height - 57 + 4) in HD; anchor inside client bounds on resize.
+        if (audio_meter_) SetWindowPos(audio_meter_, HWND_TOP, std::max(4, cw - 20), std::max(4, ch - 53),
+                                       kMeterWidth, kMeterHeight, SWP_NOACTIVATE);
         InvalidateRect(window_, nullptr, FALSE);
     }
 
@@ -308,7 +508,8 @@ namespace tenhou {
         auto next = audio_bars_;
         for (unsigned channel = 0; channel < music.size(); ++channel)
             next[channel] = static_cast<int>(std::min(1.f, music[channel] / music_meter_range_) * kMeterInterior);
-        const auto elapsed = last_effect ? GetTickCount64() - last_effect : 0;
+        const auto now = MonotonicMs();
+        const auto elapsed = last_effect && now >= last_effect ? now - last_effect : 0;
         next[2] = last_effect ? static_cast<int>(kMeterInterior * std::pow(.8, double(elapsed / kMeterPeriodMs))) : 0;
         if (next == audio_bars_) return;
         audio_bars_ = next;
@@ -343,10 +544,10 @@ namespace tenhou {
                                             anchor.right, anchor.top, 0, window_, nullptr);
         DestroyMenu(menu);
         if (command == kToggleEffects) {
-            WritePreferenceInt(config_path_, L"REBUILD", L"MuteSE", !mute_effects_);
+            WritePreferenceInt(config_path_, "REBUILD", "MuteSE", !mute_effects_);
             mute_effects_ = !mute_effects_;
         } else if (command == kToggleMusic) {
-            WritePreferenceInt(config_path_, L"REBUILD", L"MuteBGM", !mute_music_);
+            WritePreferenceInt(config_path_, "REBUILD", "MuteBGM", !mute_music_);
             mute_music_ = !mute_music_;
         } else return;
         lobby_->SetQuickAudio(mute_effects_, mute_music_);
@@ -365,7 +566,7 @@ namespace tenhou {
         if (requested_view != "welcome" && requested_view != "lobby" && requested_view != "replay" &&
             (requested_view != "offline_lobby" || !offline_lobby_)) throw
                 std::runtime_error("页面不可用");
-        if (welcome_ &&view_=="welcome" && requested_view != "welcome") welcome_->Save(config_path_);
+        if (welcome_ && view_ == "welcome" && requested_view != "welcome") welcome_->Save(config_path_);
         view_ = requested_view;
         if (offline_lobby_ && view_ != "offline_lobby") offline_lobby_->Show(false);
         welcome_->Show(view_ == "welcome");
@@ -395,16 +596,16 @@ namespace tenhou {
             welcome_->SetLoginState(false, L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName");
             return;
         }
-        connection.host = connection.official ? "b.tenhou.net" : NetworkUtf8(welcome_->Host());
+        connection.host = connection.official ? "b.tenhou.net" : WideToUtf8(welcome_->Host());
         connection.port = connection.official ? 10080 : welcome_->Port();
         if (connection.host.empty() || !connection.port) {
             welcome_->SetLoginState(false, L"请输入服务器主机和 1～65535 之间的端口");
             return;
         }
-        connection.identity = NetworkUtf8(connection.official ? welcome_->OfficialIdentity() : welcome_->Identity());
+        connection.identity = WideToUtf8(connection.official ? welcome_->OfficialIdentity() : welcome_->Identity());
         connection.gender = welcome_->Gender();
-        connection.password = NetworkUtf8(welcome_->Password());
-        connection.nickname = NetworkUtf8(welcome_->Nickname());
+        connection.password = WideToUtf8(welcome_->Password());
+        connection.nickname = WideToUtf8(welcome_->Nickname());
         connection.register_account = register_account;
         connection.config_file = config_path_;
         connection.native_service = !connection.official;
@@ -420,7 +621,7 @@ namespace tenhou {
         const auto account_key = Sha256(Bytes(session_key.begin(), session_key.end())).substr(0, 16);
         connection.session_file = config_path_.parent_path() / (
             std::wstring(connection.official ? L"official-session-" : L"platform-session-") +
-            std::to_wstring(connection.port) + L"-" + NetworkWide(account_key) + L".txt");
+            std::to_wstring(connection.port) + L"-" + Utf8ToWide(account_key) + L".txt");
         // Persist login ID immediately on login attempt (matching tenhou.exe.c:110711-110719).
         welcome_->Save(config_path_);
         welcome_->SetLoginState(true, connection.official ? L"正在连接天凤官方服务器..." : L"正在连接第三方服务器...");
@@ -458,10 +659,13 @@ namespace tenhou {
         if (lobby_) lobby_->Save();
         const auto relative = resource_directory_.lexically_relative(options_.config_directory);
         const auto resources = relative.empty() ? resource_directory_ : relative;
-        WritePreference(config_path_, L"REBUILD", L"ResourceDirectory", resources.c_str());
-        WritePreferenceInt(config_path_, L"REBUILD", L"Width", kDefaultClientWidth);
-        WritePreferenceInt(config_path_, L"REBUILD", L"Height", kDefaultClientHeight);
-        WritePreferenceInt(config_path_, L"REBUILD", L"ScreenWidth", 1440);
+        WritePreference(config_path_, "REBUILD", "ResourceDirectory", PathToUtf8(resources));
+        WritePreferenceInt(config_path_, "REBUILD", "Width", std::clamp(width_, kMinClientWidth, 7680));
+        WritePreferenceInt(config_path_, "REBUILD", "Height", std::clamp(height_, kMinClientHeight, 4320));
+        WritePreferenceInt(config_path_, "REBUILD", "Maximized", (!fullscreen_ && window_ && IsZoomed(window_)) ? 1 : 0);
+        WritePreferenceInt(config_path_, "REBUILD", "Fullscreen", fullscreen_ ? 1 : 0);
+        WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", hd_artwork_ ? 1 : 0);
+        WritePreferenceInt(config_path_, "REBUILD", "ScreenWidth", 1440);
         Log("CONFIG saved");
     }
 
@@ -469,8 +673,8 @@ namespace tenhou {
         const auto preferences = ClientPreferences::Load(config_path_);
         if (change == PreferenceChange::Other) welcome_->SetHiddenId(preferences.hidden_id);
         if (change == PreferenceChange::Sound) {
-            const int mode = static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
-                                                                    sound_effects_only_ ? 1 : 0, config_path_.c_str()));
+            const int mode = PreferenceInt(config_path_, "RESOURCE", "SE_NOVOICE",
+                                           sound_effects_only_ ? 1 : 0);
             sound_effects_only_ = mode == 1;
         }
         table_->ApplyPreferences(preferences, change);
@@ -480,21 +684,21 @@ namespace tenhou {
     }
 
 
-LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
-        auto *application = reinterpret_cast<Application *>(GetWindowLongPtrA(window, GWLP_USERDATA));
+    LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+        auto *application = reinterpret_cast<Application *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
-            application = static_cast<Application *>(reinterpret_cast<CREATESTRUCTA *>(lparam)->lpCreateParams);
+            application = static_cast<Application *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
             application->window_ = window;
-            SetWindowLongPtrA(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(application));
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(application));
         }
-        if (!application) return DefWindowProcA(window, message, wparam, lparam);
+        if (!application) return DefWindowProcW(window, message, wparam, lparam);
         // C++ exceptions must never unwind through a Win32 callback boundary.
         try { return application->HandleMessage(message, wparam, lparam); } catch (const std::exception &error) {
             application->error_ = error.what();
             application->Log("ERROR " + application->error_);
             application->exit_code_ = 1;
             if (message == WM_CLOSE) DestroyWindow(window);
-            else PostMessageA(window, WM_CLOSE, 0, 0);
+            else PostMessageW(window, WM_CLOSE, 0, 0);
             return 0;
         }
     }
@@ -512,7 +716,7 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
             if (pending_server_error_) {
                 const auto err = std::move(*pending_server_error_);
                 pending_server_error_.reset();
-                MessageBoxW(window_, err.message.c_str(), err.caption.c_str(), MB_OK);
+                MessageBoxW(window_, Utf8ToWide(err.message).c_str(), Utf8ToWide(err.caption).c_str(), MB_OK);
                 if (err.fatal && view_ == "lobby") SetView("welcome");
             }
             return 0;
@@ -537,44 +741,52 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
                     PaintAudioMeter(*reinterpret_cast<const DRAWITEMSTRUCT *>(lparam));
                     return TRUE;
                 }
-                return DefWindowProcA(window_, message, wparam, lparam);
+                return DefWindowProcW(window_, message, wparam, lparam);
             case WM_CONTEXTMENU:
                 if (audio_meter_ && reinterpret_cast<HWND>(wparam) == audio_meter_) {
                     ShowAudioMenu();
                     return 0;
                 }
-                return DefWindowProcA(window_, message, wparam, lparam);
+                return DefWindowProcW(window_, message, wparam, lparam);
             case WM_SIZE: Layout();
                 return 0;
             case WM_DPICHANGED: {
-                // The fixed 1440x1080 client is already in physical pixels. Only
-                // the non-client chrome follows monitor DPI; do not scale twice.
-                const auto *suggested = reinterpret_cast<const RECT *>(lparam);
-                RECT frame{0, 0, kDefaultClientWidth, kDefaultClientHeight};
-                Check(AdjustWindowRectExForDpi(&frame, kWindowStyle, GetMenu(window_) != nullptr, 0,
-                                               HIWORD(wparam)) != FALSE, "AdjustWindowRectExForDpi change");
-                Check(SetWindowPos(window_, nullptr, suggested->left, suggested->top,
-                                   frame.right - frame.left, frame.bottom - frame.top,
-                                   SWP_NOZORDER | SWP_NOACTIVATE) != FALSE, "SetWindowPos DPI change");
+                if (!fullscreen_) {
+                    const auto *suggested = reinterpret_cast<const RECT *>(lparam);
+                    SetWindowPos(window_, nullptr, suggested->left, suggested->top,
+                                 suggested->right - suggested->left, suggested->bottom - suggested->top,
+                                 SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 Layout();
                 RedrawWindow(window_, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
                 return 0;
             }
             case WM_GETMINMAXINFO: {
-                auto *bounds = reinterpret_cast<MINMAXINFO *>(lparam);
-                RECT minimum{0, 0, kDefaultClientWidth, kDefaultClientHeight};
-                Check(AdjustWindowRectExForDpi(&minimum, static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_STYLE)),
-                                         GetMenu(window_) != nullptr,
-                                         static_cast<DWORD>(GetWindowLongPtrA(window_, GWL_EXSTYLE)),
-                                         GetDpiForWindow(window_)) != FALSE, "AdjustWindowRectExForDpi minimum");
-                bounds->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
-                bounds->ptMaxTrackSize = bounds->ptMinTrackSize;
-                bounds->ptMaxSize = bounds->ptMinTrackSize;
+                if (!fullscreen_) {
+                    auto *bounds = reinterpret_cast<MINMAXINFO *>(lparam);
+                    RECT minimum{0, 0, kMinClientWidth, kMinClientHeight};
+                    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
+                    const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
+                    if (AdjustWindowRectExForDpi(&minimum, style, GetMenu(window_) != nullptr, ex_style,
+                                                 GetDpiForWindow(window_))) {
+                        bounds->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
+                    }
+                }
                 return 0;
             }
-            case WM_SYSCOMMAND:
-                if ((wparam & 0xfff0) == SC_SIZE || (wparam & 0xfff0) == SC_MAXIMIZE) return 0;
-                return DefWindowProcA(window_, message, wparam, lparam);
+            case WM_SYSCOMMAND: {
+                const UINT cmd = static_cast<UINT>(wparam & 0xfff0u);
+                switch (cmd) {
+                    case kSysSize1024: ApplyClientSizePreset(1024, 768); return 0;
+                    case kSysSize1280: ApplyClientSizePreset(1280, 960); return 0;
+                    case kSysSize1440: ApplyClientSizePreset(1440, 1080); return 0;
+                    case kSysSize1920: ApplyClientSizePreset(1920, 1440); return 0;
+                    case kSysSize2560: ApplyClientSizePreset(2560, 1440); return 0;
+                    case kSysFullscreen: SetFullscreen(!fullscreen_); return 0;
+                    case kSysToggleHd: ToggleHdArtwork(); return 0;
+                    default: return DefWindowProcW(window_, message, wparam, lparam);
+                }
+            }
             case WM_COMMAND:
                 if (LOWORD(wparam) == kAudioMeter && HIWORD(wparam) == BN_CLICKED) ShowAudioMenu();
                 else if (LOWORD(wparam) == kSettings) settings_->Open();
@@ -590,10 +802,10 @@ LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wpara
                 DestroyWindow(window_);
                 return 0;
             case WM_DESTROY: KillTimer(window_, kAudioTimer);
-                RemovePropA(window_, instance_property_.c_str());
+                RemovePropW(window_, instance_property_.c_str());
                 PostQuitMessage(0);
                 return 0;
-            default: return DefWindowProcA(window_, message, wparam, lparam);
+            default: return DefWindowProcW(window_, message, wparam, lparam);
         }
     }
 } // namespace tenhou

@@ -11,6 +11,19 @@ namespace tenhou {
         for (const auto &sprite: kSpriteAssets) if (sprite.id == id) return Get(sprite.asset);
         return nullptr;
     }
+
+    const Image *VariantArtwork::GetHdSprite(unsigned id) {
+        switch (id) {
+            case 401: return Get(AssetId::HdSprite401);
+            case 402: return Get(AssetId::HdSprite402);
+            case 440: return Get(AssetId::HdSprite440);
+            case 466: return Get(AssetId::HdSprite466);
+            case 589: return Get(AssetId::HdSprite589);
+            case 591: return Get(AssetId::HdSprite591);
+            case 592: return Get(AssetId::HdSprite592);
+            default: return nullptr;
+        }
+    }
     AssetId FlowerArtwork(int entity) {
         static constexpr AssetId ids[]{AssetId::FlowerMei, AssetId::FlowerLan, AssetId::FlowerZhu, AssetId::FlowerJu,
             AssetId::FlowerChun, AssetId::FlowerXia, AssetId::FlowerQiu, AssetId::FlowerDong};

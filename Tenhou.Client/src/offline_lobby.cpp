@@ -2,7 +2,7 @@
 #include "text_catalog.hpp"
 #include <algorithm>
 #include <cmath>
-#include <cwchar>
+#include <cstdio>
 #include <iterator>
 #include <numeric>
 
@@ -23,7 +23,7 @@ namespace tenhou {
         constexpr Label kTiers[]{Label::lobby_general, Label::lobby_advanced, Label::lobby_special, Label::lobby_phoenix};
         constexpr Label kParlorRows[]{Label::lobby_parlor_0, Label::lobby_parlor_2, Label::lobby_parlor_5,
                                       Label::lobby_parlor_three};
-        const wchar_t *Text(Label label) { return kTextLabels[static_cast<std::size_t>(label)].label.data(); }
+        std::string_view Text(Label label) { return kTextLabels[static_cast<std::size_t>(label)].label; }
 
         struct ProfileChoice {
             unsigned type;
@@ -37,71 +37,147 @@ namespace tenhou {
         constexpr Label kRankedMonthlyRules[]{
             Label::lobby_no_tanyao, Label::lobby_four_tanyao, Label::lobby_red, Label::lobby_three_red
         };
-        std::wstring ProfileCaption(Label period, const std::wstring &category) {
-            return L"■" + std::wstring(Text(period)) + L" / " + category;
+        std::string ProfileCaption(Label period, const std::string &category) {
+            return std::string("■") + std::string(Text(period)) + " / " + category;
         }
 
-        bool Digits(std::wstring_view text) {
-            return std::all_of(text.begin(), text.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+        bool Digits(std::string_view text) {
+            return std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
         }
-    }
 
-    std::optional<std::wstring> LobbyNumber(std::wstring input) {
-        if (input == L"0" || input == L"0000" || input == kRankedLobby) return kRankedLobby;
-        if (input.size() == 4 && Digits(input)) input.insert(input.begin(), L'L');
-        if (input.size() == 5 && input.front() == L'L' && input[1] != L'0' &&
-            Digits(std::wstring_view(input).substr(1))) return input;
-        if (input.size() == 9 && input.front() == L'C' && Digits(std::wstring_view(input).substr(1))) return input;
+        bool EndsWith(std::string_view s, std::string_view suffix) {
+            return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
+        }
+
+        bool StartsWith(std::string_view s, std::string_view prefix) {
+            return s.size() >= prefix.size() && s.substr(0, prefix.size()) == prefix;
+        }
+
+        std::string_view TrimHorizontalSpaces(std::string_view s) {
+            constexpr std::string_view fullwidth_space = "　";
+            while (!s.empty()) {
+                if (s.front() == ' ' || s.front() == '\t') s.remove_prefix(1);
+                else if (StartsWith(s, fullwidth_space)) s.remove_prefix(fullwidth_space.size());
+                else break;
+            }
+            while (!s.empty()) {
+                if (s.back() == ' ' || s.back() == '\t') s.remove_suffix(1);
+                else if (EndsWith(s, fullwidth_space)) s.remove_suffix(fullwidth_space.size());
+                else break;
+            }
+            return s;
+        }
+
+        std::string_view TrimRightHorizontalSpaces(std::string_view s) {
+            constexpr std::string_view fullwidth_space = "　";
+            while (!s.empty()) {
+                if (s.back() == ' ' || s.back() == '\t') s.remove_suffix(1);
+                else if (EndsWith(s, fullwidth_space)) s.remove_suffix(fullwidth_space.size());
+                else break;
+            }
+            return s;
+        }
+
+        std::size_t Utf8CharLen(unsigned char lead) {
+            if ((lead & 0x80) == 0) return 1;
+            if ((lead & 0xE0) == 0xC0) return 2;
+            if ((lead & 0xF0) == 0xE0) return 3;
+            if ((lead & 0xF8) == 0xF0) return 4;
+            return 1;
+        }
+
+        std::string ReplaceAll(std::string text, std::string_view from, std::string_view to) {
+            std::size_t pos = 0;
+            while ((pos = text.find(from, pos)) != std::string::npos) {
+                text.replace(pos, from.size(), to);
+                pos += to.size();
+            }
+            return text;
+        }
+    } // namespace
+
+    std::optional<std::string> LobbyNumber(std::string input) {
+        if (input == "0" || input == "0000" || input == kRankedLobby) return std::string(kRankedLobby);
+        if (input.size() == 4 && Digits(input)) input.insert(input.begin(), 'L');
+        if (input.size() == 5 && input.front() == 'L' && input[1] != '0' &&
+            Digits(std::string_view(input).substr(1))) return input;
+        if (input.size() == 9 && input.front() == 'C' && Digits(std::string_view(input).substr(1))) return input;
         return std::nullopt;
     }
 
-    std::wstring LocalizeCertification(std::wstring_view text) {
-        constexpr std::wstring_view rank = L"認定段位/級位";
-        constexpr std::wstring_view award =
-            L"貴殿は天鳳において卓越した技能を遺憾なく発揮され優秀な成績をおさめられました。"
-            L"今後もさらなる雀力向上に精進されますようここに段位/級位を認定し栄誉を称えます。";
-        const auto award_length = [&](std::wstring_view source) -> std::size_t {
-            std::size_t pos = 0;
-            for (const wchar_t letter : award) {
-                pos = source.find_first_not_of(L" 　\t\n\r", pos);
-                if (pos == source.npos || source[pos++] != letter) return 0;
+    std::string LocalizeCertification(std::string_view text) {
+        constexpr std::string_view rank = "認定段位/級位";
+        constexpr std::string_view award =
+            "貴殿は天鳳において卓越した技能を遺憾なく発揮され優秀な成績をおさめられました。"
+            "今後もさらなる雀力向上に精進されますようここに段位/級位を認定し栄誉を称えます。";
+        constexpr std::string_view fullwidth_space = "　";
+        constexpr std::string_view fullwidth_colon = "：";
+        constexpr std::string_view honorific = "殿";
+
+        const auto skip_award_ws = [&](std::string_view source, std::size_t pos) {
+            while (pos < source.size()) {
+                const char c = source[pos];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { ++pos; continue; }
+                if (pos + fullwidth_space.size() <= source.size() &&
+                    source.substr(pos, fullwidth_space.size()) == fullwidth_space) {
+                    pos += fullwidth_space.size();
+                    continue;
+                }
+                break;
             }
             return pos;
         };
-        std::wstring body;
+
+        const auto award_length = [&](std::string_view source) -> std::size_t {
+            std::size_t pos = 0;
+            for (std::size_t i = 0; i < award.size();) {
+                const std::size_t len = Utf8CharLen(static_cast<unsigned char>(award[i]));
+                const auto ch = award.substr(i, len);
+                pos = skip_award_ws(source, pos);
+                if (pos + ch.size() > source.size() || source.substr(pos, ch.size()) != ch) return 0;
+                pos += ch.size();
+                i += len;
+            }
+            return pos;
+        };
+
+        std::string body;
         while (!text.empty()) {
-            const auto newline = text.find_first_of(L"\r\n");
+            const auto newline = text.find_first_of("\r\n");
             const auto line = text.substr(0, newline);
-            const auto first = line.find_first_not_of(L" 　\t");
-            const auto last = line.find_last_not_of(L" 　\t");
-            const auto content = first == line.npos ? std::wstring_view{} : line.substr(first, last - first + 1);
+            const auto content = TrimHorizontalSpaces(line);
             // Match whole fields. A player's name can itself contain vocabulary used in the award.
-            if (content.size() > 1 && content.back() == L'殿') {
-                const auto name = content.substr(0, content.size() - 1);
-                body += name.substr(0, name.find_last_not_of(L" 　\t") + 1);
-                body += L"阁下：";
-            } else if (content.substr(0, rank.size()) == rank) {
-                const auto value = content.find_first_not_of(L" ：:\t　", rank.size());
-                auto grade = std::wstring(value == content.npos ? std::wstring_view{} : content.substr(value));
-                std::replace(grade.begin(), grade.end(), L'級', L'级');
-                if (grade == L"天鳳位") grade = L"天凤位";
-                body += L"认定段级位：" + grade;
+            if (content.size() > honorific.size() && EndsWith(content, honorific)) {
+                const auto name = TrimRightHorizontalSpaces(content.substr(0, content.size() - honorific.size()));
+                body += name;
+                body += "阁下：";
+            } else if (StartsWith(content, rank)) {
+                auto rest = content.substr(rank.size());
+                while (!rest.empty()) {
+                    if (rest.front() == ' ' || rest.front() == '\t' || rest.front() == ':') rest.remove_prefix(1);
+                    else if (StartsWith(rest, fullwidth_space)) rest.remove_prefix(fullwidth_space.size());
+                    else if (StartsWith(rest, fullwidth_colon)) rest.remove_prefix(fullwidth_colon.size());
+                    else break;
+                }
+                auto grade = ReplaceAll(std::string(rest), "級", "级");
+                if (grade == "天鳳位") grade = "天凤位";
+                body += "认定段级位：" + grade;
             } else if (const auto length = content.empty() ? 0 : award_length(text)) {
                 // The server can hard-wrap this paragraph anywhere within a sentence.
-                body += L"您在天凤对局中展现了卓越的牌技，成绩优异。\n"
-                        L"特此认定，以表彰您的成就。\n"
-                        L"愿您再接再厉，精进牌艺。";
+                body += "您在天凤对局中展现了卓越的牌技，成绩优异。\n"
+                        "特此认定，以表彰您的成就。\n"
+                        "愿您再接再厉，精进牌艺。";
                 text.remove_prefix(length);
                 continue;
-            } else if (content == L"天鳳段位認定協会") body += L"天凤段位认定协会";
-            else if (content == L"天鳳サンマ漁業協会") body += L"天凤秋刀鱼渔业协会";
+            } else if (content == "天鳳段位認定協会") body += "天凤段位认定协会";
+            else if (content == "天鳳サンマ漁業協会") body += "天凤秋刀鱼渔业协会";
             else body += line;
             text.remove_prefix(line.size());
             if (!text.empty()) {
                 const auto separator = text.front();
                 text.remove_prefix(1);
-                if (separator == L'\r' && !text.empty() && text.front() == L'\n') text.remove_prefix(1);
-                body += L'\n';
+                if (separator == '\r' && !text.empty() && text.front() == '\n') text.remove_prefix(1);
+                body += '\n';
             }
         }
         return body;
@@ -143,13 +219,13 @@ namespace tenhou {
         monthly.total_score = 50.0;
         monthly.has_monthly_raw = true;
         monthly.monthly_ranks = {0, 1240, 0, 1180, 0, 0, 0, 0, 18420};
-        return {L"OfflineDemo", L"2027/02/17", 90, 0x05, {11, 1656}, {13, 1842},
+        return {"OfflineDemo", "2027/02/17", 90, 0x05, {11, 1656}, {13, 1842},
             {{four, three}}, {{kDefaultMonthlyProfile, monthly}}, true, {}};
     }
 
-    OfflineLobbyCounts FixtureCounts(const std::wstring &room, std::uint64_t seconds) {
+    OfflineLobbyCounts FixtureCounts(const std::string &room, std::uint64_t seconds) {
         OfflineLobbyCounts counts;
-        if (room.empty() || room.front() == L'C') return counts;
+        if (room.empty() || room.front() == 'C') return counts;
         const bool ranked = room == kRankedLobby;
         const auto tick = static_cast<unsigned>(seconds % 32);
         unsigned playing = 0;
@@ -173,20 +249,20 @@ namespace tenhou {
         }
     }
 
-    bool OfflineLobby::RequestMove(std::wstring room) {
+    bool OfflineLobby::RequestMove(std::string room) {
         auto id = LobbyNumber(std::move(room));
         if (!id || pending_ || *id == room_ || !reservations_.empty()) return false;
         pending_ = std::move(id);
         return true;
     }
 
-    bool OfflineLobby::ConfirmMove(const std::wstring &room) {
+    bool OfflineLobby::ConfirmMove(const std::string &room) {
         if (!pending_ || *pending_ != room) return false;
         Enter(room);
         return true;
     }
 
-    void OfflineLobby::Enter(std::wstring room) {
+    void OfflineLobby::Enter(std::string room) {
         room_ = std::move(room);
         pending_.reset();
         counts_ = {};
@@ -198,12 +274,12 @@ namespace tenhou {
         for (int type : types) reservations_.emplace(room_, type);
     }
 
-    void OfflineLobby::SetContest(const std::wstring &room, OfflineContest contest) {
+    void OfflineLobby::SetContest(const std::string &room, OfflineContest contest) {
         const auto id = LobbyNumber(room);
-        if (id && id->front() == L'C') contests_.insert_or_assign(*id, std::move(contest));
+        if (id && id->front() == 'C') contests_.insert_or_assign(*id, std::move(contest));
     }
 
-    bool OfflineLobby::SetCounts(const std::wstring &room, OfflineLobbyCounts sample) {
+    bool OfflineLobby::SetCounts(const std::string &room, OfflineLobbyCounts sample) {
         if (room != room_) return false;
         counts_ = std::move(sample);
         return true;
@@ -231,7 +307,7 @@ namespace tenhou {
         return reservations_.emplace(room_, candidate.type).second;
     }
 
-    const OfflineContest *OfflineLobby::Contest(const std::wstring &room) const {
+    const OfflineContest *OfflineLobby::Contest(const std::string &room) const {
         const auto it = contests_.find(room);
         return it == contests_.end() ? nullptr : &it->second;
     }
@@ -257,55 +333,55 @@ namespace tenhou {
         return reservations_.emplace(room_, Contest()->rule).second;
     }
 
-    std::wstring AmberProfileLabel(std::size_t index) {
+    std::string AmberProfileLabel(std::size_t index) {
         const auto length = (index < 3 || index == 6) ? Label::lobby_east : Label::lobby_south;
-        return std::wstring(Text(length)) + L" " + Text(kParlorRows[index < 6 ? index % 3 : 3]);
+        return std::string(Text(length)) + " " + std::string(Text(kParlorRows[index < 6 ? index % 3 : 3]));
     }
 
-    std::wstring LifetimeProfileLabel(unsigned type) {
+    std::string LifetimeProfileLabel(unsigned type) {
         for (const auto &choice: kLifetimeChoices)
-            if (type == choice.type) return Text(choice.label);
+            if (type == choice.type) return std::string(Text(choice.label));
         const auto it = std::find(kAmberLifetimeProfiles.begin(), kAmberLifetimeProfiles.end(), type);
         if (it != kAmberLifetimeProfiles.end())
-            return std::wstring(Text(Label::lobby_amber)) + L" " + AmberProfileLabel(it - kAmberLifetimeProfiles.begin());
+            return std::string(Text(Label::lobby_amber)) + " " + AmberProfileLabel(it - kAmberLifetimeProfiles.begin());
         return {};
     }
 
-    std::wstring RankedMonthlyLabel(unsigned type) {
+    std::string RankedMonthlyLabel(unsigned type) {
         const auto length = (type & 8) ? Label::lobby_south : Label::lobby_east;
         const auto rule = (type & 0x10) ? 3 : (type & 4) ? 0 : (type & 2) ? 1 : 2;
-        return std::wstring(Text(length)) + L" " + Text(kRankedMonthlyRules[rule]);
+        return std::string(Text(length)) + " " + std::string(Text(kRankedMonthlyRules[rule]));
     }
 
-    std::wstring MonthlyProfileCaption(unsigned type) {
+    std::string MonthlyProfileCaption(unsigned type) {
         const auto amber = std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), type);
         if (amber != kAmberMonthlyProfiles.end())
-            return ProfileCaption(Label::lobby_month, std::wstring(Text(Label::lobby_amber)) + L" " +
+            return ProfileCaption(Label::lobby_month, std::string(Text(Label::lobby_amber)) + " " +
                                   AmberProfileLabel(amber - kAmberMonthlyProfiles.begin()));
         const unsigned tier = ((type & 0x80) ? 1 : 0) + ((type & 0x20) ? 2 : 0);
-        return ProfileCaption(Label::lobby_month, std::wstring(Text(kTiers[tier])) + L"桌 " + RankedMonthlyLabel(type));
+        return ProfileCaption(Label::lobby_month, std::string(Text(kTiers[tier])) + "桌 " + RankedMonthlyLabel(type));
     }
 
-    std::wstring LifetimeProfileCaption(unsigned type) {
+    std::string LifetimeProfileCaption(unsigned type) {
         return ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(type));
     }
 
     // Exact FUN_00434290 (tenhou.exe.c:34390): %f -> split '.' -> truncate/pad frac -> optional strip leading '0' & '+' prefix.
-    std::wstring FormatFixedTrunc(double value, int decimals, bool strip_zero, const wchar_t *plus_prefix) {
+    std::string FormatFixedTrunc(double value, int decimals, bool strip_zero, const char *plus_prefix) {
         const float f = static_cast<float>(value);
-        wchar_t buffer[128]{};
-        std::swprintf(buffer, std::size(buffer), L"%f", static_cast<double>(f));
-        std::wstring text(buffer);
-        std::wstring integer_part, frac_part;
-        const auto dot = text.find(L'.');
-        if (dot == std::wstring::npos) integer_part = text;
+        char buffer[128]{};
+        std::snprintf(buffer, std::size(buffer), "%f", static_cast<double>(f));
+        std::string text(buffer);
+        std::string integer_part, frac_part;
+        const auto dot = text.find('.');
+        if (dot == std::string::npos) integer_part = text;
         else {
             integer_part = text.substr(0, dot);
             frac_part = text.substr(dot + 1);
         }
         if (strip_zero) {
-            if (integer_part == L"0") integer_part.clear();
-            else if (integer_part == L"-0") integer_part = L"-";
+            if (integer_part == "0") integer_part.clear();
+            else if (integer_part == "-0") integer_part = "-";
         }
         if (decimals <= 0) {
             frac_part.clear();
@@ -313,45 +389,45 @@ namespace tenhou {
             if (frac_part.size() > static_cast<std::size_t>(decimals))
                 frac_part.resize(static_cast<std::size_t>(decimals));
             while (frac_part.size() < static_cast<std::size_t>(decimals))
-                frac_part.push_back(L'0');
+                frac_part.push_back('0');
         }
-        std::wstring prefix;
+        std::string prefix;
         if (plus_prefix && f > 0.0f) prefix = plus_prefix;
         if (decimals <= 0) return prefix + integer_part;
-        return prefix + integer_part + L"." + frac_part;
+        return prefix + integer_part + "." + frac_part;
     }
 
     // Exact FUN_00434650 (tenhou.exe.c:34532): signed adaptive decimals (|int|<10 -> 2, <100 -> 1, >=100 -> 0, capped).
-    std::wstring FormatSignedAdaptive(double value, int max_decimals) {
+    std::string FormatSignedAdaptive(double value, int max_decimals) {
         const int abs_int = std::abs(static_cast<int>(static_cast<float>(value)));
         int decimals = abs_int >= 100 ? 0 : abs_int >= 10 ? 1 : 2;
         if (decimals > max_decimals) decimals = max_decimals;
-        return FormatFixedTrunc(value, decimals, false, L"+");
+        return FormatFixedTrunc(value, decimals, false, "+");
     }
 
     // Exact FUN_004346b0 (tenhou.exe.c:34557): rate without leading zero (e.g. .279, .000, 1.00).
-    std::wstring FormatRate(double value, int decimals) {
+    std::string FormatRate(double value, int decimals) {
         const float f = static_cast<float>(value);
         return FormatFixedTrunc(f, decimals - (f == 1.0f ? 1 : 0), true, nullptr);
     }
 
     // Exact 0042a978..0042a9d0: YYYYMMDD -> YYYY/MM/DD, empty -> ----/--/--.
-    std::wstring FormatExpiry(std::wstring_view raw) {
-        if (raw.empty()) return L"----/--/--";
-        if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; }))
-            return std::wstring(raw.substr(0, 4)) + L"/" + std::wstring(raw.substr(4, 2)) + L"/" +
-                   std::wstring(raw.substr(6, 2));
-        return std::wstring(raw);
+    std::string FormatExpiry(std::string_view raw) {
+        if (raw.empty()) return "----/--/--";
+        if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            return std::string(raw.substr(0, 4)) + "/" + std::string(raw.substr(4, 2)) + "/" +
+                   std::string(raw.substr(6, 2));
+        return std::string(raw);
     }
 
     // Exact FUN_004748b0 (0..20 rank grade names in Chinese).
-    std::wstring RankGradeName(int code) {
-        static constexpr const wchar_t *kGrades[]{
-            L"新人", L"9级", L"8级", L"7级", L"6级", L"5级", L"4级", L"3级", L"2级", L"1级",
-            L"初段", L"二段", L"三段", L"四段", L"五段", L"六段", L"七段", L"八段", L"九段", L"十段", L"天凤位"
+    std::string RankGradeName(int code) {
+        static constexpr const char *kGrades[]{
+            "新人", "9级", "8级", "7级", "6级", "5级", "4级", "3级", "2级", "1级",
+            "初段", "二段", "三段", "四段", "五段", "六段", "七段", "八段", "九段", "十段", "天凤位"
         };
         if (code >= 0 && code < static_cast<int>(std::size(kGrades))) return kGrades[code];
-        return code > 20 ? L"天凤位" : L"新人";
+        return code > 20 ? "天凤位" : "新人";
     }
 
     int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, unsigned monthly_type) {
@@ -367,15 +443,15 @@ namespace tenhou {
         return (monthly_type & 0x10) ? profile.three.rating : profile.four.rating;
     }
 
-    std::wstring FormatProfileClipboardText(const OfflineLobbyProfile &profile,
+    std::string FormatProfileClipboardText(const OfflineLobbyProfile &profile,
                                            const std::array<LobbyStatistics, 2> &private_lifetime,
                                            unsigned lifetime, unsigned monthly, bool official,
-                                           std::wstring_view timestamp) {
-        std::wstring out;
-        out += L"【天凤麻将】\r\n";
-        out += L"作成时间: " + std::wstring(timestamp) + L"\r\n";
-        out += L"玩家名: " + profile.name + L"\r\n";
-        out += std::wstring(Text(Label::lobby_membership_expiry)) + L": " + FormatExpiry(profile.membership_expiry) + L"\r\n\r\n";
+                                           std::string_view timestamp) {
+        std::string out;
+        out += "【天凤麻将】\r\n";
+        out += "作成时间: " + std::string(timestamp) + "\r\n";
+        out += "玩家名: " + profile.name + "\r\n";
+        out += std::string(Text(Label::lobby_membership_expiry)) + ": " + FormatExpiry(profile.membership_expiry) + "\r\n\r\n";
 
         const bool ranked = lifetime == kRankedFourProfile || lifetime == kRankedThreeProfile;
         const bool private_room = lifetime == kPrivateFourProfile || lifetime == kPrivateThreeProfile;
@@ -385,73 +461,73 @@ namespace tenhou {
         const auto extra = profile.other_lifetime.find(lifetime);
         const auto &all = ranked ? profile.lifetime[three] : private_room ? private_lifetime[three] :
                           extra != profile.other_lifetime.end() ? extra->second : empty;
-        out += ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(lifetime)) + L"\r\n";
+        out += ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(lifetime)) + "\r\n";
         if (ranked && profile.ranked_allowed) {
             const auto &rank = three ? profile.three : profile.four;
-            const auto target = official && !all.next_points ? std::wstring{} : L"/" + std::to_wstring(all.next_points);
-            out += RankGradeName(rank.code) + L" " + std::to_wstring(all.points) + target +
-                   L"pt R" + std::to_wstring(rank.rating) + L"\r\n";
+            const auto target = official && !all.next_points ? std::string{} : "/" + std::to_string(all.next_points);
+            out += RankGradeName(rank.code) + " " + std::to_string(all.points) + target +
+                   "pt R" + std::to_string(rank.rating) + "\r\n";
         }
         if (all.games > 0) {
-            out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(all.games) + L"\r\n";
-            out += std::wstring(Text(Label::lobby_average_score)) + L": " +
-                   FormatSignedAdaptive(static_cast<double>(all.average_score_hundredths) / 100.0, 2) + L"\r\n";
-            out += std::wstring(Text(Label::lobby_average_place)) + L": " +
-                   FormatFixedTrunc(static_cast<double>(all.average_place_hundredths) / 100.0, 2, false, nullptr) + L"\r\n";
+            out += std::string(Text(Label::lobby_games)) + ": " + std::to_string(all.games) + "\r\n";
+            out += std::string(Text(Label::lobby_average_score)) + ": " +
+                   FormatSignedAdaptive(static_cast<double>(all.average_score_hundredths) / 100.0, 2) + "\r\n";
+            out += std::string(Text(Label::lobby_average_place)) + ": " +
+                   FormatFixedTrunc(static_cast<double>(all.average_place_hundredths) / 100.0, 2, false, nullptr) + "\r\n";
             constexpr Label places[]{Label::lobby_place_1, Label::lobby_place_2, Label::lobby_place_3, Label::lobby_place_4};
             const auto raw_games = std::accumulate(all.place_counts.begin(), all.place_counts.end(), 0);
             for (int i = 0; i < (three ? 3 : 4); ++i) {
                 const double rate = raw_games == all.games
                     ? static_cast<double>(all.place_counts[i]) / static_cast<double>(all.games)
                     : static_cast<double>(all.place_per_mille[i]) / 1000.0;
-                out += std::wstring(Text(places[i])) + L": " + FormatRate(rate, 3) + L"\r\n";
+                out += std::string(Text(places[i])) + ": " + FormatRate(rate, 3) + "\r\n";
             }
             const double bust = raw_games == all.games && all.bust_count > 0
                 ? static_cast<double>(all.bust_count) / static_cast<double>(all.games)
                 : static_cast<double>(all.bust_per_mille) / 1000.0;
-            out += std::wstring(Text(Label::lobby_bust)) + L": " + FormatRate(bust, 3) + L"\r\n";
+            out += std::string(Text(Label::lobby_bust)) + ": " + FormatRate(bust, 3) + "\r\n";
             if (all.hands > 0) {
                 const auto hand_rate = [&](int count, int permille) {
                     return count > 0 || all.win_count > 0 || all.call_count > 0
                         ? static_cast<double>(count) / static_cast<double>(all.hands)
                         : static_cast<double>(permille) / 1000.0;
                 };
-                out += std::wstring(Text(Label::lobby_wins)) + L": " + FormatRate(hand_rate(all.win_count, all.win_per_mille), 3) + L"\r\n";
-                out += std::wstring(Text(Label::lobby_deal_in)) + L": " + FormatRate(hand_rate(all.deal_in_count, all.deal_in_per_mille), 3) + L"\r\n";
-                out += std::wstring(Text(Label::lobby_call)) + L": " + FormatRate(hand_rate(all.call_count, all.call_per_mille), 3) + L"\r\n";
-                out += std::wstring(Text(Label::lobby_reach)) + L": " + FormatRate(hand_rate(all.reach_count, all.reach_per_mille), 3) + L"\r\n";
+                out += std::string(Text(Label::lobby_wins)) + ": " + FormatRate(hand_rate(all.win_count, all.win_per_mille), 3) + "\r\n";
+                out += std::string(Text(Label::lobby_deal_in)) + ": " + FormatRate(hand_rate(all.deal_in_count, all.deal_in_per_mille), 3) + "\r\n";
+                out += std::string(Text(Label::lobby_call)) + ": " + FormatRate(hand_rate(all.call_count, all.call_per_mille), 3) + "\r\n";
+                out += std::string(Text(Label::lobby_reach)) + ": " + FormatRate(hand_rate(all.reach_count, all.reach_per_mille), 3) + "\r\n";
             }
         }
-        out += L"\r\n" + MonthlyProfileCaption(monthly) + L"\r\n";
+        out += "\r\n" + MonthlyProfileCaption(monthly) + "\r\n";
         const auto month = profile.monthly.find(monthly);
         if (month != profile.monthly.end() && month->second.games > 0) {
             const auto &m = month->second;
             const bool m_three = (monthly & 0x10) != 0;
             const auto &p = m.place_counts;
             if (m_three) {
-                out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(p[0]) + L"+" +
-                       std::to_wstring(p[1]) + L"+" + std::to_wstring(p[2]) + L" = " + std::to_wstring(m.games) + L"\r\n";
+                out += std::string(Text(Label::lobby_games)) + ": " + std::to_string(p[0]) + "+" +
+                       std::to_string(p[1]) + "+" + std::to_string(p[2]) + " = " + std::to_string(m.games) + "\r\n";
             } else {
-                out += std::wstring(Text(Label::lobby_games)) + L": " + std::to_wstring(p[0]) + L"+" +
-                       std::to_wstring(p[1]) + L"+" + std::to_wstring(p[2]) + L"+" + std::to_wstring(p[3]) +
-                       L" = " + std::to_wstring(m.games) + L"\r\n";
+                out += std::string(Text(Label::lobby_games)) + ": " + std::to_string(p[0]) + "+" +
+                       std::to_string(p[1]) + "+" + std::to_string(p[2]) + "+" + std::to_string(p[3]) +
+                       " = " + std::to_string(m.games) + "\r\n";
             }
-            const auto rank_suffix = [&](std::size_t idx) -> std::wstring {
+            const auto rank_suffix = [&](std::size_t idx) -> std::string {
                 if (idx < m.monthly_ranks.size() && m.monthly_ranks[idx] > 0)
-                    return L" " + std::to_wstring(m.monthly_ranks[idx]) + Text(Label::lobby_rank_unit);
+                    return " " + std::to_string(m.monthly_ranks[idx]) + std::string(Text(Label::lobby_rank_unit));
                 return {};
             };
             const double score = m.has_monthly_raw ? m.total_score : (static_cast<double>(m.average_score_hundredths) * m.games / 100.0);
-            out += std::wstring(Text(Label::lobby_monthly_total)) + Text(Label::lobby_monthly_score) + L": " +
-                   FormatSignedAdaptive(score, 1) + rank_suffix(1) + L"\r\n";
-            out += std::wstring(Text(Label::lobby_monthly_average)) + Text(Label::lobby_monthly_score) + L": " +
-                   FormatSignedAdaptive(score / m.games, 2) + rank_suffix(2) + L"\r\n";
+            out += std::string(Text(Label::lobby_monthly_total)) + std::string(Text(Label::lobby_monthly_score)) + ": " +
+                   FormatSignedAdaptive(score, 1) + rank_suffix(1) + "\r\n";
+            out += std::string(Text(Label::lobby_monthly_average)) + std::string(Text(Label::lobby_monthly_score)) + ": " +
+                   FormatSignedAdaptive(score / m.games, 2) + rank_suffix(2) + "\r\n";
             const double uma = m_three ? (p[0] * 30.0 - p[2] * 30.0) : (p[0] * 30.0 + p[1] * 10.0 - p[2] * 10.0 - p[3] * 30.0);
             const double avg_place = static_cast<double>(p[0] + p[1] * 2 + p[2] * 3 + p[3] * 4) / m.games;
-            out += std::wstring(Text(Label::lobby_monthly_total)) + Text(Label::lobby_monthly_place) + L": " +
-                   FormatFixedTrunc(uma, 0, false, L"+") + rank_suffix(3) + L"\r\n";
-            out += std::wstring(Text(Label::lobby_monthly_average)) + Text(Label::lobby_monthly_place) + L": " +
-                   FormatFixedTrunc(avg_place, 2, false, nullptr) + rank_suffix(4) + L"\r\n";
+            out += std::string(Text(Label::lobby_monthly_total)) + std::string(Text(Label::lobby_monthly_place)) + ": " +
+                   FormatFixedTrunc(uma, 0, false, "+") + rank_suffix(3) + "\r\n";
+            out += std::string(Text(Label::lobby_monthly_average)) + std::string(Text(Label::lobby_monthly_place)) + ": " +
+                   FormatFixedTrunc(avg_place, 2, false, nullptr) + rank_suffix(4) + "\r\n";
         }
         return out;
     }
@@ -505,4 +581,4 @@ namespace tenhou {
         }
         return {1.f, std::min(1.f, (1 + (now - certificate_start_) / kCertificateTick) * .01f)};
     }
-}
+} // namespace tenhou

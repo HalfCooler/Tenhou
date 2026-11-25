@@ -3,6 +3,9 @@
 #include "lobby_view.hpp"
 #include "tile_shadow.hpp"
 #include "wall_scene.hpp"
+#include "d2d_table_renderer.hpp"
+#include "hd_tile_atlas.hpp"
+#include "hd_tile_quads.hpp"
 #include <commctrl.h>
 #include <algorithm>
 #include <iostream>
@@ -83,10 +86,10 @@ namespace tenhou {
             require(south.games == 1 && south.place_per_mille[0] == 1000 &&
                 south.average_score_hundredths == 6680 && south.average_place_hundredths == 100,
                 "Official RANKING v2 did not populate the saved category or was overwritten by a contest ranking");
-            require(session.SubmitOriginLobby("monthly-profile", L"9").empty(),
+            require(session.SubmitOriginLobby("monthly-profile", "9").empty(),
                 "Selecting the current monthly category sent a redundant request");
             const auto phoenix = RankedMonthlyProfile(25, RankedTier::Phoenix);
-            require(phoenix == 185 && session.SubmitOriginLobby("monthly-profile", L"185") ==
+            require(phoenix == 185 && session.SubmitOriginLobby("monthly-profile", "185") ==
                     std::vector<std::string>{"<PXR V=\"185\" />"} &&
                 session.snapshot.origin_lobby->profile.monthly.empty(),
                 "Changing tier did not discard the earlier monthly result");
@@ -95,13 +98,13 @@ namespace tenhou {
             const auto &three_south = session.snapshot.origin_lobby->profile.monthly.at(phoenix);
             require(three_south.games == 10 && three_south.average_score_hundredths == -65 &&
                 three_south.average_place_hundredths == 160 &&
-                session.SubmitOriginLobby("monthly-profile", L"65").empty(),
+                session.SubmitOriginLobby("monthly-profile", "65").empty(),
                 "21-field or malformed monthly result handling differs");
             require(receive("<CHAT lobby=\"8141\" />") == std::vector<std::string>{"<PXR V=\"-1\" />"} &&
                 session.OfficialProfilePoll() == "<PXR v=\"-1\" />" &&
                 receive("<CHAT lobby=\"0000\" />") == std::vector<std::string>{"<PXR V=\"185\" />"},
                 "Monthly subscription did not follow lobby changes");
-            require(session.SubmitOriginLobby("join", L"2065").empty() &&
+            require(session.SubmitOriginLobby("join", "2065").empty() &&
                 session.snapshot.phase == LobbyPhase::Lobby, "Toutenkou changed official lobby state");
             require(receive("<GO type=\"9\" lobby=\"0\" />") == std::vector<std::string>{"<GOK />"},
                 "Official game did not send GOK");
@@ -224,8 +227,8 @@ namespace tenhou {
             require(session.snapshot.phase == LobbyPhase::Lobby && IsWindowVisible(service_viewport),
                     "Official lobby did not reopen after EXIT return completed");
             const auto &notice = session.snapshot.certification;
-            require(notice.find(L"认定段级位：初段\n\n桐山阁下：\n\n您在天凤") == 0 &&
-                    notice.find(L"精进牌艺。\n\n2026年11月24日\n天凤段位认定协会") != notice.npos,
+            require(notice.find("认定段级位：初段\n\n桐山阁下：\n\n您在天凤") == 0 &&
+                    notice.find("精进牌艺。\n\n2026年11月24日\n天凤段位认定协会") != notice.npos,
                     "The certificate lost its translation or server-supplied fields");
             RECT rect{};
             GetClientRect(popup, &rect);
@@ -865,6 +868,113 @@ namespace {
         Check(IsWindowEnabled(GetDlgItem(window, 5405)) && !IsWindowEnabled(GetDlgItem(window, 5406)), "Last pattern page is inaccessible");
         result.Show(false);
     }
+
+    void HdArtworkAndScalingCheck(HWND parent, const std::filesystem::path &resources) {
+        // 1. Validate 44-slice atlas mapping & 694 perspective quads
+        for (unsigned v = 0; v <= 33; ++v) Check(HdTileFaceSlice(v) == static_cast<int>(v), "HD face slice mismatch 0..33");
+        Check(HdTileFaceSlice(34) == -1 && HdTileFaceSlice(37) == -1, "Blank/back tile must not map to HD face slice");
+        Check(HdTileFaceSlice(35) == 34 && HdTileFaceSlice(36) == 35, "Dragon face slice mismatch");
+        for (unsigned v = 40; v <= 47; ++v) Check(HdTileFaceSlice(v) == static_cast<int>(v - 40 + 36), "Flower face slice mismatch");
+        for (const auto &[fam, slot, dir] : std::vector<std::tuple<char, int, int>>{
+                 {'t', 0, 0}, {'t', 13, 0}, {'k', 0, 0}, {'k', 40, 0}, {'k', 0, 1}, {'k', 0, 2}, {'k', 0, 3},
+                 {'n', 0, 0}, {'n', 20, 0}, {'n', 60, 0}, {'y', 0, 0}, {'y', 0, 1}}) {
+            const auto *q = FindHdTileFaceQuad(fam, slot, dir);
+            Check(q != nullptr, "Missing HD perspective tile quad");
+            const float area = (q->x1 - q->x0) * (q->y3 - q->y0) - (q->y1 - q->y0) * (q->x3 - q->x0);
+            Check(area > 20.0f, "Degenerate HD perspective tile quad");
+        }
+
+        // 2. Validate all 7 redrawn HD sprites load with exact expected dimensions
+        DisplayArtwork display;
+        display.Configure(resources, 1440);
+        const std::pair<unsigned, std::pair<int, int>> expected_hd[]{
+            {401, {56, 104}}, {402, {56, 104}}, {440, {560, 204}},
+            {466, {456, 56}}, {589, {976, 688}}, {591, {1456, 660}}, {592, {1180, 860}}
+        };
+        for (const auto &[id, dims] : expected_hd) {
+            const auto &im = display.GetHd(id);
+            Check(im.width == dims.first && im.height == dims.second &&
+                  im.bgra.size() == static_cast<std::size_t>(dims.first) * dims.second * 4,
+                  "Redrawn HD sprite dimensions mismatch");
+        }
+
+        // 3. Verify D2DTableRenderer Classic vs HD rendering, scaling (1440x1080 & 2560x1440), and device-loss recovery
+        ReplayState state;
+        state.initialized = true;
+        state.seat_mask = 0x0f;
+        state.round = 1;
+        state.honba = 1;
+        state.sticks = 2;
+        state.dora_indicators = {16};
+        for (int s = 0; s < 4; ++s) {
+            state.players[s].name = "P" + std::to_string(s);
+            state.players[s].score = 25000;
+            state.players[s].reach = (s == 0) ? 2 : 0;
+            state.players[s].discards = {{s * 4, false, false}, {s * 4 + 16, true, false}};
+        }
+        state.players[0].hand = {0, 4, 8, 12, 16, 20, 40, 44, 52, 80, 88, 108, 132};
+        state.players[0].drawn_tile = 135;
+        state.players[0].flowers = {136};
+
+        D2DTableRenderer renderer(true); // WARP for deterministic CI execution
+        renderer.Configure(resources, 1440);
+        ClientPreferences classic_prefs;
+        classic_prefs.hd_artwork = false;
+        renderer.SetPreferences(classic_prefs, {}, true);
+
+        const auto render_to_buf = [&](int w, int h) -> std::vector<std::uint8_t> {
+            BITMAPINFO bi{};
+            bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
+            HDC dc = CreateCompatibleDC(nullptr);
+            void *bits = nullptr;
+            HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+            HGDIOBJ old = SelectObject(dc, bmp);
+            TableRenderFrame frame;
+            frame.canvas_width = 1440;
+            frame.bounds = {0, 0, w, h};
+            frame.destination = FitNativeCanvasBounds(frame.bounds, 1440);
+            frame.state = state;
+            frame.red_tiles = true;
+            frame.online_mode = true;
+            frame.original_display = true;
+            frame.dpi = 96;
+            const auto &geom = renderer.EnsureGeometry(state.red_tiles);
+            for (const auto &t : BuildTableScene(state, true, true)) {
+                const auto [ox, oy] = geom.Origin(t, true);
+                frame.tiles.push_back({t, ox, oy, {}});
+            }
+            SortTableScene(frame.tiles, geom, true);
+            TableActionButton btn{5124, {frame.destination.right - 200, frame.destination.bottom - 160,
+                                         frame.destination.right - 60, frame.destination.bottom - 109},
+                                  true, false, false, true, TableActionButtonStyle::Sprite440, {}};
+            frame.buttons.push_back(btn);
+            renderer.RenderToDc(dc, frame);
+            std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4);
+            std::memcpy(out.data(), bits, out.size());
+            SelectObject(dc, old);
+            DeleteObject(bmp);
+            DeleteDC(dc);
+            return out;
+        };
+
+        const auto classic_1440 = render_to_buf(1440, 1080);
+        Check(!renderer.UsingHdArtwork(), "Classic mode unexpectedly activated HD pipeline");
+
+        ClientPreferences hd_prefs;
+        hd_prefs.hd_artwork = true;
+        renderer.SetPreferences(hd_prefs, {}, true);
+        const auto hd_1440 = render_to_buf(1440, 1080);
+        Check(renderer.UsingHdArtwork(), "HD mode did not activate GPU homography pipeline");
+        Check(classic_1440 != hd_1440, "HD rendered frame did not differ from Classic bitmap frame");
+
+        // Free scaling to 2560x1440 + simulated device loss recovery in HD mode
+        const auto hd_2k = render_to_buf(2560, 1440);
+        Check(renderer.UsingHdArtwork() && !hd_2k.empty(), "HD 2560x1440 rendering failed");
+        renderer.SimulateDeviceLoss();
+        const auto hd_2k_recovered = render_to_buf(2560, 1440);
+        Check(renderer.UsingHdArtwork() && hd_2k == hd_2k_recovered, "HD pipeline did not recover deterministically after device loss");
+        (void) parent;
+    }
 }
 int main(int argc, char **argv) {
     HWND parent = nullptr;
@@ -888,9 +998,10 @@ int main(int argc, char **argv) {
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
         LobbyPresentationCheck::Run(parent, argv[1]);
         RunTextTableChecks(parent, argv[1]);
+        HdArtworkAndScalingCheck(parent, argv[1]);
         DestroyWindow(parent); parent = nullptr;
         Gdiplus::GdiplusShutdown(gdiplus);
-        std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation and recovery\n";
+        std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation, HD SVG homography, and recovery\n";
         return 0;
     } catch (const std::exception &error) {
         if (parent) DestroyWindow(parent);

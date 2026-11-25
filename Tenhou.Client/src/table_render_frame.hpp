@@ -26,7 +26,7 @@ namespace tenhou {
         bool pressed = false;
         bool focused = false;
         TableActionButtonStyle style = TableActionButtonStyle::Sprite440;
-        std::wstring label;
+        std::string label;
     };
 
     // Pure C++ frame description consumed identically by GdiTableRenderer and D2DTableRenderer.

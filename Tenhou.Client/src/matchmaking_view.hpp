@@ -18,6 +18,7 @@ namespace tenhou {
 
         void Capture(HDC dc);
         void ConfigureArtwork(const std::filesystem::path &directory);
+        void SetHdArtwork(bool enabled);
 
         void Reset();
 
@@ -42,7 +43,7 @@ namespace tenhou {
         HFONT font_ = nullptr;
         std::map<int, HWND> controls_;
         MatchmakingDraft draft_;
-        bool custom_ = false, editing_ = false;
+        bool custom_ = false, editing_ = false, hd_artwork_ = false;
         std::wstring status_;
         std::function<void(const std::string &)> log_;
         Request request_;

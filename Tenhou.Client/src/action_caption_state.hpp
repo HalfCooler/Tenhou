@@ -35,7 +35,7 @@ namespace tenhou {
         unsigned resource = 0, tick = 0;
         int who = 0;
         float scale = 1, alpha = 1;
-        std::wstring text;
+        std::string text;
         std::optional<TextKey> key;
     };
 
@@ -49,12 +49,12 @@ namespace tenhou {
             frame.resource = definition->origin_id;
             frame.who = who;
             frame.key = key;
-            frame.text = definition->label;
+            frame.text = std::string(definition->label);
             items_.push_back(std::move(frame));
             return true;
         }
 
-        bool AcceptResource(unsigned id, int who, const std::wstring &text = L"") {
+        bool AcceptResource(unsigned id, int who, const std::string &text = "") {
             if (const auto *definition = FindTextByOrigin(id)) return AcceptText(definition->key, who);
             if (id || text.empty() || who < 0 || who > 3) return false;
             ActionCaptionFrame frame;

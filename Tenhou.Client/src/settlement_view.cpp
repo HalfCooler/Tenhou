@@ -51,8 +51,21 @@ namespace tenhou {
     }
 
     SettlementView::~SettlementView() {
+        InvalidateBackdrop(true);
         if (IsWindow(window_)) DestroyWindow(window_);
         if (font_) DeleteObject(font_);
+    }
+
+    void SettlementView::InvalidateBackdrop(bool release) {
+        backdrop_valid_ = false;
+        if (!release) return;
+        if (backdrop_old_ && backdrop_dc_) SelectObject(backdrop_dc_, backdrop_old_);
+        if (backdrop_bitmap_) DeleteObject(backdrop_bitmap_);
+        if (backdrop_dc_) DeleteDC(backdrop_dc_);
+        backdrop_dc_ = nullptr;
+        backdrop_bitmap_ = nullptr;
+        backdrop_old_ = nullptr;
+        backdrop_w_ = backdrop_h_ = 0;
     }
 
     void SettlementView::ApplyEffects(const SettlementEffects &effects) {
@@ -111,6 +124,7 @@ namespace tenhou {
         artwork_ = {};
         resource_error_.clear();
         artwork_.SetColor(tile_color_);
+        InvalidateBackdrop();
         if (choices_) Select();
         InvalidateRect(window_, nullptr, FALSE);
     }
@@ -121,6 +135,7 @@ namespace tenhou {
             peeking_ = false;
             if (GetCapture() == window_) ReleaseCapture();
         }
+        InvalidateBackdrop(!visible);
         ShowWindow(window_, visible ? SW_SHOW : SW_HIDE);
         const bool host_visible = visible && IsWindowVisible(window_) != FALSE;
         ApplyEffects(sequencer_.SetVisible(visible, GetTickCount64(), host_visible));
@@ -146,6 +161,7 @@ namespace tenhou {
     void SettlementView::Set(const SettlementState &s, const std::array<std::string, 4> &names, bool red) {
         SettlementEffects effects;
         if (!sequencer_.SetState(s, names, red, GetTickCount64(), effects)) return;
+        InvalidateBackdrop();
         artwork_.SetRedTiles(s.red_tiles);
         SendMessageW(choices_, CB_RESETCONTENT, 0, 0);
         for (const auto &r: s.receipts) {
@@ -189,7 +205,10 @@ namespace tenhou {
     void SettlementView::SetContext(int dealer, int honba, int sticks) {
         bool changed = false;
         sequencer_.SetContext(dealer, honba, sticks, changed);
-        if (changed) InvalidateRect(window_, nullptr, FALSE);
+        if (changed) {
+            InvalidateBackdrop();
+            InvalidateRect(window_, nullptr, FALSE);
+        }
     }
 
     SettlementLayout SettlementView::Layout() {
@@ -308,12 +327,49 @@ namespace tenhou {
     void SettlementView::Paint(HDC dc) {
         RECT bounds{};
         GetClientRect(window_, &bounds);
-        const auto brush = CreateSolidBrush(RGB(15, 24, 32));
-        FillRect(dc, &bounds, brush);
-        DeleteObject(brush);
-        // Render a fresh table on every frame. Never sample an already dimmed frame.
+        const int width = bounds.right - bounds.left, height = bounds.bottom - bounds.top;
+        // Render a fresh table when the backdrop is invalidated. Never sample an already dimmed frame.
         try {
-            if (background_painter_) background_painter_(dc, bounds);
+            if (background_painter_ && width > 0 && height > 0) {
+                if (!backdrop_valid_ || backdrop_w_ != width || backdrop_h_ != height || !backdrop_dc_) {
+                    if (backdrop_w_ != width || backdrop_h_ != height || !backdrop_dc_) {
+                        InvalidateBackdrop(true);
+                        BITMAPINFO info{};
+                        info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
+                        backdrop_dc_ = CreateCompatibleDC(dc);
+                        void *pixels = nullptr;
+                        backdrop_bitmap_ = backdrop_dc_
+                                               ? CreateDIBSection(backdrop_dc_, &info, DIB_RGB_COLORS, &pixels, nullptr, 0)
+                                               : nullptr;
+                        if (backdrop_dc_ && backdrop_bitmap_) backdrop_old_ = SelectObject(backdrop_dc_, backdrop_bitmap_);
+                        if (!backdrop_old_ || backdrop_old_ == HGDI_ERROR) {
+                            InvalidateBackdrop(true);
+                        } else {
+                            backdrop_w_ = width;
+                            backdrop_h_ = height;
+                        }
+                    }
+                    if (backdrop_dc_) {
+                        const auto brush = CreateSolidBrush(RGB(15, 24, 32));
+                        FillRect(backdrop_dc_, &bounds, brush);
+                        DeleteObject(brush);
+                        background_painter_(backdrop_dc_, bounds);
+                        backdrop_valid_ = true;
+                    }
+                }
+                if (backdrop_dc_ && backdrop_valid_) {
+                    BitBlt(dc, bounds.left, bounds.top, width, height, backdrop_dc_, 0, 0, SRCCOPY);
+                } else {
+                    const auto brush = CreateSolidBrush(RGB(15, 24, 32));
+                    FillRect(dc, &bounds, brush);
+                    DeleteObject(brush);
+                    background_painter_(dc, bounds);
+                }
+            } else {
+                const auto brush = CreateSolidBrush(RGB(15, 24, 32));
+                FillRect(dc, &bounds, brush);
+                DeleteObject(brush);
+            }
             if (peeking_) return;
             if (!artwork_.width()) artwork_.Load(directory_, canvas_);
             const auto &state = sequencer_.state();
@@ -509,6 +565,7 @@ namespace tenhou {
             }
             if (message == WM_ERASEBKGND) return 1;
             if (message == WM_SIZE) {
+                self->InvalidateBackdrop();
                 self->Arrange();
                 return 0;
             }

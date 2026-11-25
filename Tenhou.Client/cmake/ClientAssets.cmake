@@ -36,7 +36,7 @@ macro(tenhou_asset key path storage resource_id requirement legacy)
         message(FATAL_ERROR "Missing required asset ${key}: ${asset_source}")
     endif ()
     string(APPEND asset_ids "        ${key},\n")
-    string(APPEND asset_entries "        {AssetId::${key}, \"${key}\", L\"${path}\", L\"${legacy}\", ${resource_id}, ${asset_required}},\n")
+    string(APPEND asset_entries "        {AssetId::${key}, \"${key}\", \"${path}\", \"${legacy}\", ${resource_id}, ${asset_required}},\n")
     if (EXISTS "${asset_source}")
         if ("${storage}" STREQUAL "EMBEDDED")
             string(APPEND asset_rc "${resource_id} RCDATA \"${asset_source}\"\n")
@@ -105,7 +105,7 @@ configure_file("${asset_generated_directory}/stage_assets.cmake.in" "${asset_gen
 file(WRITE "${asset_generated_directory}/sprite_assets.hpp.in"
     "// Generated from assets/catalog.cmake.\n#pragma once\n#include \"asset_catalog.hpp\"\nnamespace tenhou {\nstruct SpriteAsset { unsigned id; AssetId asset; };\ninline constexpr SpriteAsset kSpriteAssets[]{\n${sprite_entries}};\n}\n")
 configure_file("${asset_generated_directory}/sprite_assets.hpp.in" "${asset_generated_directory}/sprite_assets.hpp" COPYONLY)
-set(asset_header "// Generated from assets/catalog.cmake. Do not edit.\n#pragma once\n#include <cstddef>\nnamespace tenhou {\n    enum class AssetId {\n${asset_ids}        Count\n    };\n    struct AssetInfo {\n        AssetId id;\n        const char *name;\n        const wchar_t *path;\n        const wchar_t *legacy_filename;\n        unsigned embedded_id;\n        bool required;\n    };\n    inline constexpr AssetInfo kClientAssets[]{\n${asset_entries}    };\n    static_assert(sizeof(kClientAssets) / sizeof(kClientAssets[0]) == static_cast<std::size_t>(AssetId::Count));\n}\n")
+set(asset_header "// Generated from assets/catalog.cmake. Do not edit.\n#pragma once\n#include <cstddef>\nnamespace tenhou {\n    enum class AssetId {\n${asset_ids}        Count\n    };\n    struct AssetInfo {\n        AssetId id;\n        const char *name;\n        const char *path;\n        const char *legacy_filename;\n        unsigned embedded_id;\n        bool required;\n    };\n    inline constexpr AssetInfo kClientAssets[]{\n${asset_entries}    };\n    static_assert(sizeof(kClientAssets) / sizeof(kClientAssets[0]) == static_cast<std::size_t>(AssetId::Count));\n}\n")
 # configure_file preserves timestamps when catalog contents have not changed.
 file(WRITE "${asset_generated_directory}/asset_catalog.hpp.in" "${asset_header}")
 configure_file("${asset_generated_directory}/asset_catalog.hpp.in" "${asset_generated_directory}/asset_catalog.hpp" COPYONLY)

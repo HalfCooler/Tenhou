@@ -14,8 +14,8 @@ namespace tenhou {
         std::vector<int> selected;
         bool selecting = false;
         bool restrict_discards = false;
-        std::wstring countdown;
-        std::wstring hint;
+        std::string countdown;
+        std::string hint;
         std::array<bool, 4> automatic{true, false, false, false};
         int hovered_button = -1;
     };

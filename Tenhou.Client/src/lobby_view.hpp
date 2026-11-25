@@ -70,7 +70,7 @@ namespace tenhou {
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
         void SetQuickAudio(bool mute_effects, bool mute_music);
-        ULONGLONG LastEffectAt() const { return audio_.LastPlayedAt(); }
+        std::uint64_t LastEffectAt() const { return audio_.LastPlayedAt(); }
         StereoLevels MusicLevels() const { return lobby_music_.Levels(); }
 
     private:
@@ -130,11 +130,11 @@ namespace tenhou {
         HFONT font_ = nullptr;
         HFONT exit_font_ = nullptr;
         HWND exit_vote_ = nullptr, exit_vote_text_ = nullptr, exit_yes_ = nullptr, exit_no_ = nullptr;
-        ULONGLONG exit_vote_deadline_ = 0;
+        std::uint64_t exit_vote_deadline_ = 0;
         PaintBuffer paint_buffer_;
         MotionTimer motion_timer_, opening_timer_;
         bool queue_timer_ = false, clock_timer_ = false, automatic_timer_ = false, caption_timer_ = false;
-        std::wstring painted_countdown_;
+        std::string painted_countdown_;
         int painted_hover_ = -1, painted_auto_hover_ = -1;
         SIZE exit_size_{};
         int focused_button_ = -1, keyboard_button_ = -1;
@@ -143,7 +143,7 @@ namespace tenhou {
         std::function<void(const std::string &)> log_;
         ReplayAudio audio_;
         BackgroundMusic lobby_music_;
-        std::wstring lobby_music_key_;
+        std::string lobby_music_key_;
         bool music_preview_ = false, welcome_music_ = false, official_welcome_ = false, third_party_music_ = false;
         std::optional<bool> offline_lobby_music_;
         ReplaySoundBank sounds_;

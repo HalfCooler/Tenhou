@@ -46,7 +46,7 @@ namespace tenhou {
         void SubmitAction(std::uint64_t revision, std::size_t index);
 
         void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0);
-        void SubmitOriginLobby(const std::string &command, const std::wstring &value);
+        void SubmitOriginLobby(const std::string &command, const std::string &value);
 
         void ConfirmMatchStart();
 

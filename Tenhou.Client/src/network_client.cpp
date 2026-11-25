@@ -1,24 +1,32 @@
-// Message-driven IPv4 transport with cancellable DNS for the desktop client.
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-// Winsock must precede windows.h. All callbacks run on the owning UI thread.
+// Independent I/O thread TCP transport (getaddrinfo + non-blocking socket + WSAPoll).
+// Winsock must precede windows.h. All protocol callbacks are marshaled onto the owning thread.
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "network_client.hpp"
+#include "ini_store.hpp"
+#include "monotonic_clock.hpp"
 #include "replay_archive.hpp"
+#include "win32_utf.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
+#include <chrono>
 #include <cmath>
+#include <deque>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 namespace tenhou {
     namespace {
-        constexpr UINT kDns = WM_APP + 31, kSocket = WM_APP + 32, kRead = WM_APP + 33;
+        constexpr UINT kWake = WM_APP + 31;
         constexpr wchar_t kNetworkWindow[] = L"TENHOU_REBUILD_NETWORK";
+        constexpr std::size_t kMaxSendQueueBytes = 131072;
 
         struct TransportFailure : std::runtime_error {
             using std::runtime_error::runtime_error;
@@ -27,7 +35,398 @@ namespace tenhou {
         std::runtime_error SocketError(const char *action, int code = WSAGetLastError()) {
             return std::runtime_error(std::string(action) + " failed; Winsock error=" + std::to_string(code));
         }
-    }
+
+        // Process-wide Winsock lifetime so a detached blocking getaddrinfo call never races WSACleanup.
+        struct WinsockRuntime {
+            WinsockRuntime() {
+                WSADATA data{};
+                const int err = WSAStartup(MAKEWORD(2, 2), &data);
+                if (err) throw SocketError("WSAStartup", err);
+            }
+            ~WinsockRuntime() { WSACleanup(); }
+        };
+
+        void EnsureWinsock() {
+            static WinsockRuntime runtime;
+        }
+
+        bool IsLoopbackAddress(const sockaddr *addr) {
+            if (!addr) return false;
+            if (addr->sa_family == AF_INET) {
+                const auto *in4 = reinterpret_cast<const sockaddr_in *>(addr);
+                return (ntohl(in4->sin_addr.S_un.S_addr) >> 24) == 127;
+            }
+            if (addr->sa_family == AF_INET6) {
+                const auto *in6 = reinterpret_cast<const sockaddr_in6 *>(addr);
+                return IN6_IS_ADDR_LOOPBACK(&in6->sin6_addr) != 0;
+            }
+            return false;
+        }
+
+        SOCKET CreateWakeSocket() {
+            SOCKET sock = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (sock == INVALID_SOCKET) return INVALID_SOCKET;
+            u_long nonblock = 1;
+            ioctlsocket(sock, FIONBIO, &nonblock);
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            addr.sin_port = 0;
+            if (bind(sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+                closesocket(sock);
+                return INVALID_SOCKET;
+            }
+            int len = sizeof(addr);
+            if (getsockname(sock, reinterpret_cast<sockaddr *>(&addr), &len) == SOCKET_ERROR ||
+                ::connect(sock, reinterpret_cast<const sockaddr *>(&addr), len) == SOCKET_ERROR) {
+                closesocket(sock);
+                return INVALID_SOCKET;
+            }
+            return sock;
+        }
+
+        struct WorkerEvent {
+            enum class Kind { Connecting, Connected, Bytes, SendDrained, Closed, TransportError, FatalError, Tick };
+            Kind kind = Kind::Tick;
+            std::uint64_t generation = 0;
+            std::string data;
+        };
+
+        struct NotifyHub {
+            std::mutex mutex;
+            HWND window = nullptr;
+            bool wake_posted = false;
+            std::deque<WorkerEvent> events;
+
+            void Post(WorkerEvent ev) {
+                HWND target = nullptr;
+                {
+                    std::lock_guard lock(mutex);
+                    if (!window) return;
+                    if (ev.kind == WorkerEvent::Kind::Tick && !events.empty() &&
+                        events.back().kind == WorkerEvent::Kind::Tick &&
+                        events.back().generation == ev.generation) {
+                        return;
+                    }
+                    events.push_back(std::move(ev));
+                    if (!wake_posted) {
+                        wake_posted = true;
+                        target = window;
+                    }
+                }
+                if (target) PostMessageW(target, kWake, 0, 0);
+            }
+
+            std::deque<WorkerEvent> Drain() {
+                std::lock_guard lock(mutex);
+                wake_posted = false;
+                std::deque<WorkerEvent> out;
+                out.swap(events);
+                return out;
+            }
+
+            void DetachWindow() {
+                std::lock_guard lock(mutex);
+                window = nullptr;
+                events.clear();
+                wake_posted = false;
+            }
+        };
+
+        struct Worker {
+            std::uint64_t generation = 0;
+            std::shared_ptr<NotifyHub> hub;
+            std::atomic<bool> stop{false};
+            std::atomic<bool> in_dns{false};
+
+            std::mutex out_mutex;
+            std::string outgoing;
+            std::size_t sent_offset = 0;
+            SOCKET wake_sock = INVALID_SOCKET;
+            std::thread thread;
+
+            Worker(std::uint64_t gen, std::shared_ptr<NotifyHub> h)
+                : generation(gen), hub(std::move(h)), wake_sock(CreateWakeSocket()) {}
+
+            ~Worker() { Stop(); }
+
+            void Wake() {
+                SOCKET s = INVALID_SOCKET;
+                {
+                    std::lock_guard lock(out_mutex);
+                    s = wake_sock;
+                }
+                if (s != INVALID_SOCKET) {
+                    const char byte = 'w';
+                    ::send(s, &byte, 1, 0);
+                }
+            }
+
+            void Enqueue(const std::string &wire) {
+                {
+                    std::lock_guard lock(out_mutex);
+                    if (outgoing.size() - sent_offset + wire.size() + 1 > kMaxSendQueueBytes)
+                        throw std::runtime_error("Network send queue exceeds limit");
+                    if (sent_offset) {
+                        outgoing.erase(0, sent_offset);
+                        sent_offset = 0;
+                    }
+                    outgoing += wire;
+                    outgoing += '\0';
+                }
+                Wake();
+            }
+
+            void Stop() noexcept {
+                stop.store(true, std::memory_order_release);
+                Wake();
+                if (thread.joinable()) {
+                    if (in_dns.load(std::memory_order_acquire)) thread.detach();
+                    else thread.join();
+                }
+                std::lock_guard lock(out_mutex);
+                if (wake_sock != INVALID_SOCKET) {
+                    closesocket(wake_sock);
+                    wake_sock = INVALID_SOCKET;
+                }
+            }
+        };
+
+        void DrainWake(SOCKET wake_sock) {
+            if (wake_sock == INVALID_SOCKET) return;
+            char sink[64];
+            while (::recv(wake_sock, sink, sizeof(sink), 0) > 0) {}
+        }
+
+        void RunTimerOnlyWorker(std::shared_ptr<Worker> worker) {
+            while (!worker->stop.load(std::memory_order_acquire)) {
+                if (worker->wake_sock != INVALID_SOCKET) {
+                    WSAPOLLFD pfd{};
+                    pfd.fd = worker->wake_sock;
+                    pfd.events = POLLIN;
+                    WSAPoll(&pfd, 1, 50);
+                    if (pfd.revents & POLLIN) DrainWake(worker->wake_sock);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
+                if (!worker->stop.load(std::memory_order_acquire)) {
+                    worker->hub->Post({WorkerEvent::Kind::Tick, worker->generation, {}});
+                }
+            }
+        }
+
+        void RunTcpWorker(std::shared_ptr<Worker> worker, std::string host, unsigned port, bool require_loopback) {
+            SOCKET sock = INVALID_SOCKET;
+            auto cleanup = [&]() noexcept {
+                if (sock != INVALID_SOCKET) {
+                    shutdown(sock, SD_BOTH);
+                    closesocket(sock);
+                    sock = INVALID_SOCKET;
+                }
+            };
+            try {
+                // 1. Resolve host via getaddrinfo (supports IPv4 & IPv6).
+                addrinfo hints{};
+                hints.ai_family = AF_UNSPEC;
+                hints.ai_socktype = SOCK_STREAM;
+                hints.ai_protocol = IPPROTO_TCP;
+                addrinfo *results = nullptr;
+                const std::string port_str = std::to_string(port);
+
+                worker->in_dns.store(true, std::memory_order_release);
+                const int gai = getaddrinfo(host.c_str(), port_str.c_str(), &hints, &results);
+                worker->in_dns.store(false, std::memory_order_release);
+                if (worker->stop.load(std::memory_order_acquire)) {
+                    if (results) freeaddrinfo(results);
+                    return;
+                }
+                if (gai != 0 || !results) {
+                    if (results) freeaddrinfo(results);
+                    throw TransportFailure("DNS failed; getaddrinfo error=" + std::to_string(gai));
+                }
+
+                // Prefer IPv4 when multiple records exist, matching legacy server expectations.
+                addrinfo *chosen = nullptr;
+                for (auto *it = results; it; it = it->ai_next) {
+                    if (it->ai_family == AF_INET) {
+                        chosen = it;
+                        break;
+                    }
+                }
+                if (!chosen) chosen = results;
+                if (require_loopback && !IsLoopbackAddress(chosen->ai_addr)) {
+                    freeaddrinfo(results);
+                    throw std::runtime_error("Interactive DNS resolved outside loopback");
+                }
+
+                sock = ::socket(chosen->ai_family, chosen->ai_socktype, chosen->ai_protocol);
+                if (sock == INVALID_SOCKET) {
+                    const int err = WSAGetLastError();
+                    freeaddrinfo(results);
+                    throw SocketError("socket", err);
+                }
+                u_long nonblock = 1;
+                ioctlsocket(sock, FIONBIO, &nonblock);
+                const BOOL nodelay = TRUE;
+                setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char *>(&nodelay), sizeof(nodelay));
+
+                worker->hub->Post({WorkerEvent::Kind::Connecting, worker->generation, {}});
+                const int cr = ::connect(sock, chosen->ai_addr, static_cast<int>(chosen->ai_addrlen));
+                const int connect_err = cr == SOCKET_ERROR ? WSAGetLastError() : 0;
+                freeaddrinfo(results);
+
+                if (cr == SOCKET_ERROR && connect_err != WSAEWOULDBLOCK) {
+                    throw TransportFailure(SocketError("connect", connect_err).what());
+                }
+
+                // 2. Wait for non-blocking TCP connect completion via WSAPoll.
+                if (cr == SOCKET_ERROR) {
+                    while (!worker->stop.load(std::memory_order_acquire)) {
+                        WSAPOLLFD pfds[2]{};
+                        ULONG count = 1;
+                        pfds[0].fd = sock;
+                        pfds[0].events = POLLOUT;
+                        if (worker->wake_sock != INVALID_SOCKET) {
+                            pfds[1].fd = worker->wake_sock;
+                            pfds[1].events = POLLIN;
+                            count = 2;
+                        }
+                        const int pr = WSAPoll(pfds, count, 50);
+                        if (pr == SOCKET_ERROR) throw TransportFailure(SocketError("WSAPoll connect").what());
+                        if (count == 2 && (pfds[1].revents & POLLIN)) DrainWake(worker->wake_sock);
+                        if (worker->stop.load(std::memory_order_acquire)) {
+                            cleanup();
+                            return;
+                        }
+                        if (pfds[0].revents & (POLLOUT | POLLERR | POLLHUP)) {
+                            int so_error = 0;
+                            int opt_len = sizeof(so_error);
+                            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char *>(&so_error), &opt_len) ==
+                                SOCKET_ERROR) {
+                                throw TransportFailure(SocketError("getsockopt SO_ERROR").what());
+                            }
+                            if (so_error != 0) throw TransportFailure(SocketError("connect", so_error).what());
+                            break;
+                        }
+                        worker->hub->Post({WorkerEvent::Kind::Tick, worker->generation, {}});
+                    }
+                }
+                if (worker->stop.load(std::memory_order_acquire)) {
+                    cleanup();
+                    return;
+                }
+                worker->hub->Post({WorkerEvent::Kind::Connected, worker->generation, {}});
+
+                // 3. Steady-state non-blocking WSAPoll I/O loop.
+                std::uint64_t last_tick = MonotonicMs();
+                std::array<char, 8192> recv_buf{};
+                while (!worker->stop.load(std::memory_order_acquire)) {
+                    bool has_outgoing = false;
+                    {
+                        std::lock_guard lock(worker->out_mutex);
+                        has_outgoing = worker->sent_offset < worker->outgoing.size();
+                    }
+                    WSAPOLLFD pfds[2]{};
+                    ULONG count = 1;
+                    pfds[0].fd = sock;
+                    pfds[0].events = static_cast<SHORT>(POLLIN | (has_outgoing ? POLLOUT : 0));
+                    if (worker->wake_sock != INVALID_SOCKET) {
+                        pfds[1].fd = worker->wake_sock;
+                        pfds[1].events = POLLIN;
+                        count = 2;
+                    }
+                    const int pr = WSAPoll(pfds, count, 50);
+                    if (pr == SOCKET_ERROR) throw TransportFailure(SocketError("WSAPoll").what());
+                    if (count == 2 && (pfds[1].revents & POLLIN)) DrainWake(worker->wake_sock);
+                    if (worker->stop.load(std::memory_order_acquire)) break;
+
+                    // Flush outgoing bytes.
+                    if (has_outgoing && (pfds[0].revents & POLLOUT || pr >= 0)) {
+                        bool drained = false;
+                        while (!worker->stop.load(std::memory_order_acquire)) {
+                            std::string chunk;
+                            {
+                                std::lock_guard lock(worker->out_mutex);
+                                if (worker->sent_offset >= worker->outgoing.size()) {
+                                    worker->outgoing.clear();
+                                    worker->sent_offset = 0;
+                                    drained = true;
+                                    break;
+                                }
+                                const std::size_t rem = worker->outgoing.size() - worker->sent_offset;
+                                chunk.assign(worker->outgoing.data() + worker->sent_offset,
+                                             std::min<std::size_t>(rem, 16384));
+                            }
+                            const int sent = ::send(sock, chunk.data(), static_cast<int>(chunk.size()), 0);
+                            if (sent == SOCKET_ERROR) {
+                                const int err = WSAGetLastError();
+                                if (err == WSAEWOULDBLOCK) break;
+                                throw TransportFailure(SocketError("send", err).what());
+                            }
+                            if (sent == 0) throw std::runtime_error("Network send made no progress");
+                            {
+                                std::lock_guard lock(worker->out_mutex);
+                                worker->sent_offset += static_cast<std::size_t>(sent);
+                                if (worker->sent_offset >= worker->outgoing.size()) {
+                                    worker->outgoing.clear();
+                                    worker->sent_offset = 0;
+                                    drained = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (drained) {
+                            worker->hub->Post({WorkerEvent::Kind::SendDrained, worker->generation, {}});
+                        }
+                    }
+
+                    // Drain incoming bytes.
+                    if (pfds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+                        std::string batch;
+                        bool remote_closed = false;
+                        for (int iter = 0; iter < 8; ++iter) {
+                            const int n = ::recv(sock, recv_buf.data(), static_cast<int>(recv_buf.size()), 0);
+                            if (n > 0) {
+                                batch.append(recv_buf.data(), static_cast<std::size_t>(n));
+                                if (n < static_cast<int>(recv_buf.size())) break;
+                            } else if (n == 0) {
+                                remote_closed = true;
+                                break;
+                            } else {
+                                const int err = WSAGetLastError();
+                                if (err == WSAEWOULDBLOCK) break;
+                                if (!batch.empty()) {
+                                    worker->hub->Post({WorkerEvent::Kind::Bytes, worker->generation, std::move(batch)});
+                                    batch.clear();
+                                }
+                                throw TransportFailure(SocketError("recv", err).what());
+                            }
+                        }
+                        if (!batch.empty()) {
+                            worker->hub->Post({WorkerEvent::Kind::Bytes, worker->generation, std::move(batch)});
+                        }
+                        if (remote_closed) {
+                            worker->hub->Post({WorkerEvent::Kind::Closed, worker->generation, {}});
+                            break;
+                        }
+                    }
+
+                    const auto now = MonotonicMs();
+                    if (now - last_tick >= 50) {
+                        last_tick = now;
+                        worker->hub->Post({WorkerEvent::Kind::Tick, worker->generation, {}});
+                    }
+                }
+            } catch (const TransportFailure &error) {
+                if (!worker->stop.load(std::memory_order_acquire))
+                    worker->hub->Post({WorkerEvent::Kind::TransportError, worker->generation, error.what()});
+            } catch (const std::exception &error) {
+                if (!worker->stop.load(std::memory_order_acquire))
+                    worker->hub->Post({WorkerEvent::Kind::FatalError, worker->generation, error.what()});
+            }
+            cleanup();
+        }
+    } // namespace
 
     struct NetworkClient::Impl {
         std::string native_token;
@@ -39,43 +438,39 @@ namespace tenhou {
         ConnectionOptions options;
         NetworkFramer framer;
         ReplayArchive archive;
-        HWND window = nullptr;
-        SOCKET socket = INVALID_SOCKET;
-        HANDLE dns = nullptr;
-        std::array<char, MAXGETHOSTSTRUCT> host{};
-        std::string outgoing;
-        std::size_t sent_offset = 0;
+
+        HWND notify_window = nullptr;
+        std::shared_ptr<NotifyHub> hub;
+        std::shared_ptr<Worker> worker;
+        std::uint64_t generation = 0;
+        bool has_pending_send = false;
+
         std::uint64_t revision_floor = 0;
         std::uint64_t server_error_sequence = 0;
         std::optional<LobbySnapshot> reconnect_view;
-        ULONGLONG retry_at = 0, retry_until = 0;
+        std::uint64_t retry_at = 0, retry_until = 0;
         unsigned retry_delay = 1000;
         bool resuming = false;
         bool local_prepare = false;
-        ULONGLONG action_start = 0;
-        ULONGLONG native_request_start = 0;
-        ULONGLONG recovery_start = 0;
-        ULONGLONG phase_start = 0, last_receive = 0, last_heartbeat = 0, frame_start = 0, send_start = 0;
+        std::uint64_t action_start = 0;
+        std::uint64_t native_request_start = 0;
+        std::uint64_t recovery_start = 0;
+        std::uint64_t phase_start = 0, last_receive = 0, last_heartbeat = 0, frame_start = 0, send_start = 0;
 
         Impl(Observer observer, std::function<void(const std::string &)> logger, EventObserver event)
-            : changed(std::move(observer)), accepted_event(std::move(event)), log(std::move(logger)) {
-            WSADATA data{};
-            const int error = WSAStartup(MAKEWORD(2, 2), &data);
-            if (error) throw SocketError("WSAStartup", error);
+            : changed(std::move(observer)), accepted_event(std::move(event)), log(std::move(logger)),
+              hub(std::make_shared<NotifyHub>()) {
+            EnsureWinsock();
             WNDCLASSEXW wc{sizeof(wc)};
             wc.lpfnWndProc = Procedure;
             wc.hInstance = GetModuleHandleW(nullptr);
             wc.lpszClassName = kNetworkWindow;
             if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-                WSACleanup();
-                throw std::runtime_error("Cannot register network message window");
+                throw std::runtime_error("Cannot register network wake window");
             }
         }
 
-        ~Impl() {
-            Close();
-            WSACleanup();
-        }
+        ~Impl() { Close(); }
 
         bool Active() const {
             const auto phase = session.snapshot.phase;
@@ -88,29 +483,23 @@ namespace tenhou {
 
         void Phase(LobbyPhase phase) {
             session.snapshot.phase = phase;
-            phase_start = GetTickCount64();
+            phase_start = MonotonicMs();
             log(std::string("NETWORK state=") + LobbyPhaseName(phase));
             Notify();
         }
 
         void Close() noexcept {
-            if (dns) {
-                WSACancelAsyncRequest(dns);
-                dns = nullptr;
+            ++generation;
+            if (worker) {
+                worker->Stop();
+                worker.reset();
             }
-            if (socket != INVALID_SOCKET) {
-                WSAAsyncSelect(socket, window, 0, 0);
-                shutdown(socket, SD_BOTH);
-                closesocket(socket);
-                socket = INVALID_SOCKET;
+            if (hub) hub->DetachWindow();
+            if (notify_window) {
+                DestroyWindow(notify_window);
+                notify_window = nullptr;
             }
-            if (window) {
-                KillTimer(window, 1);
-                DestroyWindow(window);
-                window = nullptr;
-            }
-            outgoing.clear();
-            sent_offset = 0;
+            has_pending_send = false;
             framer = {};
             frame_start = 0;
             send_start = 0;
@@ -119,15 +508,18 @@ namespace tenhou {
             native_request_start = 0;
         }
 
-        void OpenEventWindow() {
-            window = CreateWindowExW(0, kNetworkWindow, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
-                                     GetModuleHandleW(nullptr), this);
-            if (!window || !SetTimer(window, 1, 50, nullptr))
-                throw std::runtime_error("Cannot create network event window/timer");
+        void OpenNotifyWindow() {
+            notify_window = CreateWindowExW(0, kNetworkWindow, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                                            GetModuleHandleW(nullptr), this);
+            if (!notify_window) throw std::runtime_error("Cannot create network wake window");
+            std::lock_guard lock(hub->mutex);
+            hub->window = notify_window;
+            hub->events.clear();
+            hub->wake_posted = false;
         }
 
         bool ScheduleReconnect() {
-            const auto now = GetTickCount64();
+            const auto now = MonotonicMs();
             if (!reconnect_view) {
                 if ((!session.snapshot.game.started && !session.snapshot.variant_active) ||
                     session.snapshot.game.complete) return false;
@@ -143,8 +535,14 @@ namespace tenhou {
             Close();
             retry_at = now + retry_delay;
             retry_delay = std::min(2 * retry_delay, 5000u);
-            try { OpenEventWindow(); }
-            catch (...) { return false; }
+            try {
+                OpenNotifyWindow();
+                auto w = std::make_shared<Worker>(generation, hub);
+                w->thread = std::thread(RunTimerOnlyWorker, w);
+                worker = std::move(w);
+            } catch (...) {
+                return false;
+            }
             Notify();
             return true;
         }
@@ -217,9 +615,10 @@ namespace tenhou {
             session.native_nickname = options.nickname;
             session.native_register = options.register_account && !resume;
             if (options.official) {
-                const auto type = GetPrivateProfileIntW(L"REBUILD", L"ProfileMonthly",
-                    kDefaultMonthlyProfile, options.config_file.c_str());
-                if (ValidMonthlyProfile(type)) session.preferred_monthly_profile = type;
+                const auto type = ReadIniInt(options.config_file, "REBUILD", "ProfileMonthly",
+                                             static_cast<int>(kDefaultMonthlyProfile));
+                if (ValidMonthlyProfile(static_cast<unsigned>(type)))
+                    session.preferred_monthly_profile = static_cast<unsigned>(type);
             }
             try {
                 if (options.native_service && native_token.empty() && !options.session_file.empty() &&
@@ -232,10 +631,8 @@ namespace tenhou {
                 }
                 if (options.official && !resume && !options.session_file.empty()) {
                     const bool same_process = !official_game_id.empty();
-                    wchar_t value[81]{};
-                    GetPrivateProfileStringW(L"OfficialRecovery", options.session_file.filename().c_str(), L"",
-                                             value, ARRAYSIZE(value), options.config_file.c_str());
-                    official_game_id = NetworkUtf8(value);
+                    official_game_id = ReadIniString(options.config_file, "OfficialRecovery",
+                                                     PathToUtf8(options.session_file.filename()));
                     if (!ValidGameId(official_game_id)) official_game_id.clear();
                     resuming = resume = !official_game_id.empty();
                     session.resume_connection = resume;
@@ -249,32 +646,31 @@ namespace tenhou {
                 if (options.match_games && (!options.interactive_games || options.observe_games))
                     throw std::runtime_error(
                         "Matchmaking requires local interactive mode without read-only observation");
-                if (options.matching_ms < 100 || options.matching_ms > 600000) throw std::runtime_error(
-                    "Invalid matchmaking timeout");
-                // Validate before creating a DNS request or socket.
+                if (options.matching_ms < 100 || options.matching_ms > 600000)
+                    throw std::runtime_error("Invalid matchmaking timeout");
+                // Validate before spawning the I/O thread.
                 LobbySession validation;
                 validation.require_native = options.native_service;
                 (void) validation.Connected(options.identity, options.gender);
                 if (options.host.empty() || options.host.size() > 253 || options.host.front() == '-' ||
                     !std::all_of(options.host.begin(), options.host.end(), [](unsigned char c) {
                         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
-                               c == '.';
+                               c == '.' || c == ':';
                     }) || options.port < 1 || options.port > 65535)
-                    throw std::runtime_error("Invalid IPv4 host or port (1..65535)");
-                if (options.handshake_ms < 100 || options.handshake_ms > 60000 || options.idle_ms < 100 || options.
-                    idle_ms > 600000 ||
-                    options.heartbeat_ms < 50 || options.heartbeat_ms > 60000)
+                    throw std::runtime_error("Invalid host or port (1..65535)");
+                if (options.handshake_ms < 100 || options.handshake_ms > 60000 || options.idle_ms < 100 ||
+                    options.idle_ms > 600000 || options.heartbeat_ms < 50 || options.heartbeat_ms > 60000)
                     throw std::runtime_error("Invalid connection timing");
-                OpenEventWindow();
-                last_receive = last_heartbeat = GetTickCount64();
+
+                OpenNotifyWindow();
+                last_receive = last_heartbeat = MonotonicMs();
                 Phase(LobbyPhase::Resolving);
-                IN_ADDR address{};
-                if (InetPtonA(AF_INET, options.host.c_str(), &address) == 1) BeginTcp(address);
-                else {
-                    dns = WSAAsyncGetHostByName(window, kDns, options.host.c_str(), host.data(),
-                                                static_cast<int>(host.size()));
-                    if (!dns) throw TransportFailure(SocketError("DNS request").what());
-                }
+
+                const bool require_loopback = !options.native_service && !options.official &&
+                                              (options.interactive_games || options.recover_games);
+                auto w = std::make_shared<Worker>(generation, hub);
+                w->thread = std::thread(RunTcpWorker, w, options.host, options.port, require_loopback);
+                worker = std::move(w);
             } catch (const TransportFailure &error) { Error(error.what(), true); }
             catch (const std::exception &error) { Error(error.what()); }
         }
@@ -290,10 +686,13 @@ namespace tenhou {
             if (!value.empty() && !ValidGameId(value)) return;
             official_game_id = std::move(value);
             if (options.session_file.empty()) return;
-            const auto key = options.session_file.filename().wstring();
-            if (!WritePrivateProfileStringW(L"OfficialRecovery", key.c_str(),
-                    official_game_id.empty() ? nullptr : NetworkWide(official_game_id).c_str(), options.config_file.c_str()))
+            const auto key = PathToUtf8(options.session_file.filename());
+            try {
+                if (official_game_id.empty()) WriteIniString(options.config_file, "OfficialRecovery", key, std::nullopt);
+                else WriteIniString(options.config_file, "OfficialRecovery", key, official_game_id);
+            } catch (...) {
                 log("NETWORK unable to save official recovery hint");
+            }
         }
 
         void AccumulatePrivateProfile(const NetworkMessage &message) {
@@ -325,226 +724,176 @@ namespace tenhou {
             };
             std::array<double, 11> delta{};
             if (parse11(add_it->second, delta) == 0) return;
-            const wchar_t *key = (session.snapshot.game.type & 16) ? L"PFPV3" : L"PFPV4";
-            wchar_t existing[256]{};
-            GetPrivateProfileStringW(L"STATUS", key, L"", existing, ARRAYSIZE(existing), options.config_file.c_str());
+            const std::string_view key = (session.snapshot.game.type & 16) ? "PFPV3" : "PFPV4";
+            const auto existing = ReadIniString(options.config_file, "STATUS", key);
             std::array<double, 11> total{};
-            parse11(NetworkUtf8(existing), total);
+            parse11(existing, total);
             for (std::size_t i = 0; i < total.size(); ++i) total[i] += delta[i];
             std::ostringstream out;
             out.imbue(std::locale::classic());
             out << std::fixed << std::setprecision(1) << total[0];
             for (std::size_t i = 1; i < total.size(); ++i) out << ',' << static_cast<long long>(std::llround(total[i]));
-            WritePrivateProfileStringW(L"STATUS", key, NetworkWide(out.str()).c_str(), options.config_file.c_str());
+            WriteIniString(options.config_file, "STATUS", key, out.str());
         }
 
         void Reconnect(const ConnectionOptions &request) {
-            if (Active() || !session.snapshot.reconnect_available) throw std::runtime_error(
-                "No recoverable disconnected game");
+            if (Active() || !session.snapshot.reconnect_available)
+                throw std::runtime_error("No recoverable disconnected game");
             if (!request.recover_games || request.host != options.host || request.port != options.port ||
-                request.gender != options.gender || request.observe_games != options.observe_games || request.
-                interactive_games != options.interactive_games || request.match_games != options.match_games ||
+                request.gender != options.gender || request.observe_games != options.observe_games ||
+                request.interactive_games != options.interactive_games || request.match_games != options.match_games ||
                 request.origin_lobby != options.origin_lobby)
                 throw std::runtime_error("Reconnect requires the same server and game mode");
             Connect(request, true);
         }
 
-        void BeginTcp(IN_ADDR address) {
-            if (!options.native_service && !options.official && (options.interactive_games || options.recover_games) &&
-                (ntohl(address.S_un.S_addr) >> 24) != 127)
-                throw std::runtime_error("Interactive DNS resolved outside loopback");
-            socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            if (socket == INVALID_SOCKET) throw SocketError("socket");
-            if (WSAAsyncSelect(socket, window, kSocket, FD_CONNECT | FD_READ | FD_WRITE | FD_CLOSE) == SOCKET_ERROR)
-                throw SocketError("WSAAsyncSelect");
-            sockaddr_in endpoint{};
-            endpoint.sin_family = AF_INET;
-            endpoint.sin_addr = address;
-            endpoint.sin_port = htons(static_cast<u_short>(options.port));
-            Phase(LobbyPhase::Connecting);
-            const int result = ::connect(socket, reinterpret_cast<sockaddr *>(&endpoint), sizeof(endpoint));
-            if (result == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK)
-                throw TransportFailure(SocketError("connect").what());
-            if (result == 0) Connected();
-        }
-
         void Connected() {
             if (session.snapshot.phase != LobbyPhase::Connecting) return;
             const auto messages = session.Connected(options.identity, options.gender, revision_floor);
-            recovery_start = resuming ? GetTickCount64() : 0;
+            recovery_start = resuming ? MonotonicMs() : 0;
             if (!options.auto_reconnect && !options.official) options.identity.clear();
-            last_receive = last_heartbeat = GetTickCount64();
+            last_receive = last_heartbeat = MonotonicMs();
             Phase(LobbyPhase::AwaitHelo);
             // Origin tenhou.exe.c:62067 transmits <Z /> immediately on FD_CONNECT before <HELO .../>.
             if (options.official) Queue("<Z />");
-            for (const auto &message: messages) Queue(message);
+            for (const auto &message : messages) Queue(message);
         }
 
         void Queue(const std::string &message) {
+            if (!worker) throw TransportFailure("Cannot send without active connection");
             std::string wire = message;
             const auto tag = ParseNetworkMessage(message).tag;
             if (session.snapshot.native_service && (tag == "D" || tag == "N" || tag == "REACH"))
                 wire.insert(wire.rfind('/'), " window=\"" + std::to_string(session.snapshot.native_window) + "\" ");
-            if (outgoing.size() - sent_offset + wire.size() + 1 > 131072) throw std::runtime_error(
-                "Network send queue exceeds limit");
-            if (sent_offset) {
-                outgoing.erase(0, sent_offset);
-                sent_offset = 0;
+            if (!has_pending_send) {
+                send_start = MonotonicMs();
+                has_pending_send = true;
             }
-            if (outgoing.empty()) send_start = GetTickCount64();
-            outgoing += wire;
-            outgoing += '\0';
+            worker->Enqueue(wire);
             ++session.snapshot.sent;
-            log("NETWORK send tag=" + ParseNetworkMessage(message).tag);
-            Flush();
+            log("NETWORK send tag=" + tag);
         }
 
-        void Flush() {
-            while (sent_offset < outgoing.size()) {
-                const int count = send(socket, outgoing.data() + sent_offset,
-                                       static_cast<int>(outgoing.size() - sent_offset), 0);
-                if (count == SOCKET_ERROR) {
-                    if (WSAGetLastError() == WSAEWOULDBLOCK) return;
-                    throw TransportFailure(SocketError("send").what());
-                }
-                if (!count) throw std::runtime_error("Network send made no progress");
-                sent_offset += static_cast<std::size_t>(count);
-            }
-            outgoing.clear();
-            sent_offset = 0;
-            send_start = 0;
-        }
+        void ProcessBytes(const std::string &bytes, std::uint64_t ev_gen) {
+            const bool was_pending = framer.pending();
+            const auto messages = framer.Feed(bytes.data(), bytes.size());
+            if (framer.pending()) {
+                if (!was_pending || !messages.empty()) frame_start = MonotonicMs();
+            } else frame_start = 0;
 
-        void Read() {
-            // Limit work per message dispatch so a busy server cannot monopolize the UI.
-            std::array < char, 4096 > bytes{};
-            for (int batch = 0; batch < 16; ++batch) {
-                const int count = recv(socket, bytes.data(), static_cast<int>(bytes.size()), 0);
-                if (count == SOCKET_ERROR) {
-                    if (WSAGetLastError() == WSAEWOULDBLOCK) return;
-                    throw TransportFailure(SocketError("recv").what());
+            bool close_after_owari = false;
+            for (const auto &text : messages) {
+                const auto message = ParseNetworkMessage(text, options.official);
+                const auto old_phase = session.snapshot.phase;
+                const auto old_err = session.snapshot.server_error_receipt;
+                const auto replies = session.Receive(message);
+                if (session.snapshot.server_error_receipt != old_err)
+                    session.snapshot.server_error_receipt = ++server_error_sequence;
+                if (options.official && message.tag == "HELO") {
+                    if (!official_game_id.empty()) SaveOfficialGameId({});
+                    resuming = false;
+                    recovery_start = 0;
+                    reconnect_view.reset();
                 }
-                if (!count) {
-                    if (framer.pending()) throw TransportFailure("Connection closed with truncated message");
-                    throw TransportFailure("Server closed connection");
+                if (options.official && message.tag == "GO" && session.snapshot.game.started) {
+                    if (const auto id = message.attributes.find("gpid"); id != message.attributes.end())
+                        SaveOfficialGameId(id->second);
                 }
-                const bool was_pending = framer.pending();
-                const auto messages = framer.Feed(bytes.data(), static_cast<std::size_t>(count));
-                if (framer.pending()) {
-                    if (!was_pending || !messages.empty()) frame_start = GetTickCount64();
-                } else frame_start = 0;
-                bool close_after_owari = false;
-                for (const auto &text: messages) {
-                    const auto message = ParseNetworkMessage(text, options.official);
-                    const auto old_phase = session.snapshot.phase;
-                    const auto old_err = session.snapshot.server_error_receipt;
-                    const auto replies = session.Receive(message);
-                    if (session.snapshot.server_error_receipt != old_err)
-                        session.snapshot.server_error_receipt = ++server_error_sequence;
-                    if (options.official && message.tag == "HELO") {
-                        if (!official_game_id.empty()) SaveOfficialGameId({});
-                        resuming = false;
-                        recovery_start = 0;
-                        reconnect_view.reset();
-                    }
-                    if (options.official && message.tag == "GO" && session.snapshot.game.started) {
-                        if (const auto id = message.attributes.find("gpid"); id != message.attributes.end())
-                            SaveOfficialGameId(id->second);
-                    }
-                    if (options.official && message.tag == "PROF") AccumulatePrivateProfile(message);
-                    if (options.official && session.snapshot.game.complete) {
-                        if (!official_game_id.empty()) SaveOfficialGameId({});
-                        // Origin tenhou.exe.c:97928-97932 closes WC_CLIENT immediately on owari;
-                        // END opens a fresh TCP connection to return to the lobby.
-                        close_after_owari = true;
-                    }
-                    if (message.tag.rfind("REPLAY", 0) == 0) {
-                        try {
-                            archive.Receive(message);
-                            session.snapshot.replay_status = archive.status();
-                        } catch (const std::exception &e) {
-                            session.snapshot.replay_status = std::string("牌谱保存失败：") + e.what();
-                        }
-                        log("REPLAY STATUS " + session.snapshot.replay_status);
-                    }
-                    if ((message.tag == "PROF" || message.tag == "RESTORED") && archive.Request(
-                            session.snapshot, options.config_file)) {
+                if (options.official && message.tag == "PROF") AccumulatePrivateProfile(message);
+                if (options.official && session.snapshot.game.complete) {
+                    if (!official_game_id.empty()) SaveOfficialGameId({});
+                    // Origin tenhou.exe.c:97928-97932 closes WC_CLIENT immediately on owari;
+                    // END opens a fresh TCP connection to return to the lobby.
+                    close_after_owari = true;
+                }
+                if (message.tag.rfind("REPLAY", 0) == 0) {
+                    try {
+                        archive.Receive(message);
                         session.snapshot.replay_status = archive.status();
-                        Queue("<GETREPLAY table=\"" + session.snapshot.exit_table + "\"/>");
+                    } catch (const std::exception &e) {
+                        session.snapshot.replay_status = std::string("牌谱保存失败：") + e.what();
                     }
-                    if (message.tag == "SESSION" && session.snapshot.native_service) {
-                        native_token = session.snapshot.native_token;
-                        options.password.clear();
-                        if (!options.session_file.empty()) {
-                            std::filesystem::create_directories(options.session_file.parent_path());
-                            const auto temporary = options.session_file.wstring() + L".tmp";
-                            HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                                                      FILE_ATTRIBUTE_NORMAL, nullptr);
-                            if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot open platform session temporary file");
-                            DWORD written = 0;
-                            const bool saved = WriteFile(file, native_token.data(), static_cast<DWORD>(native_token.size()), &written, nullptr)
-                                               && written == native_token.size() && FlushFileBuffers(file);
-                            CloseHandle(file);
-                            if (!saved || !MoveFileExW(temporary.c_str(), options.session_file.c_str(),
-                                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) throw
-                                    std::runtime_error("Cannot atomically save native guest session");
+                    log("REPLAY STATUS " + session.snapshot.replay_status);
+                }
+                if ((message.tag == "PROF" || message.tag == "RESTORED") && archive.Request(
+                        session.snapshot, options.config_file)) {
+                    session.snapshot.replay_status = archive.status();
+                    Queue("<GETREPLAY table=\"" + session.snapshot.exit_table + "\"/>");
+                }
+                if (message.tag == "SESSION" && session.snapshot.native_service) {
+                    native_token = session.snapshot.native_token;
+                    options.password.clear();
+                    if (!options.session_file.empty()) {
+                        std::filesystem::create_directories(options.session_file.parent_path());
+                        auto temporary = options.session_file;
+                        temporary += L".tmp";
+                        {
+                            std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+                            if (!file) throw std::runtime_error("Cannot open platform session temporary file");
+                            file.write(native_token.data(), static_cast<std::streamsize>(native_token.size()));
+                            file.flush();
+                            if (!file) throw std::runtime_error("Cannot write platform session temporary file");
+                        }
+                        std::error_code ec;
+                        std::filesystem::rename(temporary, options.session_file, ec);
+                        if (ec) {
+                            std::filesystem::remove(options.session_file, ec);
+                            ec.clear();
+                            std::filesystem::rename(temporary, options.session_file, ec);
+                            if (ec) throw std::runtime_error("Cannot atomically save native guest session");
                         }
                     }
-                    if (message.tag == "GO" || message.tag == "REINIT") local_prepare = false;
-                    if (message.tag == "PREPARE") local_prepare = true;
-                    if (message.tag == "START") local_prepare = false;
-                    const bool official_intro = options.official && options.presentation &&
-                        message.tag == "TAIKYOKU" && !replies.empty();
-                    if (official_intro) local_prepare = true;
-                    if (options.official && session.snapshot.recovering && !recovery_start)
-                        recovery_start = GetTickCount64();
-                    if (!session.snapshot.recovering && ((message.tag == "REINIT" && !session.snapshot.native_service) ||
-                        message.tag == "RESTORED" ||
-                        (options.official && message.tag == "INIT") ||
-                        (message.tag == "CHAT" && session.snapshot.origin_lobby) ||
-                        (message.tag == "LN" && session.snapshot.phase == LobbyPhase::Lobby))) {
-                        resuming = false;
-                        recovery_start = 0;
-                        reconnect_view.reset();
-                    }
-                    if (accepted_event && !reconnect_view) accepted_event(message, session.snapshot);
-                    if (socket == INVALID_SOCKET) return;
-                    if (session.snapshot.actions.pending.empty() || session.snapshot.table_paused ||
-                        (options.official && local_prepare)) action_start = 0;
-                    else if (!action_start) action_start = GetTickCount64();
-                    last_receive = GetTickCount64();
-                    log("NETWORK recv tag=" + message.tag);
-                    if (old_phase != session.snapshot.phase) Phase(session.snapshot.phase);
-                    if (!official_intro) for (const auto &reply: replies) Queue(reply);
-                    // Opt in only to the identified local rules service. The
-                    // original remote protocol and its GOK handshake stay intact.
-                    if (message.tag == "HELO" && message.attributes.count("uname") && message.attributes.at("uname") ==
-                        "LOCAL-RULES" && options.interactive_games && options.presentation)
-                        Queue("<PRESENTATION />");
-                    Notify();
                 }
-                if (close_after_owari) {
-                    Close();
-                    return;
+                if (message.tag == "GO" || message.tag == "REINIT") local_prepare = false;
+                if (message.tag == "PREPARE") local_prepare = true;
+                if (message.tag == "START") local_prepare = false;
+                const bool official_intro = options.official && options.presentation &&
+                                            message.tag == "TAIKYOKU" && !replies.empty();
+                if (official_intro) local_prepare = true;
+                if (options.official && session.snapshot.recovering && !recovery_start)
+                    recovery_start = MonotonicMs();
+                if (!session.snapshot.recovering && ((message.tag == "REINIT" && !session.snapshot.native_service) ||
+                    message.tag == "RESTORED" ||
+                    (options.official && message.tag == "INIT") ||
+                    (message.tag == "CHAT" && session.snapshot.origin_lobby) ||
+                    (message.tag == "LN" && session.snapshot.phase == LobbyPhase::Lobby))) {
+                    resuming = false;
+                    recovery_start = 0;
+                    reconnect_view.reset();
                 }
+                if (accepted_event && !reconnect_view) accepted_event(message, session.snapshot);
+                if (ev_gen != generation || !worker) return;
+                if (session.snapshot.actions.pending.empty() || session.snapshot.table_paused ||
+                    (options.official && local_prepare)) action_start = 0;
+                else if (!action_start) action_start = MonotonicMs();
+                last_receive = MonotonicMs();
+                log("NETWORK recv tag=" + message.tag);
+                if (old_phase != session.snapshot.phase) Phase(session.snapshot.phase);
+                if (!official_intro) for (const auto &reply : replies) Queue(reply);
+                // Opt in only to the identified local rules service. The
+                // original remote protocol and its GOK handshake stay intact.
+                if (message.tag == "HELO" && message.attributes.count("uname") &&
+                    message.attributes.at("uname") == "LOCAL-RULES" &&
+                    options.interactive_games && options.presentation)
+                    Queue("<PRESENTATION />");
+                Notify();
             }
-            PostMessageW(window, kRead, 0, 0);
+            if (close_after_owari) Close();
         }
 
         void SubmitAction(std::uint64_t revision, std::size_t index) {
             // Invalid/stale UI requests are rejected without tearing down a healthy connection.
             const auto replies = session.SubmitAction(revision, index);
             try {
-                action_start = GetTickCount64();
-                for (const auto &reply: replies) Queue(reply);
+                action_start = MonotonicMs();
+                for (const auto &reply : replies) Queue(reply);
                 Notify();
-            } catch (const TransportFailure &error) { Error(error.what(), true); } catch (const std::exception &error) {
-                Error(error.what());
-            }
+            } catch (const TransportFailure &error) { Error(error.what(), true); }
+            catch (const std::exception &error) { Error(error.what()); }
         }
 
         void Tick() {
-            const auto now = GetTickCount64();
+            const auto now = MonotonicMs();
             if (reconnect_view && now >= retry_until) {
                 Error("Automatic game recovery timed out", true);
                 return;
@@ -559,10 +908,11 @@ namespace tenhou {
             }
             if (!Active()) return;
             const auto phase = session.snapshot.phase;
-            if (session.snapshot.native_pending.empty() && session.snapshot.origin_pending.empty()) native_request_start = 0;
+            if (session.snapshot.native_pending.empty() && session.snapshot.origin_pending.empty())
+                native_request_start = 0;
             else if (!native_request_start) native_request_start = now;
-            else if (now - native_request_start >= options.handshake_ms) throw TransportFailure(
-                "Native room request confirmation timed out");
+            else if (now - native_request_start >= options.handshake_ms)
+                throw TransportFailure("Native room request confirmation timed out");
             const bool official_saikai_wait = options.official && session.snapshot.game.started &&
                                               phase == LobbyPhase::AwaitRecovery;
             const auto recovery_limit = official_saikai_wait ? options.idle_ms : options.handshake_ms;
@@ -578,22 +928,23 @@ namespace tenhou {
             }
             if (!options.origin_lobby && phase == LobbyPhase::Matching && now - phase_start >= options.matching_ms)
                 throw std::runtime_error("Matchmaking timed out; connect explicitly to retry");
-            const bool established = phase == LobbyPhase::Lobby || phase == LobbyPhase::Game || phase ==
-                                     LobbyPhase::MatchComplete || phase == LobbyPhase::Matching;
-            if (!established && now - phase_start >= recovery_limit) throw TransportFailure(
-                "Connection/handshake or recovery timed out");
-            if (established && now - last_receive >= options.idle_ms) throw
-                    TransportFailure("Server receive timed out");
-            const auto action_timeout = std::max<ULONGLONG>(options.handshake_ms,
-                                                            session.snapshot.game.local_action_wait_ms
-                                                                ? session.snapshot.game.local_action_wait_ms + 10000ULL
-                                                                : 0);
-            if (action_start && now - action_start >= action_timeout) throw TransportFailure(
-                "Game action confirmation timed out");
-            if (frame_start && now - frame_start >= options.handshake_ms) throw TransportFailure(
-                "Incomplete network message timed out");
-            if (send_start && now - send_start >= options.handshake_ms) throw TransportFailure(
-                "Network send timed out");
+            const bool established = phase == LobbyPhase::Lobby || phase == LobbyPhase::Game ||
+                                     phase == LobbyPhase::MatchComplete || phase == LobbyPhase::Matching;
+            if (!established && now - phase_start >= recovery_limit)
+                throw TransportFailure("Connection/handshake or recovery timed out");
+            if (established && now - last_receive >= options.idle_ms)
+                throw TransportFailure("Server receive timed out");
+            const auto action_timeout = std::max<std::uint64_t>(
+                options.handshake_ms,
+                session.snapshot.game.local_action_wait_ms
+                    ? session.snapshot.game.local_action_wait_ms + 10000ULL
+                    : 0);
+            if (action_start && now - action_start >= action_timeout)
+                throw TransportFailure("Game action confirmation timed out");
+            if (frame_start && now - frame_start >= options.handshake_ms)
+                throw TransportFailure("Incomplete network message timed out");
+            if (send_start && now - send_start >= options.handshake_ms)
+                throw TransportFailure("Network send timed out");
             if ((phase == LobbyPhase::AwaitHelo || phase == LobbyPhase::AwaitLobby || phase == LobbyPhase::AwaitRecovery
                  || established) && now - last_heartbeat >= options.heartbeat_ms) {
                 Queue("<Z />");
@@ -625,10 +976,49 @@ namespace tenhou {
             if (replies.empty()) return;
             try {
                 Phase(session.snapshot.phase);
-                for (const auto &reply: replies) Queue(reply);
+                for (const auto &reply : replies) Queue(reply);
                 Notify();
-            } catch (const TransportFailure &error) { Error(error.what(), true); } catch (const std::exception &error) {
-                Error(error.what());
+            } catch (const TransportFailure &error) { Error(error.what(), true); }
+            catch (const std::exception &error) { Error(error.what()); }
+        }
+
+        void DrainEvents() {
+            auto events = hub->Drain();
+            for (const auto &ev : events) {
+                if (ev.generation != generation) continue;
+                try {
+                    switch (ev.kind) {
+                        case WorkerEvent::Kind::Connecting:
+                            Phase(LobbyPhase::Connecting);
+                            break;
+                        case WorkerEvent::Kind::Connected:
+                            Connected();
+                            break;
+                        case WorkerEvent::Kind::Bytes:
+                            ProcessBytes(ev.data, ev.generation);
+                            break;
+                        case WorkerEvent::Kind::SendDrained:
+                            has_pending_send = false;
+                            send_start = 0;
+                            break;
+                        case WorkerEvent::Kind::Closed:
+                            if (framer.pending()) throw TransportFailure("Connection closed with truncated message");
+                            throw TransportFailure("Server closed connection");
+                        case WorkerEvent::Kind::TransportError:
+                            throw TransportFailure(ev.data);
+                        case WorkerEvent::Kind::FatalError:
+                            throw std::runtime_error(ev.data);
+                        case WorkerEvent::Kind::Tick:
+                            Tick();
+                            break;
+                    }
+                } catch (const TransportFailure &error) {
+                    Error(error.what(), true);
+                } catch (const ServerRejection &error) {
+                    Error(error.what(), false, error.code, error.wire_text, true);
+                } catch (const std::exception &error) {
+                    Error(error.what());
+                }
             }
         }
 
@@ -638,45 +1028,8 @@ namespace tenhou {
                 self = static_cast<Impl *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
                 SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
             }
-            if (!self) return DefWindowProcW(window, message, wparam, lparam);
-            try {
-                if (message == kDns && reinterpret_cast<HANDLE>(wparam) == self->dns) {
-                    self->dns = nullptr;
-                    if (WSAGETASYNCERROR(lparam))
-                        throw TransportFailure(SocketError("DNS", WSAGETASYNCERROR(lparam)).what());
-                    const auto *entry = reinterpret_cast<const hostent *>(self->host.data());
-                    if (entry->h_addrtype != AF_INET || entry->h_length != sizeof(IN_ADDR) || !entry->h_addr_list || !
-                        entry->h_addr_list[0])
-                        throw std::runtime_error("DNS returned no IPv4 address");
-                    IN_ADDR address{};
-                    memcpy(&address, entry->h_addr_list[0], sizeof(address));
-                    self->BeginTcp(address);
-                    return 0;
-                }
-                if (message == kSocket && static_cast<SOCKET>(wparam) == self->socket) {
-                    const int event = WSAGETSELECTEVENT(lparam), error = WSAGETSELECTERROR(lparam);
-                    if (error) throw TransportFailure(SocketError("socket event", error).what());
-                    if (event == FD_CONNECT) self->Connected();
-                    else if (event == FD_READ || event == FD_CLOSE) self->Read();
-                    else if (event == FD_WRITE) self->Flush();
-                    return 0;
-                }
-                if (message == kRead && self->socket != INVALID_SOCKET) {
-                    self->Read();
-                    return 0;
-                }
-                if (message == WM_TIMER) {
-                    self->Tick();
-                    return 0;
-                }
-            } catch (const TransportFailure &error) {
-                self->Error(error.what(), true);
-                return 0;
-            } catch (const ServerRejection &error) {
-                self->Error(error.what(), false, error.code, error.wire_text, true);
-                return 0;
-            } catch (const std::exception &error) {
-                self->Error(error.what());
+            if (self && message == kWake) {
+                self->DrainEvents();
                 return 0;
             }
             return DefWindowProcW(window, message, wparam, lparam);
@@ -684,8 +1037,7 @@ namespace tenhou {
     };
 
     NetworkClient::NetworkClient(Observer changed, std::function<void(const std::string &)> log, EventObserver event)
-        : impl_(std::make_unique<Impl>(std::move(changed), std::move(log), std::move(event))) {
-    }
+        : impl_(std::make_unique<Impl>(std::move(changed), std::move(log), std::move(event))) {}
 
     NetworkClient::~NetworkClient() = default;
 
@@ -701,26 +1053,26 @@ namespace tenhou {
         impl_->SubmitLobby(revision, command, value);
     }
 
-    void NetworkClient::SubmitOriginLobby(const std::string &command, const std::wstring &value) {
+    void NetworkClient::SubmitOriginLobby(const std::string &command, const std::string &value) {
         impl_->SendLobbyReplies(impl_->session.SubmitOriginLobby(command, value));
     }
 
     void NetworkClient::ConfigureRoom(std::uint64_t revision, const std::map<std::string, std::string> &settings) {
         const auto replies = impl_->session.ConfigureRoom(revision, settings);
-        for (const auto &reply: replies) impl_->Queue(reply);
+        for (const auto &reply : replies) impl_->Queue(reply);
     }
 
     void NetworkClient::NativeRequest(const std::string &command, unsigned value,
                                       const std::map<std::string, std::string> &settings) {
         const auto replies = impl_->session.NativeRequest(command, value, settings);
-        for (const auto &reply: replies) impl_->Queue(reply);
+        for (const auto &reply : replies) impl_->Queue(reply);
         impl_->Notify();
     }
 
     void NetworkClient::ConfirmMatchStart() {
         if (impl_->local_prepare && impl_->Active()) {
             impl_->local_prepare = false;
-            if (impl_->options.official) impl_->action_start = GetTickCount64();
+            if (impl_->options.official) impl_->action_start = MonotonicMs();
             try { impl_->Queue(impl_->options.official ? "<NEXTREADY />" : "<STARTREADY />"); }
             catch (const TransportFailure &error) { impl_->Error(error.what(), true); }
         }
@@ -734,7 +1086,7 @@ namespace tenhou {
             if (!impl_->official_game_id.empty()) impl_->SaveOfficialGameId({});
             impl_->SendLobbyReplies(replies);
         } else {
-            for (const auto &reply: replies) impl_->Queue(reply);
+            for (const auto &reply : replies) impl_->Queue(reply);
             impl_->Notify();
         }
     }

@@ -26,6 +26,8 @@ namespace tenhou {
         std::filesystem::path resource_directory;
         std::filesystem::path replay;
         bool offline_lobby = false, service_lobby = false;
+        std::optional<bool> hd_artwork;
+        int initial_width = 0, initial_height = 0;
     };
 
     Options ParseOptions(int argc, char **argv);
@@ -60,18 +62,27 @@ namespace tenhou {
         void UpdateAudioMeter();
         void PaintAudioMeter(const DRAWITEMSTRUCT &item);
         void ShowAudioMenu();
+        void SetupSystemMenu();
+        void SyncSystemMenu();
+        void UpdateWindowTitle();
+        void ApplyClientSizePreset(int client_width, int client_height);
+        void SetFullscreen(bool enabled);
+        void ToggleHdArtwork();
 
+        void OpenLog();
+        void RotateLogIfNeeded();
         void Log(const std::string &message);
 
         void Check(bool success, const char *action) const;
 
         Options options_;
-        std::filesystem::path executable_directory_, config_path_, resource_directory_;
+        std::filesystem::path executable_directory_, config_path_, resource_directory_, log_path_;
         std::ofstream log_;
+        std::uint64_t log_bytes_ = 0;
         HWND window_ = nullptr, audio_meter_ = nullptr;
         HFONT font_ = nullptr;
         HANDLE mutex_ = nullptr;
-        std::string instance_property_;
+        std::wstring instance_property_;
         ULONG_PTR gdiplus_token_ = 0;
         std::unique_ptr<WelcomeView> welcome_;
         std::unique_ptr<TableView> table_;
@@ -79,12 +90,17 @@ namespace tenhou {
         std::unique_ptr<OfflineLobbyView> offline_lobby_;
         std::unique_ptr<SettingsView> settings_;
         struct PendingServerError {
-            std::wstring caption, message;
+            std::string caption, message;
             bool fatal = false;
         };
         std::uint64_t last_server_error_receipt_ = 0;
         std::optional<PendingServerError> pending_server_error_;
         int width_ = 1440, height_ = 1080;
+        bool fullscreen_ = false;
+        bool start_maximized_ = false, start_fullscreen_ = false;
+        bool hd_artwork_ = false;
+        WINDOWPLACEMENT windowed_placement_{sizeof(WINDOWPLACEMENT)};
+        DWORD windowed_style_ = 0, windowed_ex_style_ = 0;
         std::string view_;
         int screen_width_ = 1440;
         bool original_display_ = true;

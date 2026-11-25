@@ -232,7 +232,7 @@ namespace tenhou {
                     g.FillRectangle(&card, x, y, 190 * u, 42 * u);
                     Text(g, Wide(state_.players[i].name), x + 62 * u, y + 2 * u, 105 * u, 19 * u, (40.0f / 3) * u, L"System");
                     const auto rank = state_.players[i].rank;
-                    Text(g, rank < 0 ? L"未提供" : SeatRankLabel(rank), x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
+                    Text(g, rank < 0 ? L"未提供" : Wide(SeatRankLabel(rank)), x + 62 * u, y + 20 * u, 105 * u, 18 * u, (32.0f / 3) * u, L"System");
                 });
                 constexpr TextKey winds[]{TextKey::seat_neutral_east, TextKey::seat_neutral_south,
                     TextKey::seat_neutral_west, TextKey::seat_neutral_north};

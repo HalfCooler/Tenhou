@@ -60,6 +60,11 @@ namespace tenhou {
                    double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0,
                    const std::vector<TableActionButton> *buttons = nullptr, HWND window = nullptr);
 
+        bool PaintToWindow(HWND window, RECT bounds, const OnlineState &state, bool interactive = false,
+                           const OpeningPresentation *opening = nullptr, const TableInteraction *interaction = nullptr,
+                           double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0,
+                           const std::vector<TableActionButton> *buttons = nullptr);
+
         int HitTile(RECT bounds, const OnlineState &state, int x, int y);
 
         void SetOriginalDisplay(bool enabled) { original_display_ = enabled; }

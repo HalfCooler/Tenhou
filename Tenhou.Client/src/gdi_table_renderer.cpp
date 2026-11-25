@@ -3,6 +3,7 @@
 #include "background.hpp"
 #include "network_protocol.hpp"
 #include "original_button.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -92,7 +93,8 @@ namespace tenhou {
             SetBkMode(memory, TRANSPARENT);
             SetTextColor(memory, RGB(255, 242, 190));
             RECT hint{w / 8, h - static_cast<int>(52 * unit), w * 7 / 8, h - static_cast<int>(28 * unit)};
-            DrawTextW(memory, interaction->hint.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            const auto hint_wide = Utf8ToWide(interaction->hint);
+            DrawTextW(memory, hint_wide.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
             SelectObject(memory, old);
             DeleteObject(font);
         }
@@ -112,7 +114,7 @@ namespace tenhou {
                 DEFAULT_PITCH, L"Arial");
             const auto old = SelectObject(memory, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
             SIZE size{};
-            const auto &text = interaction->countdown;
+            const auto text = Utf8ToWide(interaction->countdown);
             const int length = static_cast<int>(text.size());
             GetTextExtentPoint32W(memory, text.c_str(), length, &size);
             const int x = std::min(right + std::max(2, static_cast<int>(2 * unit)),
@@ -339,7 +341,7 @@ namespace tenhou {
                     const auto caption = [&](const std::string &text, int x, int y, int width) {
                         RECT r{static_cast<LONG>(x * unit), static_cast<LONG>(y * unit),
                                static_cast<LONG>((x + width) * unit), static_cast<LONG>((y + 28) * unit)};
-                        const auto wide = NetworkWide(text);
+                        const auto wide = Utf8ToWide(text);
                         DrawTextW(memory, wide.c_str(), -1, &r, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                     };
                     constexpr int xs[]{220, 776, 280, 12}, ys[]{740, 580, 84, 580};
@@ -400,8 +402,8 @@ namespace tenhou {
             const auto old = SelectObject(dc, exit_font_ ? exit_font_ : GetStockObject(DEFAULT_GUI_FONT));
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, button.enabled ? RGB(34, 34, 34) : RGB(102, 102, 102));
-            const wchar_t *label = button.label.empty() ? L"EXIT" : button.label.c_str();
-            DrawTextW(dc, label, -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            const auto wide_label = button.label.empty() ? std::wstring(L"EXIT") : Utf8ToWide(button.label);
+            DrawTextW(dc, wide_label.c_str(), -1, &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, old);
             const auto border = CreateSolidBrush(
                 button.enabled && button.hot ? RGB(51, 153, 255) : RGB(136, 136, 136));
@@ -462,7 +464,8 @@ namespace tenhou {
             const auto font = SelectObject(dc, ui_font_ ? ui_font_ : GetStockObject(DEFAULT_GUI_FONT));
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, GetSysColor(!button.enabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
-            DrawTextW(dc, button.label.c_str(), -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            const auto wide_label = Utf8ToWide(button.label);
+            DrawTextW(dc, wide_label.c_str(), -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             SelectObject(dc, font);
         }
 

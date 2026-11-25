@@ -52,13 +52,13 @@ namespace tenhou {
                                                                    0x229, 0x629, 0x631, 0x639};
     inline constexpr std::array<unsigned, 8> kAmberLifetimeProfiles{601, 602, 603, 611, 612, 613, 623, 633};
 
-    std::wstring LocalizeCertification(std::wstring_view text);
+    std::string LocalizeCertification(std::string_view text);
 
     unsigned RankedMonthlyProfile(unsigned type, RankedTier tier);
     bool ValidMonthlyProfile(unsigned type);
 
     struct OfflineLobbyProfile {
-        std::wstring name, membership_expiry;
+        std::string name, membership_expiry;
         int membership_days;
         unsigned light_options;
         LobbyRank four, three;
@@ -68,21 +68,21 @@ namespace tenhou {
         std::map<unsigned, LobbyStatistics> other_lifetime;
     };
 
-    std::wstring AmberProfileLabel(std::size_t index);
-    std::wstring LifetimeProfileLabel(unsigned type);
-    std::wstring LifetimeProfileCaption(unsigned type);
-    std::wstring RankedMonthlyLabel(unsigned type);
-    std::wstring MonthlyProfileCaption(unsigned type);
-    std::wstring FormatFixedTrunc(double value, int decimals, bool strip_zero, const wchar_t *plus_prefix);
-    std::wstring FormatSignedAdaptive(double value, int max_decimals);
-    std::wstring FormatRate(double value, int decimals = 3);
-    std::wstring FormatExpiry(std::wstring_view raw);
-    std::wstring RankGradeName(int code);
+    std::string AmberProfileLabel(std::size_t index);
+    std::string LifetimeProfileLabel(unsigned type);
+    std::string LifetimeProfileCaption(unsigned type);
+    std::string RankedMonthlyLabel(unsigned type);
+    std::string MonthlyProfileCaption(unsigned type);
+    std::string FormatFixedTrunc(double value, int decimals, bool strip_zero, const char *plus_prefix);
+    std::string FormatSignedAdaptive(double value, int max_decimals);
+    std::string FormatRate(double value, int decimals = 3);
+    std::string FormatExpiry(std::string_view raw);
+    std::string RankGradeName(int code);
     int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, unsigned monthly_type);
-    std::wstring FormatProfileClipboardText(const OfflineLobbyProfile &profile,
-                                            const std::array<LobbyStatistics, 2> &private_lifetime,
-                                            unsigned lifetime, unsigned monthly, bool official,
-                                            std::wstring_view timestamp);
+    std::string FormatProfileClipboardText(const OfflineLobbyProfile &profile,
+                                           const std::array<LobbyStatistics, 2> &private_lifetime,
+                                           unsigned lifetime, unsigned monthly, bool official,
+                                           std::string_view timestamp);
 
     class OfflineLobbyTiming {
     public:
@@ -117,7 +117,7 @@ namespace tenhou {
     };
 
     struct OfflineContest {
-        std::wstring title;
+        std::string title;
         unsigned players, rule, fee;
         bool premium_only, registered, blocked;
         std::uint64_t start, end;
@@ -125,32 +125,32 @@ namespace tenhou {
 
     enum class ContestStatus { Loading, Blocked, Register, Unregistered, BeforeStart, Open, Closed, Reserved };
 
-    inline constexpr wchar_t kRankedLobby[] = L"L0000";
-    inline constexpr wchar_t kBroadcastLobby[] = L"L8141";
-    inline constexpr std::array<const wchar_t *, 3> kEventLobbies{L"C00112233", L"C00223344", L"C00334455"};
+    inline constexpr char kRankedLobby[] = "L0000";
+    inline constexpr char kBroadcastLobby[] = "L8141";
+    inline constexpr std::array<const char *, 3> kEventLobbies{"C00112233", "C00223344", "C00334455"};
     inline constexpr unsigned kRankedSlots = 12;
     inline constexpr unsigned kParlorSlots = 8;
 
-    std::optional<std::wstring> LobbyNumber(std::wstring input);
+    std::optional<std::string> LobbyNumber(std::string input);
     bool RankedEligible(RankedTier tier, LobbyRank rank, int membership_days);
     OfflineLobbyProfile FixtureProfile();
-    OfflineLobbyCounts FixtureCounts(const std::wstring &room, std::uint64_t seconds);
+    OfflineLobbyCounts FixtureCounts(const std::string &room, std::uint64_t seconds);
     OfflineContest FixtureContest(unsigned event, std::uint64_t seconds);
 
     class OfflineLobby {
     public:
         explicit OfflineLobby(OfflineLobbyProfile account) : profile(std::move(account)) {}
 
-        bool RequestMove(std::wstring room);
-        bool ConfirmMove(const std::wstring &room);
-        void Enter(std::wstring room);
+        bool RequestMove(std::string room);
+        bool ConfirmMove(const std::string &room);
+        void Enter(std::string room);
         void DeclineMove() { pending_.reset(); }
-        void SetContest(const std::wstring &room, OfflineContest contest);
-        bool SetCounts(const std::wstring &room, OfflineLobbyCounts sample);
+        void SetContest(const std::string &room, OfflineContest contest);
+        bool SetCounts(const std::string &room, OfflineLobbyCounts sample);
 
         LobbyCandidate Candidate(RankedTier tier, unsigned slot) const;
         bool Reserve(RankedTier tier, unsigned slot);
-        const OfflineContest *Contest(const std::wstring &room) const;
+        const OfflineContest *Contest(const std::string &room) const;
         const OfflineContest *Contest() const { return Contest(room_); }
         ContestStatus ContestAction(std::uint64_t now) const;
         bool RegisterContest(std::uint64_t now);
@@ -158,20 +158,20 @@ namespace tenhou {
         void SetReservations(const std::vector<int> &types);
         void Cancel() { reservations_.clear(); }
 
-        const std::wstring &room() const { return room_; }
-        const std::optional<std::wstring> &pending() const { return pending_; }
+        const std::string &room() const { return room_; }
+        const std::optional<std::string> &pending() const { return pending_; }
         bool ranked() const { return room_ == kRankedLobby; }
-        bool contest() const { return room_.front() == L'C'; }
+        bool contest() const { return !room_.empty() && room_.front() == 'C'; }
         std::size_t reservations() const { return reservations_.size(); }
         bool Reserved(unsigned type) const;
         const OfflineLobbyCounts &counts() const { return counts_; }
         OfflineLobbyProfile profile;
 
     private:
-        std::wstring room_ = kRankedLobby;
-        std::optional<std::wstring> pending_;
+        std::string room_ = kRankedLobby;
+        std::optional<std::string> pending_;
         OfflineLobbyCounts counts_;
-        std::map<std::wstring, OfflineContest> contests_;
-        std::set<std::pair<std::wstring, unsigned>> reservations_;
+        std::map<std::string, OfflineContest> contests_;
+        std::set<std::pair<std::string, unsigned>> reservations_;
     };
-}
+} // namespace tenhou

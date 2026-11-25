@@ -3,7 +3,7 @@
     <OutDir>bin\$(Configuration)\</OutDir>
     <IntDir>obj\vs\$(Configuration)\</IntDir>
     <RestoreProjectStyle>Unknown</RestoreProjectStyle>
-    <NMakeIncludeSearchPath>$(MSBuildThisFileDirectory)..\Tenhou.Client\src;$(MSBuildThisFileDirectory)..\Tenhou.Client\vendor\zlib;$(MSBuildProjectDirectory)\obj\native\$(Configuration)\generated;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
+    <NMakeIncludeSearchPath>$(MSBuildThisFileDirectory)..\Tenhou.Client\src;$(MSBuildThisFileDirectory)..\Tenhou.Client\vendor\zlib;$(MSBuildThisFileDirectory)..\Tenhou.Client\vendor\miniaudio;$(MSBuildProjectDirectory)\obj\native\$(Configuration)\generated;$(NMakeIncludeSearchPath)</NMakeIncludeSearchPath>
     <NMakePreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_UTF8_SOURCE;$(NMakePreprocessorDefinitions)</NMakePreprocessorDefinitions>
     <AdditionalOptions>/std:c++17 /utf-8 $(AdditionalOptions)</AdditionalOptions>
     <TenhouBuildCommand>powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\Build-Tenhou.ps1&quot; -Target $(MSBuildProjectName)</TenhouBuildCommand>

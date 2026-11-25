@@ -28,7 +28,11 @@ add_library(zlib_inflate STATIC vendor/zlib/adler32.c vendor/zlib/crc32.c vendor
         vendor/zlib/inflate.c vendor/zlib/inftrees.c vendor/zlib/zutil.c vendor/zlib/uncompr.c)
 target_include_directories(zlib_inflate PUBLIC vendor/zlib)
 target_compile_definitions(zlib_inflate PRIVATE _CRT_SECURE_NO_WARNINGS)
-add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp src/resource_manager.cpp)
+add_library(miniaudio_impl STATIC vendor/miniaudio/miniaudio_impl.c)
+target_include_directories(miniaudio_impl PUBLIC vendor/miniaudio)
+target_compile_definitions(miniaudio_impl PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_compile_options(miniaudio_impl PRIVATE /W0)
+add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp src/resource_manager.cpp src/ini_store.cpp)
 target_include_directories(tenhou_resources PUBLIC src "${asset_generated_directory}")
 target_compile_definitions(tenhou_resources PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_resources PRIVATE /W4 /WX /utf-8 /EHsc)
@@ -43,15 +47,16 @@ target_compile_options(tenhou_replay PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_replay PUBLIC zlib_inflate)
 add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_audio.cpp src/original_display.cpp
         src/wall_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp
-        src/background.cpp src/gdi_table_renderer.cpp src/d2d_table_renderer.cpp)
+        src/background.cpp src/shared_assets.cpp src/gdi_table_renderer.cpp src/d2d_table_renderer.cpp
+        src/hd_tile_pipeline.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text winmm msacm32 gdiplus d3d11 dxgi d2d1 dxguid)
+target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text miniaudio_impl ole32 gdiplus d3d11 dxgi d2d1 dxguid)
 add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp src/offline_lobby.cpp src/variant_state.cpp)
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_network PUBLIC tenhou_replay ws2_32 user32)
+target_link_libraries(tenhou_network PUBLIC tenhou_resources tenhou_replay ws2_32 user32)
 add_library(tenhou_presenter STATIC src/tile_geometry.cpp src/wall_geometry.cpp src/replay_effects.cpp
         src/action_selection_scene.cpp src/hand_projection.cpp src/settlement_sequencer.cpp
         src/table_sequencer.cpp src/table_render_frame.cpp)
@@ -66,19 +71,22 @@ add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome
         ${tenhou_lobby_sources}
         "${asset_generated_directory}/client_assets.rc")
 target_compile_options(tenhou_rebuild PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus winmm comdlg32 shell32 comctl32 ole32)
+target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus comdlg32 shell32 comctl32 ole32)
 # Runs even when only an asset changed, without relinking the executable.
 add_custom_target(tenhou_assets
         COMMAND "${CMAKE_COMMAND}" -P "${asset_generated_directory}/stage_assets.cmake"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${TENHOU_OUTPUT_DIRECTORY}/licenses"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/vendor/zlib/LICENSE"
             "${TENHOU_OUTPUT_DIRECTORY}/licenses/zlib-LICENSE.txt"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/vendor/miniaudio/LICENSE"
+            "${TENHOU_OUTPUT_DIRECTORY}/licenses/miniaudio-LICENSE.txt"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/assets/sources/mahjong_graphic/LICENSE"
             "${TENHOU_OUTPUT_DIRECTORY}/licenses/mahjong_graphic-LICENSE.txt"
         VERBATIM)
 add_dependencies(tenhou_rebuild tenhou_assets)
 install(TARGETS tenhou_rebuild RUNTIME DESTINATION client)
 install(FILES vendor/zlib/LICENSE DESTINATION client/licenses RENAME zlib-LICENSE.txt)
+install(FILES vendor/miniaudio/LICENSE DESTINATION client/licenses RENAME miniaudio-LICENSE.txt)
 install(FILES assets/sources/mahjong_graphic/LICENSE DESTINATION client/licenses RENAME mahjong_graphic-LICENSE.txt)
 
 # Test source ownership stays with the corresponding test project.

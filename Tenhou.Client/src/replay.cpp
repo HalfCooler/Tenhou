@@ -575,12 +575,12 @@ namespace tenhou {
         return ranks;
     }
 
-    const wchar_t *SeatRankLabel(int rank) {
-        constexpr const wchar_t *labels[]{
-            L"新人", L"９級", L"８級", L"７級", L"６級", L"５級", L"４級", L"３級", L"２級", L"１級",
-            L"初段", L"二段", L"三段", L"四段", L"五段", L"六段", L"七段", L"八段", L"九段", L"十段", L"天鳳位"
+    const char *SeatRankLabel(int rank) {
+        constexpr const char *labels[]{
+            "新人", "９級", "８級", "７級", "６級", "５級", "４級", "３級", "２級", "１級",
+            "初段", "二段", "三段", "四段", "五段", "六段", "七段", "八段", "九段", "十段", "天鳳位"
         };
-        return rank >= 0 && rank <= 20 ? labels[rank] : L"";
+        return rank >= 0 && rank <= 20 ? labels[rank] : "";
     }
 
     char SoundGender(const std::string &seats, int who) {

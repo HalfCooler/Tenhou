@@ -303,7 +303,7 @@ namespace tenhou {
         bool IsActionButtonEnabled(int control_id, const LobbySnapshot &live,
                                    bool intro_active, bool table_animating) const;
 
-        std::wstring FormatCountdown(const LobbySnapshot &snapshot, std::uint64_t now_tick_ms) const;
+        std::string FormatCountdown(const LobbySnapshot &snapshot, std::uint64_t now_tick_ms) const;
         TableInteraction BuildInteraction(const LobbySnapshot &snapshot, const LobbySnapshot &live,
                                           bool intro_active, bool table_animating, int hovered_button,
                                           const std::function<int()> &hit_tile,

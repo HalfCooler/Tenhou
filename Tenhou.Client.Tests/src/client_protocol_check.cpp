@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
                 catch (const std::exception &error) { throw std::runtime_error(last + ": " + error.what()); }
                 const auto &s = session.snapshot;
                 if (service && s.origin_lobby && s.phase == tenhou::LobbyPhase::Lobby && !requested) {
-                    send(session.SubmitOriginLobby("join", tenhou::NetworkWide(argv[4])));
+                    send(session.SubmitOriginLobby("join", argv[4]));
                     requested = true;
                 }
                 if (service && s.game.initialized) {

@@ -309,11 +309,11 @@ namespace tenhou {
         if (tw <= 0 || th <= 0) return buttons;
 
         using Style = TableActionButtonStyle;
-        const auto append = [&](int id, CanvasRect rect, Style style, std::wstring label) {
+        const auto append = [&](int id, CanvasRect rect, Style style, std::string label) {
             buttons.push_back({id, rect, IsActionButtonEnabled(id, live, intro_active, table_animating),
                                false, false, false, style, std::move(label)});
         };
-        const auto place = [&](int id, CanvasRect rect, Style style, std::wstring label) {
+        const auto place = [&](int id, CanvasRect rect, Style style, std::string label) {
             const int x = target.left + rect.left * tw / width;
             const int y = target.top + rect.top * th / height;
             append(id, {x, y, x + (rect.right - rect.left) * tw / width,
@@ -322,7 +322,7 @@ namespace tenhou {
         const auto action_style = original_display_ ? Style::Sprite440 : Style::PushButton;
         const auto add_action = [&](int id, CanvasRect rect) {
             const auto key = ActionButtonText(id, false);
-            if (key) place(id, rect, action_style, std::wstring(TextLabel(*key)));
+            if (key) place(id, rect, action_style, std::string(TextLabel(*key)));
         };
 
         if (!SuppressCallPrompt(live)) {
@@ -347,17 +347,17 @@ namespace tenhou {
                     add_action(5173, rect(anchor_x + 65));
             }
             if (s.variant.phase == VariantPhase::Ended)
-                place(5129, rect(anchor_x + 65), Style::PushButton, L"下一盘");
+                place(5129, rect(anchor_x + 65), Style::PushButton, "下一盘");
             if (!s.game.settlement.receipts.empty() || !s.last_settlement.receipts.empty())
-                append(5174, {12, 50, 92, 76}, Style::PushButton, L"结算");
+                append(5174, {12, 50, 92, 76}, Style::PushButton, "结算");
         }
         if (s.phase == LobbyPhase::MatchComplete)
             append(5137, {bounds.right - 180, bounds.bottom - 42, bounds.right - 20, bounds.bottom - 14},
-                   Style::PushButton, L"返回大厅");
+                   Style::PushButton, "返回大厅");
         if (live.exit_allowed && live.phase == LobbyPhase::Game && !intro_active) {
             const int x = target.left + 10;
             const int y = std::min(bounds.bottom - 22, target.bottom - (width == 1440 ? 57 : 32));
-            append(0xbc6, {x, y, x + exit_width, y + exit_height}, Style::OriginalExit, L"EXIT");
+            append(0xbc6, {x, y, x + exit_width, y + exit_height}, Style::OriginalExit, "EXIT");
         }
         return buttons;
     }
@@ -396,18 +396,18 @@ namespace tenhou {
         return true;
     }
 
-    std::wstring OnlineTableSequencer::FormatCountdown(const LobbySnapshot &snapshot,
-                                                       std::uint64_t now_tick_ms) const {
+    std::string OnlineTableSequencer::FormatCountdown(const LobbySnapshot &snapshot,
+                                                      std::uint64_t now_tick_ms) const {
         if (!clock_active_ || clock_revision_ != snapshot.actions.revision || !snapshot.actions.pending.empty())
             return {};
-        if (!clock_deadline_) return L"\u221e+0";
+        if (!clock_deadline_) return "\xE2\x88\x9E+0";
         const auto remaining = clock_deadline_ > now_tick_ms ? clock_deadline_ - now_tick_ms : 0;
         const auto base = clock_base_ms_ < 0
                               ? remaining
                               : std::min(remaining, clock_base_deadline_ > now_tick_ms
                                                         ? clock_base_deadline_ - now_tick_ms
                                                         : 0);
-        return std::to_wstring((base + 999) / 1000) + L"+" + std::to_wstring((remaining - base + 999) / 1000);
+        return std::to_string((base + 999) / 1000) + "+" + std::to_string((remaining - base + 999) / 1000);
     }
 
     TableInteraction OnlineTableSequencer::BuildInteraction(const LobbySnapshot &snapshot,
@@ -421,14 +421,14 @@ namespace tenhou {
         if (snapshot.variant_active && snapshot.variant.Preparing()) {
             if (snapshot.variant.phase == VariantPhase::Exchange) {
                 const auto &direction = snapshot.variant.direction;
-                result.hint = (direction == "clockwise" ? L"顺时针"
-                               : direction == "counterclockwise" ? L"逆时针" : L"对家") +
-                              std::wstring(L"换三张  ") + std::to_wstring(selection_.selected.size()) + L" / 3";
+                result.hint = std::string(direction == "clockwise" ? "顺时针"
+                               : direction == "counterclockwise" ? "逆时针" : "对家") +
+                              "换三张  " + std::to_string(selection_.selected.size()) + " / 3";
             } else {
-                result.hint = L"请选择定缺花色";
+                result.hint = "请选择定缺花色";
             }
             if ((!snapshot.actions.pending.empty() || snapshot.actions.choices.empty()) && !snapshot.recovering)
-                result.hint = L"选择完毕，等待其他玩家";
+                result.hint = "选择完毕，等待其他玩家";
         }
         result.hovered_button = hovered_button;
         if (!LocalTableInput(live, intro_active)) return result;

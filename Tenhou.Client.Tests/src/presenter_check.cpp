@@ -361,7 +361,7 @@ namespace {
             while (seq.QueueTimerNeeded()) seq.PresentationTick(session.snapshot, ctx, motion);
             NetworkMessage clock_msg{"CLOCK", {{"ms", "2500"}, {"base_ms", "2500"}}};
             seq.OnGameEvent(clock_msg, session.snapshot, session.snapshot, ctx, motion);
-            Check(seq.ClockTimerNeeded() && seq.FormatCountdown(session.snapshot, 5000) == L"3+0",
+            Check(seq.ClockTimerNeeded() && seq.FormatCountdown(session.snapshot, 5000) == "3+0",
                   "CLOCK 2500ms did not format as 3+0");
             ctx.tick_ms = 5600; // remaining 1900ms -> second == 2 -> plays 108!
             auto warn2 = seq.ActionClockTick(session.snapshot, ctx);

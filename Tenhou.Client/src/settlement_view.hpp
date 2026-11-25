@@ -37,6 +37,7 @@ namespace tenhou {
         void SetTileColor(const std::array<float, 3> &rgb) {
             tile_color_ = rgb;
             artwork_.SetColor(rgb);
+            InvalidateBackdrop();
             InvalidateRect(window_, nullptr, FALSE);
         }
 
@@ -46,7 +47,10 @@ namespace tenhou {
 
         void SetContext(int dealer, int honba, int sticks);
 
-        void SetBackgroundPainter(std::function<void(HDC, RECT)> paint) { background_painter_ = std::move(paint); }
+        void SetBackgroundPainter(std::function<void(HDC, RECT)> paint) {
+            background_painter_ = std::move(paint);
+            InvalidateBackdrop();
+        }
         void SetConfirmHandler(std::function<void()> confirm) { confirm_handler_ = std::move(confirm); }
 
         void SetConfirmEnabled(bool enabled);
@@ -74,6 +78,7 @@ namespace tenhou {
         void Peek(bool down);
 
         void Paint(HDC dc);
+        void InvalidateBackdrop(bool release = false);
 
         void PresentationTick();
 
@@ -93,6 +98,11 @@ namespace tenhou {
         HWND previous_patterns_ = nullptr, next_patterns_ = nullptr;
         HFONT font_ = nullptr;
         PaintBuffer paint_buffer_;
+        HDC backdrop_dc_ = nullptr;
+        HBITMAP backdrop_bitmap_ = nullptr;
+        HGDIOBJ backdrop_old_ = nullptr;
+        int backdrop_w_ = 0, backdrop_h_ = 0;
+        bool backdrop_valid_ = false;
         SettlementSequencer sequencer_;
         std::filesystem::path directory_;
         int canvas_ = 1440;

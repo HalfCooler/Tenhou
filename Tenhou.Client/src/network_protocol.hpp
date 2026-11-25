@@ -23,18 +23,14 @@ namespace tenhou {
 
     std::vector<int> DecodeLobbyNumbers(const std::string &encoded);
 
-    std::wstring NetworkWide(const std::string &utf8);
-
-    std::string NetworkUtf8(const std::wstring &wide);
-
     std::string DecodeNetworkText(const std::string &encoded);
 
     std::string NetworkJson(const std::string &value);
     LobbyStatistics ReadPrivateLobbyStatistics(std::string_view text);
 
     struct ServerErrorNotice {
-        std::wstring caption;
-        std::wstring message;
+        std::string caption;
+        std::string message;
         bool fatal = true;
     };
 
@@ -79,7 +75,7 @@ namespace tenhou {
         std::uint64_t origin_clock = 0, origin_clock_at = 0;
         // The issuing HELO identifies this notice across subsequent lobby refreshes.
         std::uint64_t certification_receipt = 0;
-        std::wstring certification;
+        std::string certification;
         std::uint64_t server_error_receipt = 0;
         int server_error_code = -1;
         std::string server_error_text;
@@ -135,7 +131,7 @@ namespace tenhou {
                                                const std::map<std::string, std::string> &settings = {});
 
         std::vector<std::string> SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0);
-        std::vector<std::string> SubmitOriginLobby(const std::string &command, const std::wstring &value);
+        std::vector<std::string> SubmitOriginLobby(const std::string &command, const std::string &value);
 
         std::vector<std::string> SubmitAction(std::uint64_t revision, std::size_t index);
 

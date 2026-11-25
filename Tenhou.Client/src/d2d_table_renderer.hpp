@@ -23,8 +23,23 @@ namespace tenhou {
         void RenderToDc(HDC dc, const TableRenderFrame &frame) override;
         void RenderButtonToDc(HDC dc, const TableActionButton &button, unsigned dpi = 96) override;
 
+        struct BenchStats {
+            std::size_t texture_uploads = 0;
+            std::size_t texture_upload_bytes = 0;
+            std::size_t hud_rebuilds = 0;
+            std::size_t interaction_rebuilds = 0;
+            std::size_t shadow_rebuilds = 0;
+            std::size_t static_base_hits = 0;
+            std::size_t static_base_rebuilds = 0;
+        };
+
         std::size_t PresentedFrames() const;
         std::size_t DeviceGeneration() const;
+        bool UsingHardware() const;
+        bool UsingHdArtwork() const;
+        void SetSyncInterval(unsigned interval);
+        BenchStats Stats() const;
+        void ResetStats();
         // Exercises the same invalidation/retry path used by device removal.
         void SimulateDeviceLoss();
 

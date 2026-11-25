@@ -38,6 +38,9 @@ tenhou_asset(FlowerDong images/variants/flowers/冬.png FILE 0 REQUIRED -)
 set(display_sprite_ids 401 402 440 466 589 591 592)
 foreach(sprite_id IN LISTS display_sprite_ids)
     tenhou_sprite(${sprite_id})
+    tenhou_asset(HdSprite${sprite_id} "images/sprites/hd/${sprite_id}.png" FILE 0 OPTIONAL -)
 endforeach()
+# Offline SVG-baked HD mahjong tile-face atlas (44 slices, 8x6 grid of 384x512 cells).
+tenhou_asset(HdTileFaces "images/hd_tiles/faces.png" FILE 0 OPTIONAL -)
 # Private TrueType source already present in the repository; no system-font copying.
 tenhou_asset(TextFont "fonts/HGSeikaiShotaiPRO.TTF" FILE 0 OPTIONAL -)

@@ -1,7 +1,9 @@
 #include "replay_archive.hpp"
+#include "ini_store.hpp"
 #include "replay.hpp"
-#include <windows.h>
+#include "win32_utf.hpp"
 #include <algorithm>
+#include <fstream>
 
 namespace tenhou {
     void ReplayArchive::Reset() {
@@ -17,10 +19,9 @@ namespace tenhou {
         if (s.variant_active) return false;
         if (config.empty() || !s.game.complete || s.exit_table.empty() || requested_ == s.exit_table || !s.profile.
             count("account") || s.profile.at("account").empty()) return false;
-        wchar_t path[32768]{};
-        GetPrivateProfileStringW(L"LOG", L"PATH", L"", path, 32768, config.c_str());
-        if (!path[0]) return false;
-        directory_ = std::filesystem::path(path);
+        const auto path = ReadIniString(config, "LOG", "PATH");
+        if (path.empty()) return false;
+        directory_ = PathFromUtf8(path);
         if (directory_.is_relative()) directory_ = config.parent_path() / directory_;
         requested_ = s.exit_table;
         status_ = "正在保存牌谱";
@@ -28,7 +29,7 @@ namespace tenhou {
     }
 
     void ReplayArchive::Receive(const NetworkMessage &m) {
-        auto field = [&](const char *key)-> const std::string & { return m.attributes.at(key); };
+        auto field = [&](const char *key) -> const std::string & { return m.attributes.at(key); };
         if (m.tag == "REPLAYERROR") {
             status_ = "牌谱保存失败：" + field("text");
             data_.clear();
@@ -47,7 +48,7 @@ namespace tenhou {
             const auto &hex = field("data");
             if (id_.empty() || std::stoull(field("offset")) != data_.size() || hex.size() % 2 || hex.size() > 3000 ||
                 data_.size() + hex.size() / 2 > expected_) throw std::runtime_error("牌谱分块顺序或大小错误");
-            auto digit = [](char c)-> int {
+            auto digit = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
                 if (c >= 'a' && c <= 'f') return c - 'a' + 10;
                 throw std::runtime_error("牌谱编码错误");
@@ -66,22 +67,35 @@ namespace tenhou {
         }
         if (!verification.state().ended) throw std::runtime_error("牌谱缺少结算");
         std::filesystem::create_directories(directory_);
-        const auto final = directory_ / NetworkWide(id_ + ".xml");
-        auto temporary = final;
-        temporary += L".tmp";
-        HANDLE file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
-                                  nullptr);
-        if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("无法创建牌谱文件");
-        DWORD written = 0;
-        const bool ok = WriteFile(file, data_.data(), static_cast<DWORD>(data_.size()), &written, nullptr) && written ==
-                        data_.size() && FlushFileBuffers(file);
-        CloseHandle(file);
-        if (!ok || !MoveFileExW(temporary.c_str(), final.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-            DeleteFileW(temporary.c_str());
-            throw std::runtime_error("牌谱写入或提交失败");
+        const auto final_path = directory_ / PathFromUtf8(id_ + ".xml");
+        auto temporary = final_path;
+        temporary += ".tmp";
+        {
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("无法创建牌谱文件");
+            out.write(data_.data(), static_cast<std::streamsize>(data_.size()));
+            out.flush();
+            if (!out) {
+                out.close();
+                std::error_code ec;
+                std::filesystem::remove(temporary, ec);
+                throw std::runtime_error("牌谱写入失败");
+            }
         }
-        status_ = "牌谱已保存：" + NetworkUtf8(final.wstring());
+        std::error_code ec;
+        std::filesystem::rename(temporary, final_path, ec);
+        if (ec) {
+            std::filesystem::remove(final_path, ec);
+            ec.clear();
+            std::filesystem::rename(temporary, final_path, ec);
+            if (ec) {
+                std::error_code rm_ec;
+                std::filesystem::remove(temporary, rm_ec);
+                throw std::runtime_error("牌谱写入或提交失败");
+            }
+        }
+        status_ = "牌谱已保存：" + PathToUtf8(final_path);
         id_.clear();
         data_.clear();
     }
-}
+} // namespace tenhou

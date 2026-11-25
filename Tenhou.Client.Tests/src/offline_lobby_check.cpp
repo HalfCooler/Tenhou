@@ -21,7 +21,7 @@ namespace {
         const auto &s = client.snapshot;
         Check(s.origin_lobby && s.phase == LobbyPhase::Lobby && s.origin_lobby->profile.four.rating == 1640,
               "Origin login and real profile");
-        client.SubmitOriginLobby("change", L"C00112233");
+        client.SubmitOriginLobby("change", "C00112233");
         const std::string contest = "<CS lobby=\"C00112233\" epoch=\"2\" title=\"Contest\" players=\"3\" rule=\"17\" "
             "joinfee=\"0\" premiumonly=\"0\" registered=\"1\" blocked=\"0\" start=\"1\" end=\"999\" now=\"10\" />";
         accept(contest);
@@ -32,19 +32,19 @@ namespace {
         Check(s.lobby == "C00112233" && s.origin_lobby->ContestAction(10) == ContestStatus::Open, "Confirmed contest");
         accept("<RESERVATIONS lobby=\"L0000\" epoch=\"1\" types=\"1\" />");
         Check(!s.origin_lobby->reservations(), "Old reservation affected contest");
-        client.SubmitOriginLobby("change", L"L0000");
+        client.SubmitOriginLobby("change", "L0000");
         accept("<CHAT lobby=\"L0000\" epoch=\"3\" rid=\"2\" />");
         accept("<RESERVATIONS lobby=\"L0000\" epoch=\"1\" types=\"1\" />");
         const std::string old_counts = "<LN lobby=\"L0000\" epoch=\"1\" n=\"7,0,1,0\" j=\"discarded\" g=\"discarded\" />";
         accept(old_counts);
         Check(!s.origin_lobby->reservations() && s.origin_lobby->counts().totals[0] == 0, "Old packets after re-entering the same room");
-        client.SubmitOriginLobby("change", L"C00000001");
+        client.SubmitOriginLobby("change", "C00000001");
         accept("<RESERVATIONS lobby=\"L0000\" epoch=\"3\" rid=\"3\" types=\"\" code=\"LOBBY_NOT_FOUND\" />");
         Check(s.phase == LobbyPhase::Lobby && !s.origin_lobby->pending() && s.origin_error == "LOBBY_NOT_FOUND",
               "Rejected move left the lobby blocked");
-        client.SubmitOriginLobby("join", L"1");
+        client.SubmitOriginLobby("join", "1");
         accept("<RESERVATIONS lobby=\"L0000\" epoch=\"3\" rid=\"4\" types=\"1\" />");
-        client.SubmitOriginLobby("join", L"129");
+        client.SubmitOriginLobby("join", "129");
         accept("<RESERVATIONS lobby=\"L0000\" epoch=\"3\" rid=\"5\" types=\"1,129\" />");
         Check(s.origin_lobby->reservations() == 2, "Multiple confirmed tickets");
         client.SubmitOriginLobby("cancel", {});
@@ -60,14 +60,14 @@ namespace {
         using namespace tenhou;
         // 1. FormatServerError mapping and fatal classification.
         const auto dup = FormatServerError(1004, {});
-        Check(dup.caption == L"Error" && dup.fatal && !dup.message.empty(), "ERR 1004 must be fatal Error dialog");
+        Check(dup.caption == "Error" && dup.fatal && !dup.message.empty(), "ERR 1004 must be fatal Error dialog");
         const auto non_fatal = FormatServerError(1019, {});
-        Check(non_fatal.caption == L"Error" && !non_fatal.fatal, "ERR 1019 must be non-fatal");
+        Check(non_fatal.caption == "Error" && !non_fatal.fatal, "ERR 1019 must be non-fatal");
         const auto special = FormatServerError(1012, {});
-        Check(special.caption != L"Error" && !special.fatal, "ERR 1012 uses special caption");
+        Check(special.caption != "Error" && !special.fatal, "ERR 1012 uses special caption");
         const auto custom = FormatServerError(400, "该账号已在其他窗口登录");
-        Check(custom.caption == L"Error" && custom.fatal &&
-              custom.message == L"该账号已在其他窗口登录", "Self-hosted ERR wire text preserved");
+        Check(custom.caption == "Error" && custom.fatal &&
+              custom.message == "该账号已在其他窗口登录", "Self-hosted ERR wire text preserved");
 
         // 2. Official duplicate login <ERR code="1004" /> throws ServerRejection.
         {
@@ -151,20 +151,20 @@ namespace {
 int main() {
     using namespace tenhou;
     try {
-        Check(LocalizeCertification(L"認定段位/級位：１級\r\n天鳳段位認定協会 殿\r\n天鳳サンマ漁業協会") ==
-              L"认定段级位：１级\n天鳳段位認定協会阁下：\n天凤秋刀鱼渔业协会",
+        Check(LocalizeCertification("認定段位/級位：１級\r\n天鳳段位認定協会 殿\r\n天鳳サンマ漁業協会") ==
+              "认定段级位：１级\n天鳳段位認定協会阁下：\n天凤秋刀鱼渔业协会",
               "Certificate must translate ranks and issuers while preserving player names");
-        Check(LocalizeCertification(L"Additional award text") == L"Additional award text",
+        Check(LocalizeCertification("Additional award text") == "Additional award text",
               "Unknown certificate text must be preserved");
 
-        Check(FormatFixedTrunc(-1.239, 2, false, nullptr) == L"-1.23" &&
-              FormatRate(0.2799) == L".279" && FormatRate(0) == L".000" && FormatRate(1) == L"1.00",
+        Check(FormatFixedTrunc(-1.239, 2, false, nullptr) == "-1.23" &&
+              FormatRate(0.2799) == ".279" && FormatRate(0) == ".000" && FormatRate(1) == "1.00",
               "Profile values truncate and keep the original rate precision");
-        Check(FormatSignedAdaptive(9.999, 2) == L"+9.99" && FormatSignedAdaptive(-10.99, 2) == L"-10.9" &&
-              FormatSignedAdaptive(100.9, 2) == L"+100" && FormatSignedAdaptive(4.56, 1) == L"+4.5",
+        Check(FormatSignedAdaptive(9.999, 2) == "+9.99" && FormatSignedAdaptive(-10.99, 2) == "-10.9" &&
+              FormatSignedAdaptive(100.9, 2) == "+100" && FormatSignedAdaptive(4.56, 1) == "+4.5",
               "Signed profile precision follows magnitude and the field limit");
-        Check(FormatExpiry(L"20261125") == L"2026/11/25" && FormatExpiry(L"") == L"----/--/--" &&
-              FormatExpiry(L"2026/11/25") == L"2026/11/25" && RankGradeName(10) == L"初段",
+        Check(FormatExpiry("20261125") == "2026/11/25" && FormatExpiry("") == "----/--/--" &&
+              FormatExpiry("2026/11/25") == "2026/11/25" && RankGradeName(10) == "初段",
               "Profile expiry and grade use the same display values");
         auto profile = FixtureProfile();
         profile.other_lifetime[kAmberLifetimeProfiles[0]].rating = 1888;
@@ -173,10 +173,10 @@ int main() {
               !LifetimeProfileLabel(kRankedFourProfile).empty() && !RankedMonthlyLabel(17).empty(),
               "Monthly choices refer to the corresponding lifetime categories");
         const auto clipboard = FormatProfileClipboardText(profile, {}, kRankedFourProfile,
-                                                           kDefaultMonthlyProfile, false, L"2026/11/25 00:00:00");
-        Check(clipboard.find(L"2026/11/25 00:00:00\r\n") != std::wstring::npos &&
-              clipboard.find(LifetimeProfileCaption(kRankedFourProfile)) != std::wstring::npos &&
-              clipboard.find(MonthlyProfileCaption(kDefaultMonthlyProfile)) != std::wstring::npos,
+                                                           kDefaultMonthlyProfile, false, "2026/11/25 00:00:00");
+        Check(clipboard.find("2026/11/25 00:00:00\r\n") != std::string::npos &&
+              clipboard.find(LifetimeProfileCaption(kRankedFourProfile)) != std::string::npos &&
+              clipboard.find(MonthlyProfileCaption(kDefaultMonthlyProfile)) != std::string::npos,
               "Clipboard export includes the caller's timestamp and profile captions");
 
         OfflineLobbyTiming timing;
@@ -230,17 +230,17 @@ int main() {
         Check(lobby.Reserve(RankedTier::General, 2) && !lobby.Reserve(RankedTier::General, 2) &&
               lobby.Reserve(RankedTier::Special, 9) && lobby.reservations() == 2, "Cross-page unique reservations");
         Check(lobby.Candidate(RankedTier::General, 2).reserved && !lobby.Candidate(RankedTier::Advanced, 2).reserved &&
-              !lobby.RequestMove(L"1234"), "Ranked type scopes reservations and locks lobby moves");
+              !lobby.RequestMove("1234"), "Ranked type scopes reservations and locks lobby moves");
         lobby.Cancel();
         Check(!lobby.reservations() && !lobby.Candidate(RankedTier::Special, 9).reserved, "Cancel clears every tier");
 
-        Check(LobbyNumber(L"1234") == L"L1234" && LobbyNumber(L"C00112233") == L"C00112233" &&
-              !LobbyNumber(L"C112233") && !LobbyNumber(L"L0124") && !LobbyNumber(L"123abc"), "Room number grammar");
-        Check(lobby.RequestMove(L"1234") && lobby.room() == kRankedLobby &&
+        Check(LobbyNumber("1234") == "L1234" && LobbyNumber("C00112233") == "C00112233" &&
+              !LobbyNumber("C112233") && !LobbyNumber("L0124") && !LobbyNumber("123abc"), "Room number grammar");
+        Check(lobby.RequestMove("1234") && lobby.room() == kRankedLobby &&
               !lobby.ConfirmMove(kBroadcastLobby) && !lobby.Reserve(RankedTier::General, 2),
               "Pending room leaves current room intact");
-        Check(lobby.ConfirmMove(L"L1234") && !lobby.SetCounts(kRankedLobby, FixtureCounts(kRankedLobby, 1)) &&
-              lobby.SetCounts(L"L1234", FixtureCounts(L"L1234", 1)), "Confirmation and room-scoped counts");
+        Check(lobby.ConfirmMove("L1234") && !lobby.SetCounts(kRankedLobby, FixtureCounts(kRankedLobby, 1)) &&
+              lobby.SetCounts("L1234", FixtureCounts("L1234", 1)), "Confirmation and room-scoped counts");
         Check(lobby.Candidate(RankedTier::General, 8).visible && !lobby.Candidate(RankedTier::General, 6).visible,
               "Private room slots");
         Check(lobby.Reserve(RankedTier::General, 2), "Private room reservation");

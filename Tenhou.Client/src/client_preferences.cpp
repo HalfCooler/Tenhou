@@ -1,4 +1,5 @@
 #include "client_preferences.hpp"
+#include "ini_store.hpp"
 #include <algorithm>
 #include <stdexcept>
 
@@ -21,35 +22,33 @@ namespace tenhou {
 
     ClientPreferences ClientPreferences::Load(const std::filesystem::path &config) {
         ClientPreferences value;
-        value.flags = GetPrivateProfileIntW(L"STATUS", L"FLAGS0", 0x402d, config.c_str());
-        value.hidden_id = GetPrivateProfileIntW(L"STATUS", L"HIDDENID", 0, config.c_str()) != 0;
-        value.tile_shadow = std::clamp(
-            static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"HAI_SDW", 6, config.c_str())), 0, 10);
+        value.flags = static_cast<std::uint32_t>(ReadIniInt(config, "STATUS", "FLAGS0", 0x402d));
+        value.hidden_id = ReadIniInt(config, "STATUS", "HIDDENID", 0) != 0;
+        value.tile_shadow = std::clamp(ReadIniInt(config, "RESOURCE", "HAI_SDW", 6), 0, 10);
         // The Win32 trackbar limits the effective original UI range to 0..100.
-        value.se_volume = std::clamp(static_cast<int>(GetPrivateProfileIntW(
-                                         L"RESOURCE", L"SE_VOL", 100, config.c_str())), 0, 100);
-        const wchar_t *keys[]{L"TileRed", L"TileGreen", L"TileBlue"};
+        value.se_volume = std::clamp(ReadIniInt(config, "RESOURCE", "SE_VOL", 100), 0, 100);
+        const char *keys[]{"TileRed", "TileGreen", "TileBlue"};
         for (unsigned i = 0; i < 3; ++i)
-            value.tile_rgb[i] = std::clamp(static_cast<int>(GetPrivateProfileIntW(
-                                               L"REBUILD", keys[i], value.tile_rgb[i], config.c_str())), 0, 256);
-        const auto lhsv = PreferenceString(config, L"RESOURCE", L"BG_LHSV", L"2,0,255,255,,,,,,");
+            value.tile_rgb[i] = std::clamp(ReadIniInt(config, "REBUILD", keys[i], value.tile_rgb[i]), 0, 256);
+        const auto lhsv = ReadIniString(config, "RESOURCE", "BG_LHSV", "2,0,255,255,,,,,,");
         std::size_t start = 0;
         for (unsigned i = 0; i < 10 && start <= lhsv.size(); ++i) {
-            const auto end = lhsv.find(L',', start);
-            const auto text = lhsv.substr(start, end == std::wstring::npos ? end : end - start);
+            const auto end = lhsv.find(',', start);
+            const auto text = lhsv.substr(start, end == std::string::npos ? end : end - start);
             // Empty fields intentionally disable the corresponding original edit.
             value.background_lhsv[i] = text;
-            if (end == std::wstring::npos) break;
+            if (end == std::string::npos) break;
             start = end + 1;
         }
-        value.background_source = PreferenceString(config, L"RESOURCE", L"BG_SRC");
+        value.background_source = ReadIniString(config, "RESOURCE", "BG_SRC");
+        value.hd_artwork = ReadIniInt(config, "REBUILD", "HdArtwork", 0) != 0;
         return value;
     }
 
-    std::wstring ClientPreferences::BackgroundLhsv() const {
-        std::wstring value;
+    std::string ClientPreferences::BackgroundLhsv() const {
+        std::string value;
         for (unsigned i = 0; i < background_lhsv.size(); ++i) {
-            if (i) value += L',';
+            if (i) value += ',';
             value += background_lhsv[i];
         }
         return value;
@@ -63,25 +62,26 @@ namespace tenhou {
         };
     }
 
-    std::wstring PreferenceString(const std::filesystem::path &config, const wchar_t *section,
-                                  const wchar_t *key, const wchar_t *fallback) {
-        std::wstring result(32768, L'\0');
-        const auto length = GetPrivateProfileStringW(section, key, fallback, result.data(),
-                                                     static_cast<DWORD>(result.size()), config.c_str());
-        if (length >= result.size() - 2) throw std::runtime_error("Preference value too long");
-        result.resize(length);
+    std::string PreferenceString(const std::filesystem::path &config, std::string_view section,
+                                 std::string_view key, std::string_view fallback) {
+        auto result = ReadIniString(config, section, key, fallback);
+        if (result.size() >= 32766) throw std::runtime_error("Preference value too long");
         return result;
     }
 
-    void WritePreference(const std::filesystem::path &config, const wchar_t *section,
-                         const wchar_t *key, const wchar_t *value) {
-        if (!WritePrivateProfileStringW(section, key, value, config.c_str()))
-            throw std::runtime_error("Cannot write client preferences (Win32 " + std::to_string(GetLastError()) + ")");
+    int PreferenceInt(const std::filesystem::path &config, std::string_view section,
+                      std::string_view key, int fallback) {
+        return ReadIniInt(config, section, key, fallback);
     }
 
-    void WritePreferenceInt(const std::filesystem::path &config, const wchar_t *section,
-                            const wchar_t *key, int value) {
-        const auto text = std::to_wstring(value);
-        WritePreference(config, section, key, text.c_str());
+    void WritePreference(const std::filesystem::path &config, std::string_view section,
+                         std::string_view key, const char *value) {
+        WriteIniString(config, section, key,
+                       value ? std::optional<std::string_view>(value) : std::nullopt);
+    }
+
+    void WritePreferenceInt(const std::filesystem::path &config, std::string_view section,
+                            std::string_view key, int value) {
+        WriteIniInt(config, section, key, value);
     }
 } // namespace tenhou

@@ -2,6 +2,7 @@
 #include "original_button.hpp"
 #include "network_protocol.hpp"
 #include "room_settings_view.hpp"
+#include "win32_utf.hpp"
 #include <commctrl.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -89,6 +90,12 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         InvalidateRect(window_, nullptr, FALSE);
     }
 
+    void MatchmakingView::SetHdArtwork(bool enabled) {
+        if (hd_artwork_ == enabled) return;
+        hd_artwork_ = enabled;
+        InvalidateRect(window_, nullptr, FALSE);
+    }
+
     void MatchmakingView::Reset() {
         draft_.Reset();
         custom_ = false;
@@ -108,7 +115,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             auto control = controls_.at(5250);
             SendMessageW(control, CB_RESETCONTENT, 0, 0);
             for (const auto &queue: s.queues) {
-                const auto name = NetworkWide(queue.name);
+                const auto name = Utf8ToWide(queue.name);
                 SendMessageW(control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(name.c_str()));
             }
             SendMessageW(control, CB_SETCURSEL, 0, 0);
@@ -131,8 +138,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
                 {"ROOM_CAPACITY", L"房间号已用完"}, {"DRAINING", L"服务正在停止，暂停接受匹配"}
             };
             auto i = errors.find(s.native_error);
-            status_ = i == errors.end() ? NetworkWide(s.native_error) : i->second;
-        } else if (s.phase == LobbyPhase::Error) status_ = L"连接失败：" + NetworkWide(s.error);
+            status_ = i == errors.end() ? Utf8ToWide(s.native_error) : i->second;
+        } else if (s.phase == LobbyPhase::Error) status_ = L"连接失败：" + Utf8ToWide(s.error);
         else status_.clear();
         Update();
     }
@@ -205,7 +212,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             wchar_t number[64]{};
             GetWindowTextW(controls_.at(5232), number, 64);
             MatchmakingDraft target;
-            if (!target.JoinRoom(NetworkUtf8(number))) status_ = L"请输入 1000～9999 的四位房间号";
+            if (!target.JoinRoom(WideToUtf8(number))) status_ = L"请输入 1000～9999 的四位房间号";
             else request_("join", target.room(), {});
         }
         if (id == 5233) {
@@ -227,10 +234,19 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
 
     void MatchmakingView::Paint(HDC dc) {
         try {
-            const auto &frame = artwork_.Get(592);
-            if (frame.width != 590 || frame.height != 430) throw std::runtime_error("Invalid lobby resource 592 dimensions");
+            const auto &frame = hd_artwork_ ? artwork_.GetHd(592) : artwork_.Get(592);
+            if (!hd_artwork_ && (frame.width != 590 || frame.height != 430))
+                throw std::runtime_error("Invalid lobby resource 592 dimensions");
             Gdiplus::Graphics graphics(dc);
-            artwork_.Sprite(graphics, 592, 0, 0);
+            if (frame.width != 590 || frame.height != 430) {
+                Gdiplus::Bitmap bmp(frame.width, frame.height, frame.width * 4, PixelFormat32bppARGB,
+                                    const_cast<BYTE *>(frame.bgra.data()));
+                graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                graphics.DrawImage(&bmp, Gdiplus::Rect(0, 0, 590, 430),
+                                   0, 0, frame.width, frame.height, Gdiplus::UnitPixel);
+            } else {
+                artwork_.Sprite(graphics, 592, 0, 0);
+            }
         } catch (const std::exception &) {
             const RECT panel{0, 0, 590, 430};
             FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
@@ -260,7 +276,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         if (snapshot_.phase == LobbyPhase::Matching || snapshot_.phase == LobbyPhase::Cancelling) {
             std::wstring name = L"大厅战";
             if (!draft_.room()) for (const auto &queue: snapshot_.queues) if (queue.type == snapshot_.match_type)
-                name = NetworkWide(queue.name);
+                name = Utf8ToWide(queue.name);
             Label(dc, name.c_str(), {340, 65, 560, 125}, DT_LEFT | DT_WORDBREAK);
             Label(dc, snapshot_.phase == LobbyPhase::Cancelling
                           ? L"等待取消确认"
@@ -273,7 +289,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             if (custom_ &&draft_.intent() == RoomIntent::Create)
             {
                 const auto rule = snapshot_.rules.find(draft_.settings().at("rule"));
-                const std::wstring summary = rule == snapshot_.rules.end() ? L"未知规则" : NetworkWide(rule->second.name);
+                const std::wstring summary = rule == snapshot_.rules.end() ? L"未知规则" : Utf8ToWide(rule->second.name);
                 Label(dc, summary.c_str(), {340, 166, 560, 210}, DT_LEFT | DT_WORDBREAK);
             }
         }
@@ -283,7 +299,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         if (!snapshot_.profile.empty()) {
             auto value = [&](const std::string &key) {
                 auto i = snapshot_.profile.find(key);
-                return i == snapshot_.profile.end() ? std::wstring() : NetworkWide(i->second);
+                return i == snapshot_.profile.end() ? std::wstring() : Utf8ToWide(i->second);
             };
             auto text = value("nickname");
             if (value("account").empty()) text += L"\n访客，会话文件用于断线恢复";
@@ -304,7 +320,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
             SetTextColor(dc, RGB(180, 32, 32));
             Label(dc, status_.c_str(), {30, 398, 565, 420});
         } else if (!snapshot_.replay_status.empty()) {
-            auto text = NetworkWide(snapshot_.replay_status);
+            auto text = Utf8ToWide(snapshot_.replay_status);
             Label(dc, text.c_str(), {30, 395, 580, 427}, DT_LEFT | DT_WORDBREAK);
         }
         SelectObject(dc, old);

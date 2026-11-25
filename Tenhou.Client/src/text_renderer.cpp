@@ -1,4 +1,5 @@
 #include "text_renderer.hpp"
+#include "win32_utf.hpp"
 #include <usp10.h>
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 
 namespace tenhou {
     namespace {
@@ -226,7 +228,8 @@ namespace tenhou {
     const FontFamily &TextFontService::family() const { return *impl_->family; }
     bool TextFontService::native_bold() const { return impl_->bold; }
     bool TextFontService::private_font() const { return impl_->private_source; }
-    std::vector<std::uint32_t> TextFontService::MissingGlyphs(std::wstring_view text) const {
+    std::vector<std::uint32_t> TextFontService::MissingGlyphs(std::string_view utf8_text) const {
+        const auto text = Utf8ToWide(utf8_text);
         std::set<std::uint32_t> missing;
         for (std::size_t i = 0; i < text.size(); ++i) {
             std::uint32_t c = text[i];
@@ -259,17 +262,62 @@ namespace tenhou {
         const TextFontService &font;
         TextRenderProfile profile;
         Bitmap measurement{1, 1, PixelFormat32bppPARGB};
-        struct LayoutEntry { std::wstring text; TextStyleKey style; TextComposition composition; TextLayout layout; };
+        struct LayoutKey {
+            std::string text;
+            TextStyleKey style;
+            TextComposition composition;
+            bool operator==(const LayoutKey &other) const {
+                return style == other.style && composition == other.composition && text == other.text;
+            }
+        };
+        struct LayoutKeyHash {
+            std::size_t operator()(const LayoutKey &k) const noexcept {
+                std::size_t h = std::hash<std::string>{}(k.text);
+                h ^= std::hash<int>{}(static_cast<int>(k.style)) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                h ^= std::hash<int>{}(static_cast<int>(k.composition)) + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                return h;
+            }
+        };
+        struct LayoutEntry { LayoutKey key; TextLayout layout; };
+        struct RasterKey {
+            const TextLayoutData *layout = nullptr;
+            std::array<REAL, 6> matrix{};
+            unsigned dpi = 0;
+            int width = 0, height = 0;
+            bool operator==(const RasterKey &other) const {
+                return layout == other.layout && dpi == other.dpi &&
+                       width == other.width && height == other.height &&
+                       matrix == other.matrix;
+            }
+        };
+        struct RasterKeyHash {
+            std::size_t operator()(const RasterKey &k) const noexcept {
+                auto mix = [](std::size_t &h, std::size_t v) {
+                    h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                };
+                std::size_t h = std::hash<const void *>{}(k.layout);
+                mix(h, std::hash<unsigned>{}(k.dpi));
+                mix(h, std::hash<int>{}(k.width));
+                mix(h, std::hash<int>{}(k.height));
+                for (REAL f : k.matrix) {
+                    const float normalized = (f == 0.0f) ? 0.0f : f;
+                    std::uint32_t bits = 0;
+                    std::memcpy(&bits, &normalized, sizeof(bits));
+                    mix(h, std::hash<std::uint32_t>{}(bits));
+                }
+                return h;
+            }
+        };
         struct RasterEntry {
+            RasterKey key;
             std::shared_ptr<const TextLayoutData> layout;
-            std::array<REAL, 6> matrix;
-            unsigned dpi;
-            Rect bounds;
             std::shared_ptr<const RasterData> raster;
             std::size_t bytes;
         };
         std::list<LayoutEntry> layouts;
+        std::unordered_map<LayoutKey, std::list<LayoutEntry>::iterator, LayoutKeyHash> layout_index;
         std::list<RasterEntry> rasters;
+        std::unordered_map<RasterKey, std::list<RasterEntry>::iterator, RasterKeyHash> raster_index;
         std::size_t serial = 0, raster_bytes = 0;
         std::size_t raster_builds = 0, raster_hits = 0;
         Impl(const TextFontService &f, TextRenderProfile p) : font(f), profile(p) {
@@ -336,17 +384,19 @@ namespace tenhou {
             if (glyphs.GetPointCount() > 0) Check(path.AddPath(&glyphs, FALSE), "Cannot append text outline");
             return advance;
         }
-        TextLayout Layout(std::wstring_view text, TextStyleKey key, TextComposition composition) {
-            if (text.size() > 4096 || text.find_first_of(L"\r\n\t") != std::wstring_view::npos)
+        TextLayout Layout(std::string_view utf8_text, TextStyleKey key, TextComposition composition) {
+            const auto text = Utf8ToWide(utf8_text);
+            if (text.size() > 4096 || text.find_first_of(L"\r\n\t") != std::wstring::npos)
                 throw std::runtime_error("TextRenderer requires a single line of at most 4096 UTF-16 units");
-            for (auto it = layouts.begin(); it != layouts.end(); ++it) {
-                if (it->text == text && it->style == key && it->composition == composition) {
-                    auto result = it->layout; layouts.splice(layouts.begin(), layouts, it); return result;
-                }
+            LayoutKey lookup{std::string(utf8_text), key, composition};
+            if (const auto it = layout_index.find(lookup); it != layout_index.end()) {
+                auto result = it->second->layout;
+                layouts.splice(layouts.begin(), layouts, it->second);
+                return result;
             }
             const auto *style = FindTextStyle(key);
             if (!style) throw std::runtime_error("Invalid text style");
-            if (style->font != L"HGSeikaishotaiPRO") throw std::runtime_error("Text style requires an unsupported font family");
+            if (style->font != "HGSeikaishotaiPRO") throw std::runtime_error("Text style requires an unsupported font family");
             auto data = std::make_shared<TextLayoutData>(); data->style = *style; data->serial = ++serial;
             auto &metrics = data->metrics;
             const auto face = style->bold && font.native_bold() ? FontStyleBold : FontStyleRegular;
@@ -354,11 +404,11 @@ namespace tenhou {
             if (!units) throw std::runtime_error("Invalid font metrics");
             metrics.line_height = style->size_pt * kPt * font.family().GetLineSpacing(face) / units;
             if (composition == TextComposition::chi_selection) {
-                metrics.advance = AddText(data->path, kChiSelection.main, *style);
+                metrics.advance = AddText(data->path, Utf8ToWide(kChiSelection.main), *style);
                 auto secondary = *style; secondary.size_pt = kChiSelection.secondary_size_pt.value(); secondary.spacing_pt = 0;
                 const auto y = (style->size_pt - secondary.size_pt + profile.chi_secondary_drop_pt) * kPt;
                 const auto x = metrics.advance + profile.chi_secondary_gap_pt * kPt;
-                metrics.advance = x + AddText(data->path, kChiSelection.secondary, secondary, x, y);
+                metrics.advance = x + AddText(data->path, Utf8ToWide(kChiSelection.secondary), secondary, x, y);
             } else metrics.advance = AddText(data->path, text, *style);
             if (data->path.GetPointCount() > 0) Check(data->path.GetBounds(&metrics.ink), "Cannot measure text ink");
             metrics.effects = metrics.ink;
@@ -384,8 +434,12 @@ namespace tenhou {
                 metrics.effects = Union(metrics.effects, data->info_rect);
             }
             TextLayout result{metrics, data};
-            layouts.push_front({std::wstring(text), key, composition, result});
-            if (layouts.size() > kLayoutLimit) layouts.pop_back();
+            layouts.push_front({std::move(lookup), result});
+            layout_index.emplace(layouts.front().key, layouts.begin());
+            if (layouts.size() > kLayoutLimit) {
+                layout_index.erase(layouts.back().key);
+                layouts.pop_back();
+            }
             return result;
         }
     };
@@ -409,7 +463,9 @@ namespace tenhou {
         if (!text) throw std::runtime_error("Invalid text key");
         return impl_->Layout(text->label, text->style, text->composition);
     }
-    TextLayout TextRenderer::Layout(std::wstring_view text, TextStyleKey style) { return impl_->Layout(text, style, TextComposition::plain); }
+    TextLayout TextRenderer::Layout(std::string_view utf8_text, TextStyleKey style) {
+        return impl_->Layout(utf8_text, style, TextComposition::plain);
+    }
 
     SceneTextRun TextRenderer::Caption(TextKey key, PointF center, double scale, double opacity) {
         const auto *definition = FindText(key);
@@ -476,10 +532,11 @@ namespace tenhou {
         const auto left = Real(device.X), top = Real(device.Y);
         // Cache translation only by subpixel phase; integer movement can reuse the same raster.
         elements[4] -= left; elements[5] -= top;
+        const Impl::RasterKey rkey{run.layout.data.get(), elements, context.dpi, device.Width, device.Height};
         auto found = impl_->rasters.end();
-        for (auto it = impl_->rasters.begin(); it != impl_->rasters.end(); ++it)
-            if (it->layout == run.layout.data && it->matrix == elements && it->dpi == context.dpi &&
-                it->bounds.Width == device.Width && it->bounds.Height == device.Height) { found = it; break; }
+        if (const auto idx = impl_->raster_index.find(rkey); idx != impl_->raster_index.end()) {
+            found = idx->second;
+        }
         if (found == impl_->rasters.end()) {
             ++impl_->raster_builds;
             auto raster = std::make_shared<RasterData>(device.Width, device.Height);
@@ -520,7 +577,8 @@ namespace tenhou {
             SolidBrush fill(Palette(data.style.fill)); Check(g.FillPath(&fill, &data.path), "Cannot fill text outline");
             g.Flush(FlushIntentionSync);
             const auto bytes = static_cast<std::size_t>(device.Width) * device.Height * 4;
-            impl_->rasters.push_front({run.layout.data, elements, context.dpi, device, std::move(raster), bytes});
+            impl_->rasters.push_front({rkey, run.layout.data, std::move(raster), bytes});
+            impl_->raster_index.emplace(impl_->rasters.front().key, impl_->rasters.begin());
             impl_->raster_bytes += bytes; found = impl_->rasters.begin();
         } else {
             ++impl_->raster_hits;
@@ -529,7 +587,9 @@ namespace tenhou {
         auto result = found->raster;
         // Oversized individual rasters may be drawn once but are not retained.
         while (impl_->rasters.size() > kRasterLimit || impl_->raster_bytes > kRasterBytes) {
-            impl_->raster_bytes -= impl_->rasters.back().bytes; impl_->rasters.pop_back();
+            impl_->raster_bytes -= impl_->rasters.back().bytes;
+            impl_->raster_index.erase(impl_->rasters.back().key);
+            impl_->rasters.pop_back();
         }
         return result;
     }
@@ -566,5 +626,11 @@ namespace tenhou {
         return {impl_->layouts.size(), impl_->rasters.size(), impl_->raster_bytes,
                 impl_->serial, impl_->raster_builds, impl_->raster_hits};
     }
-    void TextRenderer::ClearCaches() { impl_->layouts.clear(); impl_->rasters.clear(); impl_->raster_bytes = 0; }
+    void TextRenderer::ClearCaches() {
+        impl_->layouts.clear();
+        impl_->layout_index.clear();
+        impl_->rasters.clear();
+        impl_->raster_index.clear();
+        impl_->raster_bytes = 0;
+    }
 }

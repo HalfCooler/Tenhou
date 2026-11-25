@@ -26,7 +26,7 @@ int main() {
             Check(!text.label.empty() && FindText(text.key) == &text, "semantic key lookup");
             Check(FindTextByOrigin(text.origin_id) == &text, "legacy adapter lookup");
             const auto *style = FindTextStyle(text.style);
-            Check(style && style->font == L"HGSeikaishotaiPRO" && style->size_pt > 0, "font/style reference");
+            Check(style && style->font == "HGSeikaishotaiPRO" && style->size_pt > 0, "font/style reference");
             Check(!FindTextImageByOrigin(text.origin_id), "text in image inventory");
             if (text.category == TextCategory::Info) {
                 ++info_count;
@@ -49,16 +49,16 @@ int main() {
         for (unsigned id = 401; id <= 705; ++id)
             Check(ids.count(id) == (id == 434 || id == 593 ? 0u : 1u), "complete original inventory");
         Check(!FindText(TextKey::Count) && !FindTextStyle(TextStyleKey::Count), "invalid enum lookup");
-        Check(FindTextByOrigin(481)->label == L"門前清自摸和" &&
+        Check(FindTextByOrigin(481)->label == "門前清自摸和" &&
             FindTextByOrigin(481)->style == TextStyleKey::yaku &&
             FindTextStyle(FindTextByOrigin(481)->style)->size_pt == 24 &&
             !FindTextStyle(FindTextByOrigin(481)->style)->bold &&
             !FindTextStyle(FindTextByOrigin(481)->style)->shadow, "481 ordinary yaku style correction");
-        Check(FindTextByOrigin(529)->label == L"国士無双13面" && FindTextByOrigin(607)->label == L"竜七対" &&
-            FindTextByOrigin(595)->label == L"交換" && FindTextByOrigin(594)->label == L"カンリョウ" &&
-            FindTextByOrigin(705)->label == L"国標", "exact specification glyphs");
+        Check(FindTextByOrigin(529)->label == "国士無双13面" && FindTextByOrigin(607)->label == "竜七対" &&
+            FindTextByOrigin(595)->label == "交換" && FindTextByOrigin(594)->label == "カンリョウ" &&
+            FindTextByOrigin(705)->label == "国標", "exact specification glyphs");
         Check(FindTextByOrigin(459)->composition == TextComposition::chi_selection &&
-            kChiSelection.main == L"チー" && kChiSelection.secondary == L"（選択）" &&
+            kChiSelection.main == "チー" && kChiSelection.secondary == "（選択）" &&
             kChiSelection.secondary_size_pt == 12, "chi selection secondary text is 12 pt");
         Check(FindTextByOrigin(424)->label == FindTextByOrigin(429)->label &&
             FindTextByOrigin(424)->label_key == FindTextByOrigin(429)->label_key &&
@@ -124,10 +124,10 @@ int main() {
         Check(SettlementText(state, 0, {}).find("竜七対") != std::string::npos && before == SettlementJson(state),
             "text details use display names without modifying server receipts");
         ActionCaptions captions;
-        captions.AcceptResource(594, 0, L"选择完毕");
+        captions.AcceptResource(594, 0, "选择完毕");
         Check(captions.Frames().front().text == TextLabel(TextKey::caption_complete), "completion caption fallback");
         const auto *dragon = FindTextRulePattern("sichuan_blood", "龙七对");
-        Check(dragon && FindText(dragon->text)->label == L"竜七対", "rule name is distinct from display label");
+        Check(dragon && FindText(dragon->text)->label == "竜七対", "rule name is distinct from display label");
         Check(!FindTextRulePattern("sichuan", "竜七対") && !FindTextRulePattern("guobiao", "unknown"),
             "unknown names remain available for caller fallback");
         std::cout << "Text catalog: 296 Text, 7 Image, 101 rule mappings checked\n";

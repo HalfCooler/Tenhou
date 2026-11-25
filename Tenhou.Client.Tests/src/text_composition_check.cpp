@@ -94,7 +94,7 @@ namespace {
         auto button = SceneTextRun{renderer.Layout(TextId(stage >= 2 ? 441 : 450)), {90, 270}};
         if (stage >= 8) button.transform = {1, .08, .12, 1, .25, .5};
         scene.Text(button, stage >= 7 ? std::optional<RectF>{{100, 260, 110, 55}} : std::nullopt);
-        scene.Text({renderer.Layout(std::to_wstring(stage >= 2 ? 99800 : 25000) + L" 点", FindTextByOrigin(481)->style), {90, 880}});
+        scene.Text({renderer.Layout(std::to_string(stage >= 2 ? 99800 : 25000) + " 点", FindTextByOrigin(481)->style), {90, 880}});
         const auto caption = [&] {
             if (stage != 6) scene.Text(renderer.Caption(TextId(594), {720, 550}, stage >= 8 ? .83 : 1, stage >= 5 ? .35 : 1));
         };
@@ -189,7 +189,7 @@ namespace {
         Surface surface(600, 100);
         for (int i = 0; i < 300; ++i) {
             Graphics g(surface.dc);
-            renderer.Draw(g, {}, {renderer.Layout(std::to_wstring(i) + L" 点", FindTextByOrigin(481)->style), {0, 0}});
+            renderer.Draw(g, {}, {renderer.Layout(std::to_string(i) + " 点", FindTextByOrigin(481)->style), {0, 0}});
         }
         const auto stats = renderer.CacheStats();
         Require(stats.layouts <= 256 && stats.rasters <= 64 && stats.raster_bytes <= 32 * 1024 * 1024, "Unbounded text cache");

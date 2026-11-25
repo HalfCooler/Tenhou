@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 590 430">
+  <defs>
+    <linearGradient id="topVig" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="26">
+      <stop offset="0%" stop-color="#bcbcbc" stop-opacity="0.72"/>
+      <stop offset="52%" stop-color="#dadada" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="botVig" gradientUnits="userSpaceOnUse" x1="0" y1="430" x2="0" y2="404">
+      <stop offset="0%" stop-color="#bcbcbc" stop-opacity="0.72"/>
+      <stop offset="52%" stop-color="#dadada" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="leftVig" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="26" y2="0">
+      <stop offset="0%" stop-color="#bcbcbc" stop-opacity="0.72"/>
+      <stop offset="52%" stop-color="#dadada" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rightVig" gradientUnits="userSpaceOnUse" x1="590" y1="0" x2="564" y2="0">
+      <stop offset="0%" stop-color="#bcbcbc" stop-opacity="0.72"/>
+      <stop offset="52%" stop-color="#dadada" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="hFade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="590" y2="0">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="28%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.96"/>
+      <stop offset="72%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="vFade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="430">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="26%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.96"/>
+      <stop offset="74%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="hBarMain" gradientUnits="userSpaceOnUse" x1="24" y1="0" x2="566" y2="0">
+      <stop offset="0%" stop-color="#686868" stop-opacity="1"/>
+      <stop offset="24%" stop-color="#848484" stop-opacity="0.72"/>
+      <stop offset="38%" stop-color="#b4b4b4" stop-opacity="0"/>
+      <stop offset="62%" stop-color="#b4b4b4" stop-opacity="0"/>
+      <stop offset="76%" stop-color="#848484" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#686868" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="hBarSub" gradientUnits="userSpaceOnUse" x1="24" y1="0" x2="566" y2="0">
+      <stop offset="0%" stop-color="#a2a2a2" stop-opacity="0.72"/>
+      <stop offset="22%" stop-color="#b8b8b8" stop-opacity="0.40"/>
+      <stop offset="35%" stop-color="#d0d0d0" stop-opacity="0"/>
+      <stop offset="65%" stop-color="#d0d0d0" stop-opacity="0"/>
+      <stop offset="78%" stop-color="#b8b8b8" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#a2a2a2" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="vBarMain" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="410">
+      <stop offset="0%" stop-color="#686868" stop-opacity="1"/>
+      <stop offset="22%" stop-color="#848484" stop-opacity="0.72"/>
+      <stop offset="36%" stop-color="#b4b4b4" stop-opacity="0"/>
+      <stop offset="64%" stop-color="#b4b4b4" stop-opacity="0"/>
+      <stop offset="78%" stop-color="#848484" stop-opacity="0.72"/>
+      <stop offset="100%" stop-color="#686868" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="vBarSub" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="410">
+      <stop offset="0%" stop-color="#a2a2a2" stop-opacity="0.72"/>
+      <stop offset="20%" stop-color="#b8b8b8" stop-opacity="0.40"/>
+      <stop offset="34%" stop-color="#d0d0d0" stop-opacity="0"/>
+      <stop offset="66%" stop-color="#d0d0d0" stop-opacity="0"/>
+      <stop offset="80%" stop-color="#b8b8b8" stop-opacity="0.40"/>
+      <stop offset="100%" stop-color="#a2a2a2" stop-opacity="0.72"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="590" height="430" fill="#ffffff"/>
+
+  <!-- Soft grey perimeter framing bands -->
+  <rect x="0" y="0" width="590" height="26" fill="url(#topVig)"/>
+  <rect x="0" y="404" width="590" height="26" fill="url(#botVig)"/>
+  <rect x="0" y="0" width="26" height="430" fill="url(#leftVig)"/>
+  <rect x="564" y="0" width="26" height="430" fill="url(#rightVig)"/>
+
+  <!-- Edge-center white fade -->
+  <rect x="0" y="1" width="590" height="28" fill="url(#hFade)"/>
+  <rect x="0" y="401" width="590" height="28" fill="url(#hFade)"/>
+  <rect x="1" y="0" width="28" height="430" fill="url(#vFade)"/>
+  <rect x="561" y="0" width="28" height="430" fill="url(#vFade)"/>
+
+  <!-- Connected double inner border bars (filled rects with userSpaceOnUse gradients) -->
+  <rect x="24" y="14.0" width="542" height="1.15" fill="url(#hBarMain)"/>
+  <rect x="24" y="17.2" width="542" height="0.85" fill="url(#hBarSub)"/>
+  <rect x="24" y="414.85" width="542" height="1.15" fill="url(#hBarMain)"/>
+  <rect x="24" y="411.95" width="542" height="0.85" fill="url(#hBarSub)"/>
+
+  <rect x="14.0" y="20" width="1.15" height="390" fill="url(#vBarMain)"/>
+  <rect x="17.2" y="20" width="0.85" height="390" fill="url(#vBarSub)"/>
+  <rect x="574.85" y="20" width="1.15" height="390" fill="url(#vBarMain)"/>
+  <rect x="571.95" y="20" width="0.85" height="390" fill="url(#vBarSub)"/>
+
+  <!-- Four symmetrical meander (雷纹) corner ornaments joined to border bars -->
+  <g fill="none" stroke="#686868" stroke-width="1.15" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M 14.5 20.5 L 14.5 17.5 L 11.5 17.5 L 11.5 8.5 L 24.5 8.5 L 24.5 14.5 M 24.5 14.5 L 21.5 14.5 L 21.5 11.5 L 14.5 11.5 L 14.5 14.5 L 17.5 14.5 L 17.5 17.5 L 21.5 17.5 L 21.5 20.5 L 14.5 20.5"/>
+    <g transform="translate(590, 0) scale(-1, 1)"><path d="M 14.5 20.5 L 14.5 17.5 L 11.5 17.5 L 11.5 8.5 L 24.5 8.5 L 24.5 14.5 M 24.5 14.5 L 21.5 14.5 L 21.5 11.5 L 14.5 11.5 L 14.5 14.5 L 17.5 14.5 L 17.5 17.5 L 21.5 17.5 L 21.5 20.5 L 14.5 20.5"/></g>
+    <g transform="translate(0, 430) scale(1, -1)"><path d="M 14.5 20.5 L 14.5 17.5 L 11.5 17.5 L 11.5 8.5 L 24.5 8.5 L 24.5 14.5 M 24.5 14.5 L 21.5 14.5 L 21.5 11.5 L 14.5 11.5 L 14.5 14.5 L 17.5 14.5 L 17.5 17.5 L 21.5 17.5 L 21.5 20.5 L 14.5 20.5"/></g>
+    <g transform="translate(590, 430) scale(-1, -1)"><path d="M 14.5 20.5 L 14.5 17.5 L 11.5 17.5 L 11.5 8.5 L 24.5 8.5 L 24.5 14.5 M 24.5 14.5 L 21.5 14.5 L 21.5 11.5 L 14.5 11.5 L 14.5 14.5 L 17.5 14.5 L 17.5 17.5 L 21.5 17.5 L 21.5 20.5 L 14.5 20.5"/></g>
+  </g>
+
+  <!-- Crisp 1px outer frame border -->
+  <rect x="0.5" y="0.5" width="589" height="429" fill="none" stroke="#424242" stroke-width="1"/>
+</svg>

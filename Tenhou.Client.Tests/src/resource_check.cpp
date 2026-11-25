@@ -1,10 +1,14 @@
 #include "resource_manager.hpp"
 #include "object_pack.hpp"
 #include "background.hpp"
+#include "ini_store.hpp"
 #include "music_preferences.hpp"
 #include "original_display.hpp"
 #include "replay_effects.hpp"
+#include "shared_assets.hpp"
 #include "sprite_assets.hpp"
+#include "table_scene.hpp"
+#include "win32_utf.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -46,7 +50,7 @@ namespace {
             if (!std::filesystem::is_regular_file(resources.Path(sprite.asset)) && bundled.Get(sprite.id).bgra != original.bgra)
                 throw std::runtime_error("DAT display fallback differs for image " + std::to_string(sprite.id));
 
-            const auto path = fixture / ResourceManager::Info(sprite.asset).path;
+            const auto path = fixture / PathFromUtf8(ResourceManager::Info(sprite.asset).path);
             std::filesystem::create_directories(path.parent_path());
             WriteFile(path, png);
             const auto *custom = overrides.GetSprite(sprite.id);
@@ -70,7 +74,7 @@ int main(int argc, char **argv) {
             throw std::runtime_error("Cannot initialize GDI+");
         tenhou::ResourceManager resources(argv[1]);
         for (const auto &asset : tenhou::kClientAssets) {
-            const auto original = std::filesystem::path(argv[2]) / asset.path;
+            const auto original = std::filesystem::path(argv[2]) / tenhou::PathFromUtf8(asset.path);
             if (!asset.required && !std::filesystem::exists(original)) continue;
             if (resources.Read(asset.id) != tenhou::ReadFile(original))
                 throw std::runtime_error(std::string("Asset bytes differ: ") + asset.name);
@@ -109,11 +113,18 @@ int main(int argc, char **argv) {
                 std::filesystem::remove(sound, error);
             }
         } cleanup{config, custom_sound};
-        tenhou::WritePreference(config, L"REBUILD", L"NetworkSound", L"0");
+        tenhou::WritePreference(config, "REBUILD", "NetworkSound", "0");
         if (tenhou::ClientPreferences::Load(config).se_volume != 100)
             throw std::runtime_error("Legacy NetworkSound must not mute original sound preferences");
+        tenhou::SharedAssets().ResetStats();
         tenhou::ReplaySoundBank sounds, flat_sounds;
         sounds.Load(argv[1], 1440, config);
+        {
+            tenhou::ReplaySoundBank cached_sounds;
+            cached_sounds.Load(argv[1], 1440, config);
+            if (tenhou::SharedAssets().Stats().sound_bank_hits == 0)
+                throw std::runtime_error("SharedAssetStore did not cache ReplaySoundBank");
+        }
         flat_sounds.Load(std::filesystem::path(argv[2]) / "packs", 1440, config);
         for (const auto &key: tenhou::SoundKeys()) {
             const auto &clip = sounds.Get(key.first);
@@ -125,29 +136,31 @@ int main(int argc, char **argv) {
                 throw std::runtime_error("Sound decode/legacy lookup failed: " + key.second);
         }
         for (const auto id: {tenhou::AssetId::LobbyMusic, tenhou::AssetId::LobbyMusicAlternate}) {
-            if (tenhou::DecodeMusic(resources.Read(id)).pcm.empty()) throw std::runtime_error("Empty lobby BGM");
+            const auto bgm = tenhou::DecodeMusic(resources.Read(id));
+            if (bgm.pcm.empty() || bgm.format.sample_rate != 44100 || bgm.format.channels != 2 || bgm.format.bits_per_sample != 16)
+                throw std::runtime_error("Invalid decoded lobby BGM");
         }
         const auto lobby_music = resources.Path(tenhou::AssetId::LobbyMusic);
-        if (tenhou::MusicPath(argv[1], config, L"BGM_LOBBY0") != lobby_music ||
-            tenhou::MusicPath(argv[1], config, L"BGM_LOBBY1") !=
+        if (tenhou::MusicPath(argv[1], config, "BGM_LOBBY0") != lobby_music ||
+            tenhou::MusicPath(argv[1], config, "BGM_LOBBY1") !=
                 resources.Path(tenhou::AssetId::LobbyMusicAlternate))
             throw std::runtime_error("Default lobby tracks must follow the original keys");
-        for (const auto key: {L"BGM_LOBBY0", L"BGM_LOBBY1"}) {
-            tenhou::WritePreference(config, L"RESOURCE", key, L"custom.wav");
+        for (const auto *key: {"BGM_LOBBY0", "BGM_LOBBY1"}) {
+            tenhou::WritePreference(config, "RESOURCE", key, "custom.wav");
             if (tenhou::MusicPath(argv[1], config, key) != config.parent_path() / "custom.wav")
                 throw std::runtime_error("Custom lobby BGM path was lost");
-            if (std::wstring_view(key) == L"BGM_LOBBY0" &&
+            if (std::string_view(key) == "BGM_LOBBY0" &&
                 tenhou::MusicPath(argv[1], config, key, true) != lobby_music)
                 throw std::runtime_error("Third-party lobby must use the built-in BGM");
-            tenhou::WritePreference(config, L"RESOURCE", key, L"none");
+            tenhou::WritePreference(config, "RESOURCE", key, "none");
             if (!tenhou::MusicPath(argv[1], config, key).empty() ||
                 !tenhou::MusicPath(argv[1], config, key, true).empty())
                 throw std::runtime_error("Lobby mute was lost");
-            tenhou::WritePreference(config, L"RESOURCE", key, nullptr);
+            tenhou::WritePreference(config, "RESOURCE", key, nullptr);
         }
-        if (!tenhou::MusicPath(argv[1], config, L"BGM_GAME0").empty())
+        if (!tenhou::MusicPath(argv[1], config, "BGM_GAME0").empty())
             throw std::runtime_error("Default game BGM must be silent");
-        tenhou::WritePreference(config, L"RESOURCE", L"SE_DA", L"none");
+        tenhou::WritePreference(config, "RESOURCE", "SE_DA", "none");
         tenhou::ReplaySoundBank muted;
         muted.Load(argv[1], 1440, config);
         if (muted.Get(103) || !muted.Get(105)) throw std::runtime_error("Per-sound mute affected another sound");
@@ -155,11 +168,56 @@ int main(int argc, char **argv) {
             [](const tenhou::Resource &entry) { return entry.id == 103; });
         if (sample == display.entries.end()) throw std::runtime_error("Missing custom sound fixture");
         tenhou::WriteFile(custom_sound, sample->payload);
-        tenhou::WritePreference(config, L"RESOURCE", L"SE_LOGIN", custom_sound.filename().c_str());
+        tenhou::WritePreference(config, "RESOURCE", "SE_LOGIN", tenhou::PathToUtf8(custom_sound.filename()));
         tenhou::ReplaySoundBank overridden;
         overridden.Load(argv[1], 1440, config);
         if (!overridden.Get(116) || overridden.Get(116)->sha256 != sounds.Get(103)->sha256)
             throw std::runtime_error("Optional sound relative override failed");
+
+        // Verify SharedAssetStore deduplicates ObjectPack, DisplayPack, TextFontService, and Background.
+        {
+            tenhou::SharedAssets().ResetStats();
+            tenhou::TableArtwork a1, a2;
+            a1.Load(argv[1], 1440);
+            a2.Load(argv[1], 1440);
+            tenhou::DisplayArtwork d1, d2;
+            d1.Configure(argv[1], 1440);
+            d2.Configure(argv[1], 1440);
+            (void) d1.Get(589);
+            (void) d2.Get(589);
+            (void) d1.Text();
+            (void) d2.Text();
+            const auto prefs = tenhou::ClientPreferences::Load(config);
+            (void) tenhou::BuildPreferredBackground(argv[1], config, 640, 480, prefs);
+            (void) tenhou::BuildPreferredBackground(argv[1], config, 640, 480, prefs);
+            const auto st = tenhou::SharedAssets().Stats();
+            if (st.object_pack_hits < 2 || st.display_pack_hits < 1 || st.font_hits < 1 || st.background_hits < 1)
+                throw std::runtime_error("SharedAssetStore failed to deduplicate shared packs/fonts/background");
+        }
+
+        // Verify ini_store legacy UTF-16 LE BOM reading, comment preservation, and UTF-8 roundtrip.
+        {
+            const auto utf16_ini = config.parent_path() / (config.stem().wstring() + L"-utf16.ini");
+            struct IniCleanup {
+                std::filesystem::path p;
+                ~IniCleanup() { std::error_code ec; std::filesystem::remove(p, ec); }
+            } ini_cleanup{utf16_ini};
+            const std::wstring content = L"; legacy comment\r\n[REBUILD]\r\nGreeting=你好世界\r\nNum=42\r\n";
+            tenhou::Bytes raw{0xFF, 0xFE};
+            for (wchar_t wc : content) {
+                raw.push_back(static_cast<std::uint8_t>(wc & 0xFF));
+                raw.push_back(static_cast<std::uint8_t>((wc >> 8) & 0xFF));
+            }
+            tenhou::WriteFile(utf16_ini, raw);
+            if (tenhou::ReadIniString(utf16_ini, "rebuild", "greeting") != "你好世界" ||
+                tenhou::ReadIniInt(utf16_ini, "REBUILD", "NUM", 0) != 42)
+                throw std::runtime_error("ini_store failed to read legacy UTF-16 LE BOM file");
+            tenhou::WriteIniString(utf16_ini, "REBUILD", "Num", "99");
+            if (tenhou::ReadIniString(utf16_ini, "REBUILD", "Greeting") != "你好世界" ||
+                tenhou::ReadIniInt(utf16_ini, "REBUILD", "Num", 0) != 99)
+                throw std::runtime_error("ini_store failed to preserve UTF-8 values after update");
+        }
+        tenhou::SharedAssets().Clear();
         if (argc == 4) {
             tenhou::ReplayAudio audio([](const std::string &line) { std::cout << line << '\n'; });
             for (const unsigned id: {104u, 105u, 103u, 112u, 137u, 155u}) {

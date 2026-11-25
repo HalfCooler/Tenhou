@@ -2,6 +2,8 @@
 #include "resource_manager.hpp"
 #include "background.hpp"
 #include "client_preferences.hpp"
+#include "variant_artwork.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -147,17 +149,29 @@ namespace tenhou {
         banner_ = {};
         background_ = {};
         try {
-            const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack),
-                [](unsigned id, unsigned metadata) { return id == 591 && metadata != 0; });
-            const auto found = std::find_if(pack.entries.begin(), pack.entries.end(),
-                                            [](const Resource &entry) { return entry.id == 591; });
-            if (found == pack.entries.end()) throw std::runtime_error("Original welcome frame resource 591 is missing");
-            banner_ = DecodeImage(*found);
-            if (banner_.width != 728 || banner_.height != 330) throw std::runtime_error(
-                "Original welcome frame dimensions changed");
+            const bool use_hd = !config.empty() && ClientPreferences::Load(config).hd_artwork;
+            bool loaded_hd = false;
+            if (use_hd) {
+                VariantArtwork variants;
+                variants.Configure(resources);
+                if (const auto *hd_banner = variants.GetHdSprite(591)) {
+                    banner_ = *hd_banner;
+                    loaded_hd = true;
+                }
+            }
+            if (!loaded_hd) {
+                const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack),
+                    [](unsigned id, unsigned metadata) { return id == 591 && metadata != 0; });
+                const auto found = std::find_if(pack.entries.begin(), pack.entries.end(),
+                                                [](const Resource &entry) { return entry.id == 591; });
+                if (found == pack.entries.end()) throw std::runtime_error("Original welcome frame resource 591 is missing");
+                banner_ = DecodeImage(*found);
+                if (banner_.width != 728 || banner_.height != 330) throw std::runtime_error(
+                    "Original welcome frame dimensions changed");
+            }
             background_ = BuildBackground(ResourceManager(resources).Path(AssetId::Background), screen_width, screen_height);
-            log_("WELCOME frame=591 size=728x330 canvas=" + std::to_string(screen_width) + "x" + std::to_string(
-                     screen_height));
+            log_("WELCOME frame=591 size=" + std::to_string(banner_.width) + "x" + std::to_string(banner_.height) +
+                 " canvas=" + std::to_string(screen_width) + "x" + std::to_string(screen_height));
         } catch (const std::exception &error) {
             error_ = error.what();
             log_("ERROR " + error_);
@@ -167,18 +181,14 @@ namespace tenhou {
     }
 
     void WelcomeView::LoadPreferences(const std::filesystem::path &config) {
-        wchar_t name[80]{};
-        GetPrivateProfileStringW(L"REBUILD", L"WelcomeName", L"NoName", name, 80, config.c_str());
-        SetWindowTextW(edit_, name);
+        SetWindowTextW(edit_, Utf8ToWide(PreferenceString(config, "REBUILD", "WelcomeName", "NoName")).c_str());
         // Remember official Tenhou login ID via [STATUS] UNAME (matching tenhou.exe.c:110564).
-        wchar_t official_name[80]{};
-        GetPrivateProfileStringW(L"STATUS", L"UNAME", L"NoName", official_name, 80, config.c_str());
-        SetWindowTextW(official_id_, official_name[0] ? official_name : L"NoName");
-        SetWindowTextW(host_, PreferenceString(config, L"REBUILD", L"NativeHost", L"localhost").c_str());
-        SetWindowTextW(port_, std::to_wstring(GetPrivateProfileIntW(L"REBUILD", L"NativePort", 10080,
-                                                                   config.c_str())).c_str());
-        SetGender(GetPrivateProfileIntW(L"REBUILD", L"WelcomeFemale", 0, config.c_str()) ? 'F' : 'M');
-        SetServer(GetPrivateProfileIntW(L"REBUILD", L"OfficialServer", 0, config.c_str()) != 0);
+        const auto official_name = PreferenceString(config, "STATUS", "UNAME", "NoName");
+        SetWindowTextW(official_id_, Utf8ToWide(official_name.empty() ? "NoName" : official_name).c_str());
+        SetWindowTextW(host_, Utf8ToWide(PreferenceString(config, "REBUILD", "NativeHost", "localhost")).c_str());
+        SetWindowTextW(port_, std::to_wstring(PreferenceInt(config, "REBUILD", "NativePort", 10080)).c_str());
+        SetGender(PreferenceInt(config, "REBUILD", "WelcomeFemale", 0) ? 'F' : 'M');
+        SetServer(PreferenceInt(config, "REBUILD", "OfficialServer", 0) != 0);
     }
 
     void WelcomeView::Arrange() {
@@ -223,19 +233,17 @@ namespace tenhou {
     }
 
     void WelcomeView::Save(const std::filesystem::path &config) {
-        const auto name = Identity();
-        const auto official = OfficialIdentity();
+        const auto name = WideToUtf8(Identity());
+        const auto official = WideToUtf8(OfficialIdentity());
         // Remember both local account name and official Tenhou ID ([STATUS] UNAME), never passwords.
-        if (!WritePrivateProfileStringW(L"REBUILD", L"WelcomeName", name.empty() ? L"NoName" : name.c_str(), config.c_str()) ||
-            !WritePrivateProfileStringW(L"REBUILD", L"WelcomeFemale", gender_ == 'F' ? L"1" : L"0", config.c_str()) ||
-            !WritePrivateProfileStringW(L"STATUS", L"UNAME", official.empty() ? L"NoName" : official.c_str(), config.c_str()))
-            throw std::runtime_error("Cannot save login preferences");
-        WritePreferenceInt(config, L"REBUILD", L"OfficialServer", official_server_ ? 1 : 0);
-        const auto host = Host();
-        if (!host.empty()) WritePreference(config, L"REBUILD", L"NativeHost", host.c_str());
+        WritePreference(config, "REBUILD", "WelcomeName", name.empty() ? "NoName" : name.c_str());
+        WritePreferenceInt(config, "REBUILD", "WelcomeFemale", gender_ == 'F' ? 1 : 0);
+        WritePreference(config, "STATUS", "UNAME", official.empty() ? "NoName" : official.c_str());
+        WritePreferenceInt(config, "REBUILD", "OfficialServer", official_server_ ? 1 : 0);
+        const auto host = WideToUtf8(Host());
+        if (!host.empty()) WritePreference(config, "REBUILD", "NativeHost", host.c_str());
         const auto port = Port();
-        if (port) WritePreferenceInt(config, L"REBUILD", L"NativePort", static_cast<int>(port));
-        WritePrivateProfileStringW(nullptr, nullptr, nullptr, config.c_str());
+        if (port) WritePreferenceInt(config, "REBUILD", "NativePort", static_cast<int>(port));
     }
 
     std::wstring WelcomeView::Identity() const {
@@ -264,7 +272,7 @@ namespace tenhou {
     }
 
     unsigned WelcomeView::Port() const {
-        const auto value = NetworkUtf8(EditText(port_));
+        const auto value = WideToUtf8(EditText(port_));
         unsigned port = 0;
         const auto end = value.data() + value.size();
         const auto parsed = std::from_chars(value.data(), end, port);
@@ -355,13 +363,31 @@ namespace tenhou {
         RECT bounds{};
         GetClientRect(viewport_, &bounds);
         Fill(dc, bounds, RGB(30, 40, 50));
-        if (!background_.bgra.empty()) ImageAt(dc, background_, (bounds.right - background_.width) / 2,
-                                               (bounds.bottom - background_.height) / 2);
+        if (background_.bgra.empty() || bounds.right <= 0 || bounds.bottom <= 0) return;
+        if (bounds.right == background_.width && bounds.bottom == background_.height) {
+            ImageAt(dc, background_, 0, 0);
+        } else {
+            Gdiplus::Bitmap bmp(background_.width, background_.height, background_.width * 4,
+                                PixelFormat32bppARGB, const_cast<BYTE *>(background_.bgra.data()));
+            Gdiplus::Graphics g(dc);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.DrawImage(&bmp, Gdiplus::Rect(0, 0, bounds.right, bounds.bottom),
+                        0, 0, background_.width, background_.height, Gdiplus::UnitPixel);
+        }
     }
 
     void WelcomeView::PaintPanel(HDC dc) {
         Fill(dc, {0, 0, 728, 330}, RGB(255, 255, 255));
-        ImageAt(dc, banner_, 0, 0);
+        if (!banner_.bgra.empty() && (banner_.width != 728 || banner_.height != 330)) {
+            Gdiplus::Bitmap bmp(banner_.width, banner_.height, banner_.width * 4,
+                                PixelFormat32bppARGB, const_cast<BYTE *>(banner_.bgra.data()));
+            Gdiplus::Graphics g(dc);
+            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            g.DrawImage(&bmp, Gdiplus::Rect(0, 0, 728, 330),
+                        0, 0, banner_.width, banner_.height, Gdiplus::UnitPixel);
+        } else {
+            ImageAt(dc, banner_, 0, 0);
+        }
         const auto old_font = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(90, 90, 90));
@@ -534,7 +560,7 @@ LRESULT CALLBACK WelcomeView::PanelProc(HWND window, UINT message, WPARAM wparam
                     view->action_(Action::ServerChanged);
                 } else view->Command(LOWORD(wparam));
             } catch (const std::exception &error) {
-                view->SetLoginState(false, NetworkWide(error.what()));
+                view->SetLoginState(false, Utf8ToWide(error.what()));
                 view->log_(std::string("LOGIN ERROR ") + error.what());
             }
             return 0;

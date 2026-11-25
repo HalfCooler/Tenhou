@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Build and stage the MSVC x86 client. Use -Clean to remove its outputs.
+Build and stage the MSVC x64 client. Use -Clean to remove its outputs.
 .DESCRIPTION
 Supports -Configuration Release|Debug, -Clean, -Fresh, -CMake PATH, -VsDevCmd PATH.
 Use ../Build-Tenhou.ps1 for the solution's local tool settings.

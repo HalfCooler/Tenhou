@@ -1,4 +1,5 @@
 #include "resource_manager.hpp"
+#include "win32_utf.hpp"
 #include <windows.h>
 #include <stdexcept>
 
@@ -13,9 +14,9 @@ namespace tenhou {
     std::filesystem::path ResourceManager::Path(AssetId id) const {
         const auto &asset = Info(id);
         if (asset.embedded_id) throw std::runtime_error(std::string("Embedded asset has no file path: ") + asset.name);
-        const auto path = directory_ / asset.path;
+        const auto path = directory_ / PathFromUtf8(asset.path);
         if (std::filesystem::is_regular_file(path)) return path;
-        const auto legacy = directory_ / asset.legacy_filename;
+        const auto legacy = directory_ / PathFromUtf8(asset.legacy_filename);
         if (std::filesystem::is_regular_file(legacy)) return legacy;
         return path; // Let the format loader report the missing canonical path.
     }

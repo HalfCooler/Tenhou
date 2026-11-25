@@ -71,7 +71,7 @@ function Invoke-TenhouNativeBuild {
         if (!$VsDevCmd -and $env:VSINSTALLDIR) { $VsDevCmd = Join-Path $env:VSINSTALLDIR 'Common7/Tools/VsDevCmd.bat' }
     }
     if (!$VsDevCmd -or !(Test-Path -LiteralPath $VsDevCmd -PathType Leaf)) {
-        throw 'MSVC x86 is required. Set LocalEnvironment.VsDevCmd in Build-Tenhou.ps1 or pass -VsDevCmd PATH.'
+        throw 'MSVC x64 is required. Set LocalEnvironment.VsDevCmd in Build-Tenhou.ps1 or pass -VsDevCmd PATH.'
     }
     $VsDevCmd = (Resolve-Path -LiteralPath $VsDevCmd).Path
     foreach ($path in @($SourceDirectory, $BuildDirectory, $OutputDirectory, $CMake, $VsDevCmd)) {
@@ -86,7 +86,7 @@ function Invoke-TenhouNativeBuild {
     $compile = '"{0}" --build "{1}" --target {2}' -f $CMake, $BuildDirectory, $Target
     $batchPath = Join-Path $env:TEMP ('tenhou-build-' + [guid]::NewGuid().ToString('N') + '.cmd')
     try {
-        $lines = @('@echo off', 'chcp 65001 >nul', ('call "{0}" -no_logo -arch=x86 -host_arch=x64' -f $VsDevCmd),
+        $lines = @('@echo off', 'chcp 65001 >nul', ('call "{0}" -no_logo -arch=x64 -host_arch=x64' -f $VsDevCmd),
             'if errorlevel 1 exit /b 1', 'set VSLANG=1033', $configure, 'if errorlevel 1 exit /b 1', $compile, 'exit /b %errorlevel%')
         [IO.File]::WriteAllLines($batchPath, $lines, [Text.UTF8Encoding]::new($false))
         & $env:ComSpec /d /c "`"$batchPath`""

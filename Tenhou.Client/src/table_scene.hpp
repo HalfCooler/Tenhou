@@ -1,9 +1,11 @@
 #pragma once
 #include "tile_geometry.hpp"
 #include "variant_artwork.hpp"
+#include <list>
 #include <map>
 #include <memory>
 #include <tuple>
+#include <unordered_map>
 
 namespace tenhou {
     class TableArtwork {
@@ -14,6 +16,7 @@ namespace tenhou {
             if (rgb_ != rgb) {
                 rgb_ = rgb;
                 cache_.clear();
+                lru_.clear();
                 flight_cache_.clear();
                 cached_bytes_ = 0;
             }
@@ -22,6 +25,9 @@ namespace tenhou {
         void Load(const std::filesystem::path &directory, int width);
 
         const ObjectImage &Get(const TableTile &tile, bool red = true);
+        // Blank tile body (variant 34 for face-up tiles, 37 for backs) colored with tile_rgb,
+        // used by the HD GPU perspective renderer before projecting SVG-baked faces.
+        const ObjectImage &GetBody(const TableTile &tile);
         const ObjectImage &GetFlight(const TileFlightImage &flight, bool red);
 
         TileOffset Offset(const TableTile &tile) { return geometry_.Offset(tile); }
@@ -45,11 +51,13 @@ namespace tenhou {
         VariantArtwork variants_;
 
         struct Cached {
+            std::uint32_t key = 0;
             ObjectImage image;
             std::uint64_t used = 0;
         };
 
-        std::map<std::uint32_t, Cached> cache_;
+        std::list<Cached> lru_;
+        std::unordered_map<std::uint32_t, std::list<Cached>::iterator> cache_;
         using FlightKey = std::tuple<std::uint32_t, unsigned, float, std::array<int, 8>>;
         std::map<FlightKey, ObjectImage> flight_cache_;
         std::uint64_t frame_ = 1;

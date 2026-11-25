@@ -87,13 +87,17 @@ namespace tenhou {
         void Configure(const std::filesystem::path &directory, int width);
 
         const Image &Get(unsigned id);
+        // Returns the high-resolution replacement sprite (images/sprites/hd/{id}.png)
+        // when present; otherwise falls back to the classic sprite Get(id).
+        const Image &GetHd(unsigned id);
 
         static float MeasureText(const std::string &text, float em);
 
         static std::array<float, 2> MeasureTextExtent(const std::string &text, float em);
 
         using HudSprite = std::function<void(unsigned, const Image &, int, int, const std::array<float, 6> &)>;
-        void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state, const HudSprite &draw_sprite = {});
+        void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state, const HudSprite &draw_sprite = {},
+                            float scale_x = 1.0f, float scale_y = 1.0f);
 
         void PaintChromeBackground(Gdiplus::Graphics &graphics, int hovered = -1);
 
@@ -106,7 +110,8 @@ namespace tenhou {
                           const std::array<bool, 4> &automatic = {true, false, false, false}, bool variant = false);
         void AppendStatus(FinalScene &scene, const ReplayState &state);
 
-        void PaintNukiCounts(Gdiplus::Graphics &graphics, const ReplayState &state, TableArtwork &tiles);
+        void PaintNukiCounts(Gdiplus::Graphics &graphics, const ReplayState &state, TableArtwork &tiles,
+                             float scale_x = 1.0f, float scale_y = 1.0f);
 
         void Sprite(Gdiplus::Graphics &graphics, unsigned id, int x, int y, bool cx = false, bool cy = false);
 
@@ -122,10 +127,10 @@ namespace tenhou {
         std::map<CaptionKey, std::shared_ptr<Gdiplus::GraphicsPath> > captions_;
         std::filesystem::path directory_;
         int width_ = 1440;
-        ResourcePack pack_;
+        std::shared_ptr<const ResourcePack> pack_;
         VariantArtwork variants_;
         std::map<unsigned, Image> images_;
-        std::unique_ptr<TextFontService> text_font_;
+        std::shared_ptr<const TextFontService> text_font_;
         std::unique_ptr<TextRenderer> text_renderer_;
     };
 } // namespace tenhou

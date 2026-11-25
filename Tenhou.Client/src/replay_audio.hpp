@@ -1,16 +1,26 @@
 #pragma once
 #include "resource_pack.hpp"
-#include <windows.h>
-#include <mmsystem.h>
 #include <array>
+#include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace tenhou {
+    struct AudioFormat {
+        std::uint32_t sample_rate = 0;
+        std::uint16_t channels = 0;
+        std::uint16_t bits_per_sample = 0;
+
+        std::uint16_t block_align() const { return static_cast<std::uint16_t>(channels * (bits_per_sample / 8)); }
+        std::uint32_t avg_bytes_per_sec() const { return sample_rate * block_align(); }
+    };
+
     struct SoundClip {
-        WAVEFORMATEX format{};
+        AudioFormat format{};
         Bytes pcm;
         std::string sha256;
     };
@@ -25,38 +35,19 @@ namespace tenhou {
 
     class BackgroundMusic {
     public:
-        explicit BackgroundMusic(std::function<void(const std::string &)> log) : log_(std::move(log)) {}
+        explicit BackgroundMusic(std::function<void(const std::string &)> log);
         ~BackgroundMusic();
 
         BackgroundMusic(const BackgroundMusic &) = delete;
         BackgroundMusic &operator=(const BackgroundMusic &) = delete;
 
-        void Select(HWND window, const std::filesystem::path &path = {}, bool seek = false, double gain = 1);
-        void BufferDone();
+        void Select(const std::filesystem::path &path = {}, bool seek = false, double gain = 1);
         void Stop();
         StereoLevels Levels() const;
 
     private:
-        struct Buffer {
-            WAVEHDR header{};
-            Bytes pcm;
-            DWORD start = 0;
-        };
-
-        void Start();
-        void Queue(Buffer &buffer);
-        void Close();
-
-        std::function<void(const std::string &)> log_;
-        HWND window_ = nullptr;
-        HWAVEOUT device_ = nullptr;
-        std::filesystem::path requested_, playing_;
-        bool seek_ = false;
-        double requested_gain_ = 1, gain_ = 1, envelope_ = 1;
-        SoundClip clip_;
-        std::array<Buffer, 4> buffers_;
-        std::size_t cursor_ = 0, next_buffer_ = 0;
-        DWORD queued_bytes_ = 0;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 
     class ReplaySoundBank {
@@ -65,19 +56,21 @@ namespace tenhou {
 
         const std::shared_ptr<const SoundClip> &Get(unsigned id) const;
 
-        const std::map<unsigned, std::shared_ptr<const SoundClip> > &clips() const { return clips_; }
+        const std::map<unsigned, std::shared_ptr<const SoundClip>> &clips() const { return *clips_; }
 
     private:
-        std::map<unsigned, std::shared_ptr<const SoundClip> > clips_;
+        std::shared_ptr<const std::map<unsigned, std::shared_ptr<const SoundClip>>> clips_ =
+            std::make_shared<const std::map<unsigned, std::shared_ptr<const SoundClip>>>();
     };
 
-    // Four reusable devices; no unbounded queue. Oldest voice is replaced at capacity.
+    // Four concurrent mixer voices; no unbounded queue. Oldest voice is replaced at capacity.
     class ReplayAudio {
     public:
-        explicit ReplayAudio(std::function<void(const std::string &)> log) : log_(std::move(log)) {
-        }
-
+        explicit ReplayAudio(std::function<void(const std::string &)> log);
         ~ReplayAudio();
+
+        ReplayAudio(const ReplayAudio &) = delete;
+        ReplayAudio &operator=(const ReplayAudio &) = delete;
 
         void Play(unsigned id, std::shared_ptr<const SoundClip> clip, bool loop = false,
                   double base_gain = double(.6f));
@@ -89,35 +82,12 @@ namespace tenhou {
         void Stop();
 
         bool Active() const;
-        ULONGLONG LastPlayedAt() const { return last_played_at_; }
+        std::uint64_t LastPlayedAt() const;
 
         void SetVolumePercent(int percent);
 
     private:
-        struct Voice {
-            HWAVEOUT device = nullptr;
-            WAVEHDR header{};
-            WAVEFORMATEX format{};
-            std::shared_ptr<const SoundClip> clip;
-            Bytes pcm;
-            unsigned id = 0;
-            std::uint64_t serial = 0;
-        };
-
-        void Release(Voice &voice, bool reset);
-
-        std::array<Voice, 4> voices_{};
-
-        struct Pending {
-            ULONGLONG due;
-            unsigned id;
-            std::shared_ptr<const SoundClip> clip;
-        };
-
-        std::vector<Pending> pending_;
-        std::uint64_t serial_ = 0;
-        ULONGLONG last_played_at_ = 0;
-        int volume_percent_ = 100;
-        std::function<void(const std::string &)> log_;
+        struct Impl;
+        std::unique_ptr<Impl> impl_;
     };
 } // namespace tenhou

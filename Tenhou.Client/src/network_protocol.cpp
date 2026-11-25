@@ -1,5 +1,5 @@
 #include "network_protocol.hpp"
-#include <windows.h>
+#include "monotonic_clock.hpp"
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -26,8 +26,63 @@ namespace tenhou {
             return result;
         }
 
+        void ValidateUtf8(std::string_view value) {
+            for (std::size_t i = 0; i < value.size();) {
+                const auto b0 = static_cast<unsigned char>(value[i]);
+                if (b0 < 0x80) {
+                    ++i;
+                } else if ((b0 & 0xE0) == 0xC0) {
+                    if (i + 1 >= value.size()) Fail("Invalid UTF-8 protocol text");
+                    const auto b1 = static_cast<unsigned char>(value[i + 1]);
+                    if ((b1 & 0xC0) != 0x80) Fail("Invalid UTF-8 protocol text");
+                    const std::uint32_t cp = ((b0 & 0x1Fu) << 6) | (b1 & 0x3Fu);
+                    if (cp < 0x80) Fail("Invalid UTF-8 protocol text");
+                    i += 2;
+                } else if ((b0 & 0xF0) == 0xE0) {
+                    if (i + 2 >= value.size()) Fail("Invalid UTF-8 protocol text");
+                    const auto b1 = static_cast<unsigned char>(value[i + 1]);
+                    const auto b2 = static_cast<unsigned char>(value[i + 2]);
+                    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) Fail("Invalid UTF-8 protocol text");
+                    const std::uint32_t cp = ((b0 & 0x0Fu) << 12) | ((b1 & 0x3Fu) << 6) | (b2 & 0x3Fu);
+                    if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) Fail("Invalid UTF-8 protocol text");
+                    i += 3;
+                } else if ((b0 & 0xF8) == 0xF0) {
+                    if (i + 3 >= value.size()) Fail("Invalid UTF-8 protocol text");
+                    const auto b1 = static_cast<unsigned char>(value[i + 1]);
+                    const auto b2 = static_cast<unsigned char>(value[i + 2]);
+                    const auto b3 = static_cast<unsigned char>(value[i + 3]);
+                    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
+                        Fail("Invalid UTF-8 protocol text");
+                    const std::uint32_t cp = ((b0 & 0x07u) << 18) | ((b1 & 0x3Fu) << 12) |
+                                             ((b2 & 0x3Fu) << 6) | (b3 & 0x3Fu);
+                    if (cp < 0x10000 || cp > 0x10FFFF) Fail("Invalid UTF-8 protocol text");
+                    i += 4;
+                } else {
+                    Fail("Invalid UTF-8 protocol text");
+                }
+            }
+        }
+
+        void AppendUtf8(std::string &out, std::uint32_t cp) {
+            if (cp < 0x80) {
+                out.push_back(static_cast<char>(cp));
+            } else if (cp < 0x800) {
+                out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else if (cp < 0x10000) {
+                out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            } else {
+                out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+            }
+        }
+
         void Validate(const std::string &value) {
-            (void) NetworkWide(value);
+            ValidateUtf8(value);
             for (unsigned char c: value)
                 if ((c < 32 && c != 9 && c != 10 && c != 13) || c == 127)
                     Fail("Invalid control character in protocol text");
@@ -54,14 +109,7 @@ namespace tenhou {
                     if (!code || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff) || code == 0xfffe || code ==
                         0xffff)
                         Fail("Invalid XML scalar");
-                    std::wstring wide;
-                    if (code <= 0xffff) wide += static_cast<wchar_t>(code);
-                    else {
-                        code -= 0x10000;
-                        wide += static_cast<wchar_t>(0xd800 + (code >> 10));
-                        wide += static_cast<wchar_t>(0xdc00 + (code & 1023));
-                    }
-                    out += NetworkUtf8(wide);
+                    AppendUtf8(out, code);
                 } else Fail("Unsupported XML entity");
                 i = end;
             }
@@ -86,28 +134,6 @@ namespace tenhou {
             return out;
         }
     } // namespace
-
-    std::wstring NetworkWide(const std::string &value) {
-        if (value.empty()) return {};
-        const int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                                             static_cast<int>(value.size()), nullptr, 0);
-        if (!size) Fail("Invalid UTF-8 protocol text");
-        std::wstring out(static_cast<std::size_t>(size), L'\0');
-        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), out.data(),
-                            size);
-        return out;
-    }
-
-    std::string NetworkUtf8(const std::wstring &value) {
-        if (value.empty()) return {};
-        const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
-                                             static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
-        if (!size) Fail("Invalid Unicode input");
-        std::string out(static_cast<std::size_t>(size), '\0');
-        WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), out.data(),
-                            size, nullptr, nullptr);
-        return out;
-    }
 
     std::string DecodeNetworkText(const std::string &value) {
         std::string out;
@@ -265,45 +291,48 @@ namespace tenhou {
     }
 
     ServerErrorNotice FormatServerError(int code, const std::string &wire_text) {
-        if (!wire_text.empty()) return {L"Error", NetworkWide(wire_text), true};
+        if (!wire_text.empty()) {
+            ValidateUtf8(wire_text);
+            return {"Error", wire_text, true};
+        }
         // Exact mapping from tenhou.exe.c:63966-64319 (WM_USER 0x8202).
         switch (code) {
-            case 0: return {L"Error", L"已正常结束", false};
-            case 1001: return {L"Error", L"玩家名不正确", true};
-            case 1002: return {L"Error", L"使用该玩家名需要通过 ID 登录", true};
-            case 1003: return {L"Error", L"ID 不正确\r\n\r\n■ 关于玩家 ID 重新发行\r\nhttp://tenhou.net/support.html\r\n\r\n超过 180 天未进行对局的 ID 会被停用或删除。\r\n七段以上且可确认付费结算信息的账号有可能恢复，请尽早联系官方。", true};
-            case 1004: return {L"Error", L"该玩家已在线", true};
-            case 1005: return {L"Error", L"该玩家已注册", true};
-            case 1006: return {L"Error", L"当前连接来源约 7 天内无法进行注册／举报／创建大会会场", true};
-            case 1007: return {L"Error", L"注册失败", true};
-            case 1008: return {L"Error", L"当前连接来源在一定期间内无法访问", true};
-            case 1009: return {L"Error", L"举报已完成", true};
-            case 1010: return {L"Error", L"该功能在个室中不可用\r\n请移动至排名战大厅", true};
-            case 1011: return {L"Error", L"举报失败", true};
-            case 1012: return {L"玩家 ID 注册", L"注册已完成\r\n\r\n※请注意玩家 ID 无法重新发行\r\n\r\n新的玩家 ID 已显示在输入框中。\r\n关闭此对话框后，请点击登录入场。", false};
-            case 1013: return {L"Error", L"当前没有可观战的对局", false};
-            case 1014: return {L"Error", L"未找到观战信息\r\n该对局可能已经结束", false};
-            case 1015: return {L"Error", L"大会会场创建已完成", true};
-            case 1016: return {L"Error", L"大会会场创建失败", true};
-            case 1017: return {L"Error", L"预约中无法浏览牌谱", false};
-            case 1018: return {L"Error", L"预约中无法观战", false};
-            case 1019: return {L"Error", L"未找到大会会场", false};
-            case 1020: return {L"Error", L"参加所需的有效期限不足", false};
-            case 1021: return {L"Error", L"外部登录服务器无响应", true};
-            case 1022: return {L"Error", L"无法移动至 ID 不兼容的会场", true};
-            case 1023: return {L"Error", L"临时使用的外部 ID 已过期", true};
-            case 1024: return {L"Error", L"未满足参加所需的条件", true};
-            case 1025: return {L"Error", L"外部 ID 无法使用", true};
-            case 1026: return {L"Error", L"该会场无法进行参赛报名", false};
-            case 1027: return {L"参赛报名", L"参赛报名已完成", false};
-            case 1028: return {L"Error", L"已完成参赛报名", false};
-            case 2000: return {L"Error", L"不允许连接到该域名", true};
-            case 2001: return {L"Error", L"已在其他客户端连接", true};
-            case 2002: return {L"Error", L"与服务器的连接已断开\r\n是否重新连接？", false};
-            case 2003: return {L"Error", L"牌谱读取失败\r\n进行中的牌谱将在对局结束后可供浏览", false};
-            case 2004: return {L"Error", L"请选择性别", true};
+            case 0: return {"Error", "已正常结束", false};
+            case 1001: return {"Error", "玩家名不正确", true};
+            case 1002: return {"Error", "使用该玩家名需要通过 ID 登录", true};
+            case 1003: return {"Error", "ID 不正确\r\n\r\n■ 关于玩家 ID 重新发行\r\nhttp://tenhou.net/support.html\r\n\r\n超过 180 天未进行对局的 ID 会被停用或删除。\r\n七段以上且可确认付费结算信息的账号有可能恢复，请尽早联系官方。", true};
+            case 1004: return {"Error", "该玩家已在线", true};
+            case 1005: return {"Error", "该玩家已注册", true};
+            case 1006: return {"Error", "当前连接来源约 7 天内无法进行注册／举报／创建大会会场", true};
+            case 1007: return {"Error", "注册失败", true};
+            case 1008: return {"Error", "当前连接来源在一定期间内无法访问", true};
+            case 1009: return {"Error", "举报已完成", true};
+            case 1010: return {"Error", "该功能在个室中不可用\r\n请移动至排名战大厅", true};
+            case 1011: return {"Error", "举报失败", true};
+            case 1012: return {"玩家 ID 注册", "注册已完成\r\n\r\n※请注意玩家 ID 无法重新发行\r\n\r\n新的玩家 ID 已显示在输入框中。\r\n关闭此对话框后，请点击登录入场。", false};
+            case 1013: return {"Error", "当前没有可观战的对局", false};
+            case 1014: return {"Error", "未找到观战信息\r\n该对局可能已经结束", false};
+            case 1015: return {"Error", "大会会场创建已完成", true};
+            case 1016: return {"Error", "大会会场创建失败", true};
+            case 1017: return {"Error", "预约中无法浏览牌谱", false};
+            case 1018: return {"Error", "预约中无法观战", false};
+            case 1019: return {"Error", "未找到大会会场", false};
+            case 1020: return {"Error", "参加所需的有效期限不足", false};
+            case 1021: return {"Error", "外部登录服务器无响应", true};
+            case 1022: return {"Error", "无法移动至 ID 不兼容的会场", true};
+            case 1023: return {"Error", "临时使用的外部 ID 已过期", true};
+            case 1024: return {"Error", "未满足参加所需的条件", true};
+            case 1025: return {"Error", "外部 ID 无法使用", true};
+            case 1026: return {"Error", "该会场无法进行参赛报名", false};
+            case 1027: return {"参赛报名", "参赛报名已完成", false};
+            case 1028: return {"Error", "已完成参赛报名", false};
+            case 2000: return {"Error", "不允许连接到该域名", true};
+            case 2001: return {"Error", "已在其他客户端连接", true};
+            case 2002: return {"Error", "与服务器的连接已断开\r\n是否重新连接？", false};
+            case 2003: return {"Error", "牌谱读取失败\r\n进行中的牌谱将在对局结束后可供浏览", false};
+            case 2004: return {"Error", "请选择性别", true};
             default:
-                return {L"Error", code >= 0 ? L"ERR=" + std::to_wstring(code) : L"服务器拒绝了本次连接", true};
+                return {"Error", code >= 0 ? "ERR=" + std::to_string(code) : "服务器拒绝了本次连接", true};
         }
     }
 
@@ -783,8 +812,8 @@ namespace tenhou {
             if (official && tag == "GO") {
                 if (snapshot.origin_lobby) snapshot.origin_lobby->Cancel();
                 if (snapshot.lobby.empty() && message.attributes.count("lobby")) {
-                    if (const auto room = LobbyNumber(NetworkWide(Attribute(message, "lobby"))))
-                        snapshot.lobby = NetworkUtf8(*room);
+                    if (const auto room = LobbyNumber(Attribute(message, "lobby")))
+                        snapshot.lobby = *room;
                 }
                 snapshot.match_type = Integer(Attribute(message, "type"));
                 snapshot.exit_allowed = !message.attributes.count("gpid");
@@ -872,7 +901,7 @@ namespace tenhou {
                 // Receiving HELO means the server opened the lobby instead of resuming a saved gpid
                 // (live gpid replies directly with GO; confirmed in tenhou.exe.c:63830-63957).
                 const auto notice = Attribute(message, "nintei");
-                snapshot.certification = LocalizeCertification(NetworkWide(DecodeNetworkText(notice)));
+                snapshot.certification = LocalizeCertification(DecodeNetworkText(notice));
                 snapshot.certification_receipt = notice.empty() ? 0 : snapshot.received;
                 official_game_id.clear();
                 FinishOfficialRecovery();
@@ -1078,8 +1107,8 @@ namespace tenhou {
 
         OfflineLobbyProfile ServiceProfile(const NetworkMessage &message) {
             OfflineLobbyProfile profile{};
-            profile.name = NetworkWide(Attribute(message, "nickname"));
-            profile.membership_expiry = NetworkWide(Attribute(message, "expire"));
+            profile.name = Attribute(message, "nickname");
+            profile.membership_expiry = Attribute(message, "expire");
             profile.ranked_allowed = !Attribute(message, "account").empty();
             const auto number = [&](const std::string &key) {
                 const auto value = Attribute(message, key);
@@ -1159,13 +1188,13 @@ namespace tenhou {
         if (message.tag == "LN") {
             if (!snapshot.origin_lobby || official_profile_dirty_) {
                 OfflineLobbyProfile profile{};
-                profile.name = NetworkWide(snapshot.identity);
+                profile.name = snapshot.identity;
                 profile.ranked_allowed = snapshot.identity != "NoName";
                 const auto field = [&](const std::string &key) {
                     const auto it = snapshot.server.find(key);
                     return it == snapshot.server.end() ? std::string{} : it->second;
                 };
-                profile.membership_expiry = NetworkWide(field("expire"));
+                profile.membership_expiry = field("expire");
                 profile.membership_days = field("expiredays").empty() ? !profile.membership_expiry.empty() :
                                           ProfileInteger(field("expiredays"));
                 profile.light_options = std::max(0, ProfileInteger(field("opt")));
@@ -1228,10 +1257,10 @@ namespace tenhou {
         }
         if (message.tag == "CHAT" && message.attributes.count("lobby") && snapshot.origin_lobby &&
             !game_.state.started) {
-            const auto room = LobbyNumber(NetworkWide(Attribute(message, "lobby")));
+            const auto room = LobbyNumber(Attribute(message, "lobby"));
             if (room) {
                 snapshot.origin_lobby->Enter(*room);
-                snapshot.lobby = NetworkUtf8(*room);
+                snapshot.lobby = *room;
                 snapshot.target_lobby.clear();
                 snapshot.origin_pending.clear();
                 snapshot.phase = LobbyPhase::Lobby;
@@ -1257,8 +1286,8 @@ namespace tenhou {
         const auto phase = snapshot.phase;
         const bool receipt = !snapshot.origin_pending.empty() && rid == std::to_string(origin_request_);
         if (tag == "CHAT") {
-            const auto room = LobbyNumber(NetworkWide(id));
-            if (!room || NetworkUtf8(*room) != id) Fail("Invalid self-hosted lobby identifier");
+            const auto room = LobbyNumber(id);
+            if (!room || *room != id) Fail("Invalid self-hosted lobby identifier");
             if (phase == LobbyPhase::AwaitLobby && origin_epoch_ == 0 && epoch == 1 && rid.empty()) {
                 snapshot.origin_lobby.emplace(ServiceProfile({"PROFILE", snapshot.profile}));
                 snapshot.recovering = Attribute(message, "seated") == "1";
@@ -1292,10 +1321,10 @@ namespace tenhou {
             const auto number = [&](const char *key) { return Integer(Attribute(message, key)); };
             const auto players = number("players"), type = number("rule"), start = number("start"), end = number("end");
             if ((players != 3 && players != 4) || end <= start) Fail("Invalid self-hosted contest");
-            lobby.SetContest(lobby.room(), {NetworkWide(Attribute(message, "title")), players, type, number("joinfee"),
+            lobby.SetContest(lobby.room(), {Attribute(message, "title"), players, type, number("joinfee"),
                 number("premiumonly") == 1, number("registered") == 1, number("blocked") == 1, start, end});
             snapshot.origin_clock = number("now");
-            snapshot.origin_clock_at = GetTickCount64();
+            snapshot.origin_clock_at = MonotonicMs();
         } else if (tag == "LN") {
             const auto n = DecimalList(Attribute(message, "n"), 4);
             const auto j = DecimalList(Attribute(message, "j"), 113);
@@ -1322,9 +1351,9 @@ namespace tenhou {
         return true;
     }
 
-    std::vector<std::string> LobbySession::SubmitOriginLobby(const std::string &command, const std::wstring &value) {
+    std::vector<std::string> LobbySession::SubmitOriginLobby(const std::string &command, const std::string &value) {
         if (official && command == "monthly-profile") {
-            const auto type = Integer(NetworkUtf8(value));
+            const auto type = Integer(value);
             if (!ValidMonthlyProfile(type)) return {};
             preferred_monthly_profile = type;
             const auto phase = snapshot.phase;
@@ -1339,7 +1368,7 @@ namespace tenhou {
         auto &lobby = *snapshot.origin_lobby;
         if (official) {
             if (command == "join") {
-                const auto type = Integer(NetworkUtf8(value));
+                const auto type = Integer(value);
                 if ((type & 0x810) == 0x810 || lobby.contest() || lobby.Reserved(type)) return {};
                 const bool verified_practice = lobby.ranked() && (type == 1024 || type == 1552);
                 bool reserved = verified_practice;
@@ -1359,7 +1388,7 @@ namespace tenhou {
                 return {"<JOIN />"};
             }
             if (command != "change" || !lobby.RequestMove(value)) return {};
-            snapshot.target_lobby = NetworkUtf8(*lobby.pending());
+            snapshot.target_lobby = *lobby.pending();
             const auto &target = snapshot.target_lobby;
             snapshot.phase = LobbyPhase::ChangingLobby;
             return {target.front() == 'C' ? "<CS lobby=\"" + target + "\" />" :
@@ -1368,13 +1397,13 @@ namespace tenhou {
         std::string wire;
         if (command == "change") {
             if (!lobby.RequestMove(value)) return {};
-            snapshot.target_lobby = NetworkUtf8(*lobby.pending());
+            snapshot.target_lobby = *lobby.pending();
             const auto &target = snapshot.target_lobby;
             wire = target.front() == 'C' ? "<CS target=\"" + target + "\"" :
                 "<CHAT text=\"%2Flobby%20" + std::to_string(Integer(target.substr(1))) + "\"";
             snapshot.phase = LobbyPhase::ChangingLobby;
         } else if (command == "join") {
-            const auto type = Integer(NetworkUtf8(value));
+            const auto type = Integer(value);
             wire = lobby.contest() ? "<JOIN type=\"" + std::to_string(type) + "\"" :
                 "<JOIN t=\"" + std::to_string(Integer(snapshot.lobby.substr(1))) + "," + std::to_string(type) + "\"";
             snapshot.phase = LobbyPhase::Matching;

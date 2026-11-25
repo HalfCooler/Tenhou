@@ -1,5 +1,6 @@
 #include "room_settings_view.hpp"
 #include "network_protocol.hpp"
+#include "win32_utf.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cstring>
@@ -29,7 +30,7 @@ namespace tenhou {
                 const auto &schema = available.at(selected)->fields;
                 for (std::size_t i = page * page_size; i < std::min(schema.size(), (page + 1) * page_size); ++i) {
                     const auto &field = schema[i]; const int row = 48 + static_cast<int>(i % page_size) * 26;
-                    fields.push_back(add(0, L"STATIC", NetworkWide(field.label), 0, 12, row + 2, 156, 23));
+                    fields.push_back(add(0, L"STATIC", Utf8ToWide(field.label), 0, 12, row + 2, 156, 23));
                     const bool choice = !field.choices.empty();
                     HWND control = add(100 + static_cast<int>(i), choice ? L"COMBOBOX" : L"EDIT", L"",
                         WS_TABSTOP | (choice ? CBS_DROPDOWNLIST | WS_VSCROLL : WS_BORDER | ES_AUTOHSCROLL),
@@ -40,12 +41,12 @@ namespace tenhou {
                     if (choice) {
                         int pick = 0;
                         for (std::size_t j = 0; j < field.choices.size(); ++j) {
-                            const auto label = NetworkWide(field.choices[j].label);
+                            const auto label = Utf8ToWide(field.choices[j].label);
                             SendMessageW(control, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
                             if (field.choices[j].value == text) pick = static_cast<int>(j);
                         }
                         SendMessageW(control, CB_SETCURSEL, pick, 0);
-                    } else { SetWindowTextW(control, NetworkWide(text).c_str()); SendMessageW(control, EM_LIMITTEXT, 32, 0); }
+                    } else { SetWindowTextW(control, Utf8ToWide(text).c_str()); SendMessageW(control, EM_LIMITTEXT, 32, 0); }
                 }
                 EnableWindow(GetDlgItem(window, 400), page > 0);
                 EnableWindow(GetDlgItem(window, 401), (page + 1) * page_size < schema.size());
@@ -59,14 +60,14 @@ namespace tenhou {
                         if (index < 0 || static_cast<std::size_t>(index) >= field.choices.size()) return false;
                         value = field.choices[static_cast<std::size_t>(index)].value;
                     } else {
-                        wchar_t text[64]{}; GetWindowTextW(entry.second, text, 64); value = NetworkUtf8(text);
+                        wchar_t text[64]{}; GetWindowTextW(entry.second, text, 64); value = WideToUtf8(text);
                         if (!field.minimum.empty() || !field.maximum.empty()) {
                             int number = 0; const auto parsed = std::from_chars(value.data(), value.data() + value.size(), number);
                             const int low = field.minimum.empty() ? 0 : std::stoi(field.minimum);
                             const int high = field.maximum.empty() ? 100000000 : std::stoi(field.maximum);
                             if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || number < low || number > high ||
                                 (field.step && (number - low) % static_cast<int>(field.step))) {
-                                SetWindowTextW(GetDlgItem(window, 402), (NetworkWide(field.label) + L"：请输入服务器允许的数值").c_str()); return false;
+                                SetWindowTextW(GetDlgItem(window, 402), (Utf8ToWide(field.label) + L"：请输入服务器允许的数值").c_str()); return false;
                             }
                         }
                     }
@@ -82,7 +83,7 @@ namespace tenhou {
                 HWND selector = add(403, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL, 174, 12, 169, 160);
                 for (const auto &entry: rules) {
                     if (entry.second.presentation != "riichi-v1" && entry.second.presentation != "mahjong-v1") continue;
-                    available.push_back(&entry.second); const auto title = NetworkWide(entry.second.name);
+                    available.push_back(&entry.second); const auto title = Utf8ToWide(entry.second.name);
                     SendMessageW(selector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(title.c_str()));
                     if (values.count("rule") && values.at("rule") == entry.first) selected = available.size() - 1;
                 }

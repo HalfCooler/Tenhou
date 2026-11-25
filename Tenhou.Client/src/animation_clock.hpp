@@ -1,23 +1,11 @@
 #pragma once
-#include <windows.h>
+#include <chrono>
 #include <cstdint>
 
 namespace tenhou {
-    inline std::int64_t QpcTicks() {
-        LARGE_INTEGER n{};
-        QueryPerformanceCounter(&n);
-        return n.QuadPart;
+    // Milliseconds as a real number backed by steady_clock (QPC on Windows), zero <windows.h>.
+    inline double AnimationNow() {
+        using namespace std::chrono;
+        return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
     }
-
-    inline std::int64_t QpcFrequency() {
-        static const auto frequency = [] {
-            LARGE_INTEGER n{};
-            QueryPerformanceFrequency(&n);
-            return n.QuadPart;
-        }();
-        return frequency;
-    }
-
-    // Milliseconds as a real number: no GetTickCount64 or integer-ms quantization.
-    inline double AnimationNow() { return double(QpcTicks()) * 1000.0 / double(QpcFrequency()); }
 } // namespace tenhou

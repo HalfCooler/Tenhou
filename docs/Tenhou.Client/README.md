@@ -9,7 +9,7 @@ Windows C++17 客户端，以原版 `Tenhou.Client.Origin/tenhou/tenhou.exe`（W
 .\build\Tenhou.Client\tenhou_rebuild.exe
 ```
 
-也可通过 [Tenhou.slnx](../../Tenhou.slnx)（`Win32` 配置）构建与调试。
+也可通过 [Tenhou.slnx](../../Tenhou.slnx)（`x64` 配置）构建与调试。
 
 | 参数 | 说明 |
 | --- | --- |
@@ -33,6 +33,7 @@ Windows C++17 客户端，以原版 `Tenhou.Client.Origin/tenhou/tenhou.exe`（W
 
 ## 相关文档
 
+- [客户端现代化路线与 Phase A 记录](MODERNIZATION-PLAN.md)
 - [解耦与 Direct2D 迁移路线](DECOUPLING-PLAN.md)
 - [牌桌渲染迁移收益调研](RENDERING-MIGRATION.md)
 - [原版对局采集清单](ORIGIN.md)

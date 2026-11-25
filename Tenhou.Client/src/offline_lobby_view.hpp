@@ -13,7 +13,7 @@ namespace tenhou {
     class OfflineLobbyView {
     public:
         enum class Action { Settings, OpenReplay, Logout, RoomConfirmed };
-        using Submit = std::function<void(const std::string &, const std::wstring &)>;
+        using Submit = std::function<void(const std::string &, const std::string &)>;
         OfflineLobbyView(HWND parent, std::filesystem::path config, std::function<void(Action)> action,
                          std::function<void(const std::string &)> log, Submit submit = {});
         ~OfflineLobbyView();
@@ -33,7 +33,7 @@ namespace tenhou {
         void AddButton(unsigned id, RECT bounds, TextLabelKey label);
         void Command(unsigned id);
         void Refresh();
-        void RequestMove(const std::wstring &room);
+        void RequestMove(const std::string &room);
         void CompleteMove();
         void RoomChanged();
         void Tick();
@@ -64,7 +64,7 @@ namespace tenhou {
         std::function<void(const std::string &)> log_;
         Submit submit_;
         OfflineLobby state_{FixtureProfile()};
-        std::vector<std::wstring> history_;
+        std::vector<std::string> history_;
         RankedTier tier_ = RankedTier::General;
         unsigned outer_ = 0, lifetime_ = kRankedFourProfile, monthly_ = kDefaultMonthlyProfile;
         std::array<LobbyStatistics, 2> private_lifetime_{};

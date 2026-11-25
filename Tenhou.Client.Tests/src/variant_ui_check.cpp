@@ -36,8 +36,8 @@ int main(int argc, char **argv) {
                 const auto resources = argc >= 4 ? std::filesystem::path(argv[3]) : std::filesystem::path(argv[0]).parent_path() / "resources";
                 table.Configure(resources, 1440);
                 tenhou::TableInteraction interaction;
-                if (state.phase == tenhou::VariantPhase::Exchange) interaction.hint = L"换三张  0 / 3";
-                else if (state.phase == tenhou::VariantPhase::Missing) interaction.hint = L"请选择定缺花色：万、筒、索";
+                if (state.phase == tenhou::VariantPhase::Exchange) interaction.hint = "换三张  0 / 3";
+                else if (state.phase == tenhou::VariantPhase::Missing) interaction.hint = "请选择定缺花色：万、筒、索";
                 table.Paint(dc, {0, 0, 1200, 850}, game, true, nullptr, &interaction);
                 if (argc == 5 && std::string(argv[4]).rfind("--settlement", 0) == 0) {
                     if (game.settlement.receipts.empty()) throw std::runtime_error("No settlement supplied");

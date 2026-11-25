@@ -95,6 +95,21 @@ namespace tenhou {
         if (!window || !renderer_->RenderToWindow(window, frame)) renderer_->RenderToDc(dc, frame);
     }
 
+    bool OnlineTable::PaintToWindow(HWND window, RECT bounds, const OnlineState &online, bool interactive,
+                                    const OpeningPresentation *opening, const TableInteraction *interaction,
+                                    double now, const ActionCaptions *captions, unsigned dpi,
+                                    const std::vector<TableActionButton> *buttons) {
+        if (!window) return false;
+        if (paused_at_) now = paused_at_;
+        const auto &geometry = renderer_->EnsureGeometry(online.red_tiles);
+        auto frame = BuildOnlineTableRenderFrame(
+            width_, {bounds.left, bounds.top, bounds.right, bounds.bottom}, online, hand_, geometry,
+            presentation_, opening, interaction, captions, settlement_presented_, relative_scores_,
+            original_display_, interactive, now, dpi);
+        if (buttons) frame.buttons = *buttons;
+        return renderer_->RenderToWindow(window, frame);
+    }
+
     int OnlineTable::HitTile(RECT bounds, const OnlineState &online, int x, int y) {
         if (!renderer_->HasLoadedAssets() || !online.initialized) return -1;
         auto &geometry = renderer_->EnsureGeometry(online.red_tiles);

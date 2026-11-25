@@ -114,7 +114,7 @@ namespace tenhou {
     char SoundGender(const std::string &seats, int who);
 
     std::array<int, 4> ParseSeatRanks(std::string_view dan);
-    const wchar_t *SeatRankLabel(int rank);
+    const char *SeatRankLabel(int rank);
 
     std::string TileLabel(int tile);
 

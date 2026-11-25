@@ -145,7 +145,7 @@ namespace {
         }
         y += 160;
         page.Text(L"Dynamic digits, ASCII minus, multiplier / full-string layout", 24, y);
-        LayoutRow(page, renderer, renderer.Layout(L"-123456 +789 24飜 70符 32000点 4枚 ×12", TextStyleKey::yaku), 30, y + 32, bounds);
+        LayoutRow(page, renderer, renderer.Layout("-123456 +789 24飜 70符 32000点 4枚 ×12", TextStyleKey::yaku), 30, y + 32, bounds);
         page.Text(L"Caption scale / fade (each rendered at its own final size)", 24, y + 95);
         for (const auto &caption : {renderer.Caption(TextKey::caption_complete, PointF(250, static_cast<REAL>(y + 160)), .65, 1),
                                    renderer.Caption(TextKey::caption_complete, PointF(720, static_cast<REAL>(y + 160)), 1, .6),
@@ -250,7 +250,7 @@ int wmain(int argc, wchar_t **argv) {
         }
         std::ofstream metrics(options.output / "metrics.csv", std::ios::binary);
         metrics << "origin_id,size_pt,spacing_pt,advance,line_height,ink_x,ink_y,ink_w,ink_h,effect_x,effect_y,effect_w,effect_h\n";
-        std::wstring fixed;
+        std::string fixed;
         for (const auto &text : kTextDefinitions) {
             fixed += text.label;
             const auto *style = FindTextStyle(text.style); const auto m = renderer.Layout(text.key).metrics;
@@ -268,8 +268,8 @@ int wmain(int argc, wchar_t **argv) {
             << "- Compiled catalog JSON SHA-256: " << kTextRenderCatalogSha256 << "\n"
             << "- Compiled rendering profile SHA-256: " << kTextRenderProfileSha256 << "\n"
             << "- Fixed-label missing glyphs: " << Scalars(font->MissingGlyphs(fixed)) << "\n"
-            << "- Dynamic repertoire missing glyphs: " << Scalars(font->MissingGlyphs(L"0123456789 -+飜符点枚×N未知役種")) << "\n"
-            << "- Diagnostic U+2212 coverage: " << Scalars(font->MissingGlyphs(L"\u2212")) << " (production samples use ASCII '-')\n"
+            << "- Dynamic repertoire missing glyphs: " << Scalars(font->MissingGlyphs("0123456789 -+飜符点枚×N未知役種")) << "\n"
+            << "- Diagnostic U+2212 coverage: " << Scalars(font->MissingGlyphs("\u2212")) << " (production samples use ASCII '-')\n"
             << "- Cache after export: " << stats.layouts << " layouts, " << stats.rasters << " rasters, " << stats.raster_bytes << " bytes\n\n"
             << "overview: all styles, 459, button pairs, dynamic digits, scaled/faded captions.\n\n"
             << "transforms: four-seat affine transforms, shared-width Info, clipping and SD mapping.\n\n"

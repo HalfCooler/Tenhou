@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 114 14">
+  <defs>
+    <linearGradient id="stick466" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8f8ee"/>
+      <stop offset="18%" stop-color="#f5f5e8"/>
+      <stop offset="64%" stop-color="#efefe0"/>
+      <stop offset="78%" stop-color="#dedecc"/>
+      <stop offset="90%" stop-color="#b9b9aa"/>
+      <stop offset="100%" stop-color="#929287"/>
+    </linearGradient>
+    <linearGradient id="endshade466" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.16"/>
+      <stop offset="2.5%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="97.5%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.16"/>
+    </linearGradient>
+    <radialGradient id="reddot466" cx="44%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#df1818"/>
+      <stop offset="55%" stop-color="#b40404"/>
+      <stop offset="100%" stop-color="#7c0000"/>
+    </radialGradient>
+  </defs>
+  <rect x="0.4" y="1.0" width="113.2" height="12.6" rx="1.4" fill="#000000" fill-opacity="0.22"/>
+  <rect x="1.0" y="1.75" width="112.0" height="10.8" rx="1.15" fill="url(#stick466)"/>
+  <rect x="1.0" y="1.75" width="112.0" height="10.8" rx="1.15" fill="url(#endshade466)"/>
+  <rect x="2.2" y="2.25" width="109.6" height="1.2" rx="0.6" fill="#ffffff" fill-opacity="0.58"/>
+  <circle cx="56.5" cy="6.95" r="3.85" fill="#d4d4c6" fill-opacity="0.60"/>
+  <circle cx="56.5" cy="6.95" r="3.45" fill="#f7f7ee" fill-opacity="0.75"/>
+  <circle cx="56.5" cy="6.95" r="3.05" fill="url(#reddot466)"/>
+</svg>

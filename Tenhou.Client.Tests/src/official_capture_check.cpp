@@ -1,9 +1,11 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "network_client.hpp"
+#include "ini_store.hpp"
 #include "network_protocol.hpp"
 #include "settlement_scene.hpp"
 #include "table_scene.hpp"
+#include "win32_utf.hpp"
 #include <windows.h>
 #include <algorithm>
 #include <array>
@@ -85,11 +87,11 @@ namespace {
 
     std::vector<RawEvent> LoadRawCapture(const std::filesystem::path &path) {
         std::ifstream file(path, std::ios::binary);
-        Require(static_cast<bool>(file), "Cannot open raw capture: " + NetworkUtf8(path.wstring()));
+        Require(static_cast<bool>(file), "Cannot open raw capture: " + PathToUtf8(path));
         std::string line;
         Require(static_cast<bool>(std::getline(file, line)), "Empty capture file");
         Require(JsonStringField(line, "format") == "tenhou-origin-session-raw/1",
-                "Expected raw capture format: " + NetworkUtf8(path.wstring()));
+                "Expected raw capture format: " + PathToUtf8(path));
         std::vector<RawEvent> events;
         while (std::getline(file, line)) {
             if (line.empty()) continue;
@@ -204,7 +206,7 @@ namespace {
                     const auto comma = t.find(',');
                     if (comma != std::string::npos) {
                         const auto type_str = t.substr(comma + 1);
-                        (void) session.SubmitOriginLobby("join", NetworkWide(type_str));
+                        (void) session.SubmitOriginLobby("join", type_str);
                     }
                 } else if (msg.tag == "NEXTREADY" && session.snapshot.game.ended) {
                     submit_matching("<NEXTREADY />", ev.seq, "next");
@@ -317,7 +319,7 @@ namespace {
                     has_text(owari_scene, "final_gold", "-8880G"),
                     "Final OWARI scene chip/gold values do not match origin formula");
         }
-        std::cout << "PASS raw capture: " << NetworkUtf8(path.filename().wstring())
+        std::cout << "PASS raw capture: " << PathToUtf8(path.filename())
                   << " (in=" << inbound_frames << " actions=" << verified_actions
                   << (saw_prof ? " PROF" : "")
                   << (saw_saikai ? " SAIKAI" : "")
@@ -330,12 +332,12 @@ namespace {
         // 1) Initial private-room matching with non-numeric REJOIN ticket -> GO -> UN -> TAIKYOKU -> NEXTREADY -> INIT
         LobbySession session = MakeOfficialSession();
         SeedLobby(session);
-        const auto move = session.SubmitOriginLobby("change", L"4409");
+        const auto move = session.SubmitOriginLobby("change", "4409");
         Require(move == std::vector<std::string>{"<CHAT text=\"%2Flobby%204409\" />"}, "Expected private lobby move");
         (void) session.Receive(ParseNetworkMessage("<CHAT lobby=\"4409\" />", true));
         Require(session.snapshot.lobby == "L4409", "Did not enter L4409");
 
-        const auto join = session.SubmitOriginLobby("join", L"17");
+        const auto join = session.SubmitOriginLobby("join", "17");
         Require(join == std::vector<std::string>{"<JOIN t=\"4409,17\" />"}, "Expected private room JOIN");
         Require(session.snapshot.phase == LobbyPhase::Matching, "Expected Matching phase");
 
@@ -442,7 +444,7 @@ namespace {
                     const auto decoded = DecodeNetworkText(msg.attributes.at("text"));
                     if (decoded.rfind("/lobby ", 0) == 0 && session.snapshot.phase == LobbyPhase::Lobby) {
                         const auto room = decoded.substr(7);
-                        const auto out = session.SubmitOriginLobby("change", NetworkWide(room));
+                        const auto out = session.SubmitOriginLobby("change", room);
                         Require(out == std::vector<std::string>{raw_xml},
                                 "Room change wire mismatch at seq=" + std::to_string(ev.seq));
                     }
@@ -450,7 +452,7 @@ namespace {
                     const auto &t = msg.attributes.at("t");
                     const auto comma = t.find(',');
                     Require(comma != std::string::npos, "Expected lobby,type in JOIN");
-                    const auto out = session.SubmitOriginLobby("join", NetworkWide(t.substr(comma + 1)));
+                    const auto out = session.SubmitOriginLobby("join", t.substr(comma + 1));
                     Require(out == std::vector<std::string>{raw_xml},
                             "Private JOIN wire mismatch at seq=" + std::to_string(ev.seq));
                 } else if (msg.tag == "D") {
@@ -533,7 +535,7 @@ namespace {
         Require(saw_post_reinit_pon, "Missing pon choice on post-REINIT e63 t=1");
         Require(verified_actions == 2, "Expected 2 verified discards (D112 + D131)");
         Require(saw_bye_seat1 && saw_bye_seat3, "Missing BYE seat disconnect tracking");
-        std::cout << "PASS full reconnect raw capture: " << NetworkUtf8(path.filename().wstring())
+        std::cout << "PASS full reconnect raw capture: " << PathToUtf8(path.filename())
                   << " (in=" << inbound_frames << " actions=" << verified_actions
                   << " STALE_HELO_FALLBACK DIRECT_GO SAIKAI REINIT BYE)\n";
     }
@@ -694,10 +696,7 @@ namespace {
         };
 
         auto read_saved_gpid = [&]() {
-            wchar_t buf[128]{};
-            GetPrivateProfileStringW(L"OfficialRecovery", session_file.filename().c_str(), L"",
-                                     buf, ARRAYSIZE(buf), config.c_str());
-            return NetworkUtf8(buf);
+            return ReadIniString(config, "OfficialRecovery", PathToUtf8(session_file.filename()));
         };
 
         // Phase A: stale gpid -> <Z /> + <HELO gpid=stale> -> server <HELO> + <LN> -> immediately clears gpid & enters lobby -> GO saves live gpid.
@@ -726,7 +725,7 @@ namespace {
 
             // Drain PXR then change to L4409 and join type 17.
             (void) server.Pump(500);
-            client.SubmitOriginLobby("change", L"4409");
+            client.SubmitOriginLobby("change", "4409");
             auto ch = server.Pump(3000);
             Require(!ch.empty() && ch.back() == "<CHAT text=\"%2Flobby%204409\" />",
                     "Immediate lobby change after stale-gpid HELO failed");
@@ -734,7 +733,7 @@ namespace {
             server.SendFrame("<LN n=\"BIK1C1C\" j=\"64C\" g=\"\"/>");
             PumpUiUntil(3000, [&] { return client.snapshot().lobby == "L4409"; });
             (void) server.Pump(300);
-            client.SubmitOriginLobby("join", L"17");
+            client.SubmitOriginLobby("join", "17");
             auto jn = server.Pump(3000);
             Require(!jn.empty() && jn.back() == "<JOIN t=\"4409,17\" />", "Private room JOIN failed");
             server.SendFrame("<GO type=\"17\" lobby=\"4409\" gpid=\"E2B76CD8-4E2EA568\"/>");
@@ -819,10 +818,7 @@ namespace {
         };
 
         auto read_saved_gpid = [&]() {
-            wchar_t buf[128]{};
-            GetPrivateProfileStringW(L"OfficialRecovery", session_file.filename().c_str(), L"",
-                                     buf, ARRAYSIZE(buf), config.c_str());
-            return NetworkUtf8(buf);
+            return ReadIniString(config, "OfficialRecovery", PathToUtf8(session_file.filename()));
         };
 
         auto expect_z_helo = [](LoopbackServer &server, const char *label) {
@@ -858,7 +854,7 @@ namespace {
 
         // 1) Private room match finishes with owari -> client closes game socket cleanly, stays in MatchComplete,
         //    and clicking END (SubmitLobby("return")) opens a fresh TCP connection with <Z /> + <HELO>.
-        client.SubmitOriginLobby("change", L"4409");
+        client.SubmitOriginLobby("change", "4409");
         auto ch = server.Pump(3000);
         Require(!ch.empty() && ch.back() == "<CHAT text=\"%2Flobby%204409\" />", "Private room change failed");
         server.SendFrame("<CHAT lobby=\"4409\"/>");
@@ -866,7 +862,7 @@ namespace {
         PumpUiUntil(3000, [&] { return client.snapshot().lobby == "L4409"; }, state_desc("enter L4409"));
         (void) server.Pump(200);
 
-        client.SubmitOriginLobby("join", L"17");
+        client.SubmitOriginLobby("join", "17");
         auto jn = server.Pump(3000);
         Require(!jn.empty() && jn.back() == "<JOIN t=\"4409,17\" />", "Private room join failed");
         server.SendFrame("<GO type=\"17\" lobby=\"4409\" gpid=\"GP-OWARI-TEST\"/>");
@@ -909,7 +905,7 @@ namespace {
 
         // 2) Practice match mid-game EXIT -> same-socket <BYE /> + <HELO>, ignores stale in-flight game frames,
         //    returns to Lobby, and immediately re-enters the same practice match (type=1024).
-        client.SubmitOriginLobby("join", L"1024");
+        client.SubmitOriginLobby("join", "1024");
         auto pj = server.Pump(3000);
         Require(!pj.empty() && pj.back() == "<JOIN t=\"0,1024\" />", "Practice JOIN 1024 failed");
         server.SendFrame("<GO type=\"1024\" lobby=\"0\"/>");
@@ -946,7 +942,7 @@ namespace {
         (void) server.Pump(200);
 
         // Immediately re-enter the exact same practice type 1024.
-        client.SubmitOriginLobby("join", L"1024");
+        client.SubmitOriginLobby("join", "1024");
         auto pj2 = server.Pump(3000);
         Require(!pj2.empty() && pj2.back() == "<JOIN t=\"0,1024\" />",
                 "Re-entering practice 1024 immediately after EXIT failed");

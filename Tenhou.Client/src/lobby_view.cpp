@@ -8,6 +8,8 @@
 #include "preference_actions.hpp"
 #include "replay_effects.hpp"
 #include "text_catalog.hpp"
+#include "monotonic_clock.hpp"
+#include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -23,7 +25,7 @@ namespace tenhou {
 
     OnlineSequencerContext LobbyView::MakeContext() const {
         OnlineSequencerContext ctx;
-        ctx.tick_ms = GetTickCount64();
+        ctx.tick_ms = MonotonicMs();
         ctx.anim_ms = AnimationNow();
         ctx.window_visible = window_ && IsWindowVisible(window_) != FALSE;
         ctx.intro_active = match_intro_ && match_intro_->Active();
@@ -212,6 +214,7 @@ namespace tenhou {
         if (change == PreferenceChange::Artwork || change == PreferenceChange::Initial) {
             lobby_background_ = {};
             table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
+            if (matching_) matching_->SetHdArtwork(preferences.hd_artwork);
             InvalidateRect(window_, nullptr, FALSE);
             if (service_lobby_ && !resource_directory_.empty())
                 service_lobby_->ConfigureArtwork(resource_directory_, canvas_width_);
@@ -221,10 +224,9 @@ namespace tenhou {
             settlement_view_->SetSoundEnabled(sequencer_.EffectsEnabled());
             StopAudio();
             audio_.SetVolumePercent(preferences.se_volume);
-            const auto voice_mode = GetPrivateProfileIntW(L"RESOURCE", L"SE_NOVOICE",
-                                                          GetPrivateProfileIntW(
-                                                              L"REBUILD", L"SoundEffectsOnly", 0, config_.c_str()),
-                                                          config_.c_str());
+            const auto voice_mode = PreferenceInt(
+                config_, "RESOURCE", "SE_NOVOICE",
+                PreferenceInt(config_, "REBUILD", "SoundEffectsOnly", 0));
             sequencer_.set_voice_mode(voice_mode);
             sound_loaded_ = false;
             audio_error_.clear();
@@ -284,7 +286,7 @@ namespace tenhou {
         exit_vote_text_ = vote_control(L"STATIC", L"", 5162, 20, 18, 380, 105, SS_LEFT);
         exit_yes_ = vote_control(L"BUTTON", L"同意退出", 5163, 60, 135, 130, 30, WS_TABSTOP | BS_PUSHBUTTON);
         exit_no_ = vote_control(L"BUTTON", L"继续对局", 5164, 225, 135, 130, 30, WS_TABSTOP | BS_DEFPUSHBUTTON);
-        sequencer_.set_animation_enabled(GetPrivateProfileIntW(L"REBUILD", L"NetworkAnimation", 1, config_.c_str()) != 0);
+        sequencer_.set_animation_enabled(PreferenceInt(config_, "REBUILD", "NetworkAnimation", 1) != 0);
         settlement_view_ = std::make_unique<SettlementView>(window_);
         settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
             if (client_ && Snapshot().game.initialized)
@@ -364,7 +366,7 @@ namespace tenhou {
                         break;
                     case OfflineLobbyView::Action::RoomConfirmed: UpdateLobbyMusic(); break;
                 }
-            }, log_, [this](const std::string &command, const std::wstring &value) {
+            }, log_, [this](const std::string &command, const std::string &value) {
                 client_->SubmitOriginLobby(command, value);
             });
     }
@@ -418,9 +420,7 @@ namespace tenhou {
     }
 
     void LobbyView::Save() {
-        if (!WritePrivateProfileStringW(L"REBUILD", L"NetworkAnimation",
-                                        sequencer_.animation_enabled() ? L"1" : L"0", config_.c_str()))
-            throw std::runtime_error("Cannot save server preferences");
+        WritePreferenceInt(config_, "REBUILD", "NetworkAnimation", sequencer_.animation_enabled() ? 1 : 0);
     }
 
     void LobbyView::Resize(int width, int height) {
@@ -646,7 +646,7 @@ namespace tenhou {
             snapshot, client_->snapshot(), match_intro_ && match_intro_->Active(), table_.Animating(),
             HitAutomaticButton(hx, hy),
             [&] { return table_.HitTile(BoardBounds(), snapshot.game, hx, hy); },
-            GetTickCount64());
+            MonotonicMs());
     }
 
     int LobbyView::HitAutomaticButton(int x, int y) const {
@@ -750,14 +750,14 @@ namespace tenhou {
     }
 
     void LobbyView::UpdateLobbyMusic(bool refresh) {
-        std::wstring key;
+        std::string key;
         bool third_party_lobby = false;
         if (!music_muted_ && !music_preview_ && !resource_directory_.empty()) {
             if (welcome_music_) {
-                key = L"BGM_LOBBY0";
+                key = "BGM_LOBBY0";
                 third_party_lobby = !official_welcome_;
             } else if (offline_lobby_music_) {
-                key = *offline_lobby_music_ ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
+                key = *offline_lobby_music_ ? "BGM_LOBBY1" : "BGM_LOBBY0";
             } else if (client_ && IsWindowVisible(window_)) {
                 const auto &s = client_->snapshot();
                 const auto &game = sequencer_.displaying() ? sequencer_.displayed().game : s.game;
@@ -769,12 +769,12 @@ namespace tenhou {
                                                        [](const OnlinePlayer &p) { return p.reach != 0; });
                     if (reaches) index = reaches == 1 ? 4 : 5;
                     if (settlement_view_->FinalPage()) index = 9;
-                    key = L"BGM_GAME" + std::to_wstring(index);
+                    key = "BGM_GAME" + std::to_string(index);
                 } else if (s.phase == LobbyPhase::Lobby || s.phase == LobbyPhase::Matching ||
                            s.phase == LobbyPhase::Cancelling || s.phase == LobbyPhase::ChangingLobby) {
                     third_party_lobby = s.native_service && !s.origin_lobby;
                     const bool custom = !s.lobby.empty() && s.lobby.front() == 'C';
-                    key = custom && !third_party_lobby ? L"BGM_LOBBY1" : L"BGM_LOBBY0";
+                    key = custom && !third_party_lobby ? "BGM_LOBBY1" : "BGM_LOBBY0";
                 }
             }
         }
@@ -783,16 +783,13 @@ namespace tenhou {
         third_party_music_ = third_party_lobby;
         try {
             if (key.empty()) {
-                lobby_music_.Select(window_);
+                lobby_music_.Select();
                 return;
             }
             const auto path = MusicPath(resource_directory_, config_, key, third_party_lobby);
-            const int master = std::clamp(
-                static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", L"BGM_VOL", 100, config_.c_str())), 0, 200);
-            const int level = std::clamp(
-                static_cast<int>(GetPrivateProfileIntW(L"RESOURCE", MusicOption(key).c_str(), 60, config_.c_str())),
-                0, 200);
-            lobby_music_.Select(window_, path, key == L"BGM_LOBBY0", (master * .01) * (level * .01));
+            const int master = std::clamp(PreferenceInt(config_, "RESOURCE", "BGM_VOL", 100), 0, 200);
+            const int level = std::clamp(PreferenceInt(config_, "RESOURCE", MusicOption(key), 60), 0, 200);
+            lobby_music_.Select(path, key == "BGM_LOBBY0", (master * .01) * (level * .01));
         } catch (const std::exception &e) { log_(std::string("LOBBY BGM ERROR ") + e.what()); }
     }
 
@@ -833,7 +830,7 @@ namespace tenhou {
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
         if (snapshot.silent_recovery && snapshot.recovering) return;
         if (!snapshot.variant_active && message.tag == "EXITVOTE" && snapshot.exit_voting)
-            exit_vote_deadline_ = GetTickCount64() + snapshot.exit_vote_ms;
+            exit_vote_deadline_ = MonotonicMs() + snapshot.exit_vote_ms;
         ApplyEffects(sequencer_.OnGameEvent(message, snapshot, client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
@@ -895,7 +892,7 @@ namespace tenhou {
                 artwork_painted_ = false;
                 if (artwork_error_ != error.what()) log_("ONLINE ARTWORK ERROR " + std::string(error.what()));
                 artwork_error_ = error.what();
-                const auto text = NetworkWide("Table artwork failed: " + artwork_error_);
+                const auto text = Utf8ToWide("Table artwork failed: " + artwork_error_);
                 SetTextColor(dc, RGB(150, 35, 25));
                 DrawTextW(dc, text.c_str(), -1, &bounds, DT_LEFT | DT_WORDBREAK);
             }
@@ -920,7 +917,7 @@ namespace tenhou {
             KillTimer(window_, 11);
             return;
         }
-        auto now = GetTickCount64();
+        auto now = MonotonicMs();
         auto seconds = exit_vote_deadline_ > now ? (exit_vote_deadline_ - now + 999) / 1000 : 0;
         std::wstring text = L"是否终止本场对局？对局和出牌计时已暂停。\r\n剩余 " + std::to_wstring(seconds) + L" 秒（30 秒）\r\n同意 " +
                             std::to_wstring(s.exit_yes) + L" / 反对 " + std::to_wstring(s.exit_no) + L" / 真人 " +
@@ -1056,10 +1053,6 @@ namespace tenhou {
                 }
                 if (message == WM_APP + 17) {
                     self->ApplyAutomaticSort();
-                    return 0;
-                }
-                if (message == MM_WOM_DONE) {
-                    self->lobby_music_.BufferDone();
                     return 0;
                 }
                 if (message == WM_APP + 18) {
@@ -1275,15 +1268,46 @@ namespace tenhou {
                     RECT update{};
                     GetUpdateRect(window, &update, FALSE);
                     const auto board = self->BoardBounds();
-                    const bool table_only = self->client_ && self->Snapshot().game.initialized && !self->sequencer_.show_results() &&
+                    const bool game = self->client_ && self->Snapshot().game.initialized && !self->sequencer_.show_results();
+                    const bool paused = game && self->client_->snapshot().table_paused;
+                    const bool table_only = game &&
                                             update.left >= board.left && update.top >= board.top &&
                                             update.right <= board.right && update.bottom <= board.bottom;
+                    if (game && !paused && (table_only || self->Compact())) {
+                        PAINTSTRUCT ps{};
+                        BeginPaint(window, &ps);
+                        bool presented = false;
+                        try {
+                            const auto interaction = self->Interaction(self->Snapshot());
+                            const auto buttons = self->Buttons();
+                            presented = self->table_.PaintToWindow(
+                                window, board, self->Snapshot().game, self->Snapshot().actions.enabled,
+                                self->sequencer_.animation_enabled() ? &self->sequencer_.opening() : nullptr,
+                                &interaction, AnimationNow(), &self->sequencer_.captions(),
+                                GetDpiForWindow(window), &buttons);
+                            if (presented) {
+                                self->artwork_error_.clear();
+                                self->painted_countdown_ = interaction.countdown;
+                                self->painted_hover_ = interaction.hovered;
+                                self->painted_auto_hover_ = interaction.hovered_button;
+                                if (!self->artwork_painted_) {
+                                    self->log_("ONLINE ARTWORK rendered");
+                                    self->artwork_painted_ = true;
+                                }
+                            }
+                        } catch (const std::exception &) {
+                            self->table_.Renderer().HideWindowSurface();
+                            presented = false;
+                        }
+                        EndPaint(window, &ps);
+                        if (presented) return 0;
+                        InvalidateRect(window, nullptr, FALSE);
+                    }
                     self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only, window); });
                     return 0;
                 }
             } catch (const std::exception &error) {
-                const auto text = NetworkWide(error.what());
-                self->log_("NETWORK view error: " + NetworkUtf8(text));
+                self->log_(std::string("NETWORK view error: ") + error.what());
                 return 0;
             }
         }

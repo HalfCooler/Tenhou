@@ -1,5 +1,6 @@
 #include "original_display.hpp"
 #include "resource_manager.hpp"
+#include "shared_assets.hpp"
 #include "table_scene.hpp"
 #include "text_catalog.hpp"
 #include <objidl.h>
@@ -65,8 +66,9 @@ namespace tenhou {
             };
         }
 
-        void Transform(Gdiplus::Graphics &g, const Affine &a) {
+        void Transform(Gdiplus::Graphics &g, const Affine &a, float sx = 1.0f, float sy = 1.0f) {
             Gdiplus::Matrix matrix(a[0], a[1], a[2], a[3], a[4], a[5]);
+            if (sx != 1.0f || sy != 1.0f) matrix.Scale(sx, sy, Gdiplus::MatrixOrderAppend);
             if (g.SetTransform(&matrix) != Gdiplus::Ok) throw std::runtime_error(
                 "Cannot set original display transform");
         }
@@ -158,7 +160,7 @@ namespace tenhou {
         variants_.Configure(directory);
         directory_ = directory;
         width_ = width;
-        pack_ = {};
+        pack_.reset();
         images_.clear();
         captions_.clear();
     }
@@ -184,19 +186,20 @@ namespace tenhou {
         const auto cached = images_.find(id);
         if (cached != images_.end()) return cached->second;
         if (const auto *custom = FindSprite(id)) return *custom;
-        if (pack_.signature.empty()) {
-            pack_ = LoadResourcePack(ResourceManager(directory_).Path(AssetId::DisplayPack),
-                [](unsigned id, unsigned metadata) { return metadata && FindTextImageByOrigin(id); });
-            if (pack_.signature != (width_ == 1440 ? "res2" : "res0")) {
-                pack_ = {};
-                throw std::runtime_error("Original display pack has the wrong canvas signature");
-            }
+        if (!pack_) {
+            pack_ = SharedAssets().GetDisplayPack(ResourceManager(directory_).Path(AssetId::DisplayPack), width_);
         }
-        const auto found = std::find_if(pack_.entries.begin(), pack_.entries.end(),
+        const auto found = std::find_if(pack_->entries.begin(), pack_->entries.end(),
                                         [&](const Resource &r) { return r.id == id; });
-        if (found == pack_.entries.end()) throw std::runtime_error(
+        if (found == pack_->entries.end()) throw std::runtime_error(
             "Missing original display sprite " + std::to_string(id));
         return images_.emplace(id, DecodeImage(*found)).first->second;
+    }
+
+    const Image &DisplayArtwork::GetHd(unsigned id) {
+        if (!FindTextImageByOrigin(id)) throw std::runtime_error("Unsupported display image ID " + std::to_string(id));
+        if (const auto *hd = variants_.GetHdSprite(id)) return *hd;
+        return Get(id);
     }
 
     float DisplayArtwork::MeasureText(const std::string &text, float em) {
@@ -219,7 +222,8 @@ namespace tenhou {
             throw std::runtime_error("Cannot draw original display sprite");
     }
 
-    void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state, const HudSprite &draw_sprite) {
+    void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state, const HudSprite &draw_sprite,
+                                        float scale_x, float scale_y) {
         const auto hud = BuildOriginalHud(state, width_);
         const float s = hud.scale;
         const auto saved = g.Save();
@@ -235,7 +239,7 @@ namespace tenhou {
                     draw_sprite(id, im, x - (cx ? im.width / 2 : 0),
                                 y - (cy ? im.height / 2 : 0), transform);
                 } else {
-                    Transform(g, transform);
+                    Transform(g, transform, scale_x, scale_y);
                     Sprite(g, id, x, y, cx, cy);
                 }
             };
@@ -243,7 +247,7 @@ namespace tenhou {
             for (const auto &item: hud.sprites)
                 sprite(item.id, item.x, item.y, item.seat < 0 ? center : item.id == 466 ?
                        hud.sticks[item.seat] : hud.seats[item.seat], item.center_x, item.center_y);
-            Transform(g, center);
+            Transform(g, center, scale_x, scale_y);
             if (!state.variant) {
             const auto sticks = std::to_wstring(state.sticks), honba = std::to_wstring(state.honba);
             const float sw = MeasureText(std::to_string(state.sticks), 12 * s), hw = MeasureText(
@@ -258,7 +262,7 @@ namespace tenhou {
             }
             for (int i = 0; i < 4; ++i) {
                 if (!SeatPresent(state.seat_mask, i)) continue;
-                Transform(g, hud.seats[i]);
+                Transform(g, hud.seats[i], scale_x, scale_y);
                 const auto &player = state.players[i];
                 const int value = state.relative_scores && i
                                       ? player.score - state.players[0].score
@@ -268,7 +272,7 @@ namespace tenhou {
                 if (!state.relative_scores) {
                     // 00484a98–00484c27: rank and line are relative to measured score width.
                     const float base = MeasureText(std::to_string(value), 16 * s) - 53 * s;
-                    Caption(g, SeatRankLabel(player.rank), base + 25 * s, 31 * s, (28.0f / 3) * s, hud);
+                    Caption(g, Wide(SeatRankLabel(player.rank)), base + 25 * s, 31 * s, (28.0f / 3) * s, hud);
                     const auto accent = !player.connected || player.gender == 'F' ? 0xccaa0000u :
                                         player.gender == 'M' ? 0xcc0000ffu : 0xcc00aa00u;
                     Gdiplus::Pen underline(Gdiplus::Color(accent), s);
@@ -345,7 +349,8 @@ namespace tenhou {
         return {r, p};
     }
 
-    void DisplayArtwork::PaintNukiCounts(Gdiplus::Graphics &g, const ReplayState &state, TableArtwork &tiles) {
+    void DisplayArtwork::PaintNukiCounts(Gdiplus::Graphics &g, const ReplayState &state, TableArtwork &tiles,
+                                         float scale_x, float scale_y) {
         if (std::all_of(state.players.begin(), state.players.end(),
                 [](const ReplayPlayer &p) { return p.nuki.empty() && p.flowers.empty(); })) return;
         // 0049c200 / 004aa250: one n/0 sprite plus a rotated xN count,
@@ -371,6 +376,7 @@ namespace tenhou {
                     {tile.x, tile.y, tile.x + tile.image.width, tile.y + tile.image.height},
                     seat, static_cast<int>(measure.Width), static_cast<int>(measure.Height));
                 g.ResetTransform();
+                if (scale_x != 1.0f || scale_y != 1.0f) g.ScaleTransform(scale_x, scale_y);
                 g.TranslateTransform(static_cast<float>(layout.bounds.left), static_cast<float>(layout.bounds.top));
                 g.RotateTransform(static_cast<float>(seat * 270));
                 const float x = static_cast<float>(layout.text_origin.x), y = static_cast<float>(layout.text_origin.y);
@@ -387,7 +393,7 @@ namespace tenhou {
 
     TextRenderer &DisplayArtwork::Text() {
         if (!text_renderer_) {
-            auto font = std::make_unique<TextFontService>(ResourceManager(directory_));
+            auto font = SharedAssets().GetTextFont(directory_);
             auto renderer = std::make_unique<TextRenderer>(*font);
             text_font_ = std::move(font);
             text_renderer_ = std::move(renderer);

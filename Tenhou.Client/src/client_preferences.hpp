@@ -1,9 +1,9 @@
 #pragma once
-#include <windows.h>
+#include <array>
+#include <cstdint>
 #include <filesystem>
 #include <string>
-#include <cstdint>
-#include <array>
+#include <string_view>
 
 namespace tenhou {
     // Original STATUS/FLAGS0, FUN_0041d830. A checkbox is not always a set bit.
@@ -24,10 +24,11 @@ namespace tenhou {
         int se_volume = 100;
         int tile_shadow = 6;
         std::array<int, 3> tile_rgb{0, 0, 38};
-        std::array<std::wstring, 10> background_lhsv{L"2", L"0", L"255", L"255", L"", L"", L"", L"", L"", L""};
-        std::wstring background_source;
+        std::array<std::string, 10> background_lhsv{"2", "0", "255", "255", "", "", "", "", "", ""};
+        std::string background_source;
+        bool hd_artwork = false;
 
-        std::wstring BackgroundLhsv() const;
+        std::string BackgroundLhsv() const;
 
         std::array<float, 3> TileColor() const;
 
@@ -40,12 +41,20 @@ namespace tenhou {
         static ClientPreferences Load(const std::filesystem::path &config);
     };
 
-    std::wstring PreferenceString(const std::filesystem::path &config, const wchar_t *section,
-                                  const wchar_t *key, const wchar_t *fallback = L"");
+    std::string PreferenceString(const std::filesystem::path &config, std::string_view section,
+                                 std::string_view key, std::string_view fallback = {});
 
-    void WritePreference(const std::filesystem::path &config, const wchar_t *section,
-                         const wchar_t *key, const wchar_t *value);
+    int PreferenceInt(const std::filesystem::path &config, std::string_view section,
+                      std::string_view key, int fallback = 0);
 
-    void WritePreferenceInt(const std::filesystem::path &config, const wchar_t *section,
-                            const wchar_t *key, int value);
+    void WritePreference(const std::filesystem::path &config, std::string_view section,
+                         std::string_view key, const char *value);
+
+    inline void WritePreference(const std::filesystem::path &config, std::string_view section,
+                                std::string_view key, const std::string &value) {
+        WritePreference(config, section, key, value.c_str());
+    }
+
+    void WritePreferenceInt(const std::filesystem::path &config, std::string_view section,
+                            std::string_view key, int value);
 } // namespace tenhou

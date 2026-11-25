@@ -44,7 +44,7 @@ namespace tenhou {
 
         void SetEffectsOnly(bool enabled);
         void SetEffectsMuted(bool muted);
-        ULONGLONG LastEffectAt() const { return audio_.LastPlayedAt(); }
+        std::uint64_t LastEffectAt() const { return audio_.LastPlayedAt(); }
 
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
@@ -63,6 +63,7 @@ namespace tenhou {
         void Update();
         void Paint(HDC dc, bool table_only = false, HWND surface_parent = nullptr);
         void PaintTable(HDC dc, RECT bounds, HWND surface_parent = nullptr);
+        bool PaintTableToWindow(HWND surface_parent, RECT bounds);
 
         void Stop();
         void Start();
