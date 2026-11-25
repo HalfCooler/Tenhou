@@ -1,6 +1,10 @@
 <Solution>
-  <Project Path="Tenhou.Client/Tenhou.Client.proj" Type="13b669be-bb05-4ddf-9536-439f39a36129" />
-  <Project Path="Tenhou.Client.Tests/Tenhou.Client.Tests.proj" Type="13b669be-bb05-4ddf-9536-439f39a36129" />
+  <Project Path="Tenhou.Client/Tenhou.Client.vcxproj" Id="68aaf1a2-c2b8-4d50-8f11-4a73558f2722">
+    <Platform Solution="*|Any CPU" Project="Win32" />
+  </Project>
+  <Project Path="Tenhou.Client.Tests/Tenhou.Client.Tests.vcxproj" Id="cd89755a-232a-4a38-8d1d-aa4efa33b3e8">
+    <Platform Solution="*|Any CPU" Project="Win32" />
+  </Project>
   <Project Path="Tenhou.Server/Tenhou.Server.csproj" />
   <Project Path="Tenhou.Server.Tests/Tenhou.Server.Tests.csproj" />
 </Solution>

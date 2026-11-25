@@ -3,7 +3,10 @@
 使用 Windows 上的 Python 3.11 或更新版本。在仓库根目录安装 Frida 后，用原版启动器打开客户端，停在登录页。先启动脚本并输入 `start`，再在原版窗口登录或复现目标操作。
 
 ```powershell
-python -m pip install frida==17.27.1
+uv venv; .venv\Scripts\activate; uv pip install frida
+# OR
+python -m pip install frida
+
 python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw
 python -X utf8 -B .\scripts\Capture-OriginSession.py capture --raw --spawn
 ```

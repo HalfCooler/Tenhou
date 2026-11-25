@@ -43,10 +43,10 @@ target_compile_options(tenhou_replay PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_replay PUBLIC zlib_inflate)
 add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_audio.cpp src/original_display.cpp
         src/wall_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp
-        src/background.cpp src/gdi_table_renderer.cpp)
+        src/background.cpp src/gdi_table_renderer.cpp src/d2d_table_renderer.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text winmm msacm32 gdiplus)
+target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text winmm msacm32 gdiplus d3d11 dxgi d2d1 dxguid)
 add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp src/offline_lobby.cpp src/variant_state.cpp)
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)

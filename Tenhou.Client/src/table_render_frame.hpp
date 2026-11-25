@@ -10,6 +10,8 @@
 #include <vector>
 
 namespace tenhou {
+    std::optional<TextKey> ActionButtonText(unsigned control, bool hot);
+
     enum class TableActionButtonStyle : unsigned {
         Sprite440,
         OriginalExit,

@@ -7,6 +7,9 @@
 #include "tile_shadow.hpp"
 
 namespace tenhou {
+    void PaintTableInteraction(HDC dc, const TableRenderFrame &frame, TableArtwork &artwork,
+                               bool grayscale = false);
+
     class GdiTableRenderer final : public ITableCanvasRenderer {
     public:
         GdiTableRenderer();

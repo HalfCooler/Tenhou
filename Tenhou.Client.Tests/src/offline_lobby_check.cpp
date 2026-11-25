@@ -157,6 +157,51 @@ int main() {
         Check(LocalizeCertification(L"Additional award text") == L"Additional award text",
               "Unknown certificate text must be preserved");
 
+        Check(FormatFixedTrunc(-1.239, 2, false, nullptr) == L"-1.23" &&
+              FormatRate(0.2799) == L".279" && FormatRate(0) == L".000" && FormatRate(1) == L"1.00",
+              "Profile values truncate and keep the original rate precision");
+        Check(FormatSignedAdaptive(9.999, 2) == L"+9.99" && FormatSignedAdaptive(-10.99, 2) == L"-10.9" &&
+              FormatSignedAdaptive(100.9, 2) == L"+100" && FormatSignedAdaptive(4.56, 1) == L"+4.5",
+              "Signed profile precision follows magnitude and the field limit");
+        Check(FormatExpiry(L"20261125") == L"2026/11/25" && FormatExpiry(L"") == L"----/--/--" &&
+              FormatExpiry(L"2026/11/25") == L"2026/11/25" && RankGradeName(10) == L"初段",
+              "Profile expiry and grade use the same display values");
+        auto profile = FixtureProfile();
+        profile.other_lifetime[kAmberLifetimeProfiles[0]].rating = 1888;
+        Check(MonthlyCorrespondingRating(profile, 17) == profile.three.rating &&
+              MonthlyCorrespondingRating(profile, kAmberMonthlyProfiles[0]) == 1888 &&
+              !LifetimeProfileLabel(kRankedFourProfile).empty() && !RankedMonthlyLabel(17).empty(),
+              "Monthly choices refer to the corresponding lifetime categories");
+        const auto clipboard = FormatProfileClipboardText(profile, {}, kRankedFourProfile,
+                                                           kDefaultMonthlyProfile, false, L"2026/11/25 00:00:00");
+        Check(clipboard.find(L"2026/11/25 00:00:00\r\n") != std::wstring::npos &&
+              clipboard.find(LifetimeProfileCaption(kRankedFourProfile)) != std::wstring::npos &&
+              clipboard.find(MonthlyProfileCaption(kDefaultMonthlyProfile)) != std::wstring::npos,
+              "Clipboard export includes the caller's timestamp and profile captions");
+
+        OfflineLobbyTiming timing;
+        timing.BeginMove(1000);
+        Check(!timing.MoveReady(1249) && timing.MoveReady(1250), "Local move confirmation deadline");
+        Check(timing.Hover(2, 1000) == OfflineLobbyTiming::HoverEffect::Schedule &&
+              !timing.AdvanceRules(1499) && timing.AdvanceRules(1500) && timing.rule_slot() == 2,
+              "Rule tooltip opens after the hover delay");
+        Check(timing.Hover(3, 1500) == OfflineLobbyTiming::HoverEffect::Redraw && timing.rule_slot() == 3 &&
+              timing.Hover(-1, 1600) == OfflineLobbyTiming::HoverEffect::Schedule &&
+              !timing.AdvanceRules(2099) && timing.AdvanceRules(2100) && timing.rule_slot() == -1,
+              "Visible rules switch immediately and hide after the leave delay");
+        timing.Hover(3, 2200);
+        timing.ClearRules();
+        Check(!timing.AdvanceRules(2700), "Clearing rules cancels queued timer messages");
+        using Phase = OfflineLobbyTiming::CertificatePhase;
+        timing.ResetCertificate(0);
+        Check(timing.CertificateFrame(0) == std::pair<float, float>{1.f, .01f} &&
+              timing.CertificateStatus(1979) == Phase::Opening && timing.CertificateStatus(1980) == Phase::Ready,
+              "Certification fade gates its OK button");
+        Check(timing.CloseCertificate(2000) && !timing.CloseCertificate(2001) &&
+              timing.CertificateFrame(2020) == std::pair<float, float>{.8f, .8f} &&
+              timing.CertificateStatus(2419) == Phase::Closing && timing.CertificateStatus(2420) == Phase::Finished,
+              "Certification closes using stepped zoom and opacity");
+
         OfflineLobby lobby(FixtureProfile());
         constexpr unsigned base[]{7, 15, 1, 9, 0x41, 0x49, 0x1041, 0x1049, 0x11, 0x19, 0x51, 0x59};
         constexpr unsigned mask[]{0, 0x80, 0x20, 0xA0};

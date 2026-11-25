@@ -9,22 +9,6 @@
 #include <stdexcept>
 
 namespace tenhou {
-    std::optional<TextKey> ActionButtonText(unsigned control, bool hot) {
-        if (control == 5173) return hot ? TextKey::button_hover_exchange : TextKey::button_normal_exchange;
-        constexpr TextKey missing_normal[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
-        constexpr TextKey missing_hover[]{TextKey::button_hover_man, TextKey::button_hover_pin, TextKey::button_hover_sou};
-        if (control >= 5170 && control <= 5172) return hot ? missing_hover[control - 5170] : missing_normal[control - 5170];
-        constexpr TextKey normal[]{TextKey::button_normal_chi, TextKey::button_normal_pon,
-            TextKey::button_normal_kan, TextKey::button_normal_riichi, TextKey::button_normal_ron,
-            TextKey::button_normal_tsumo, TextKey::button_normal_abort_draw, TextKey::button_normal_pass};
-        constexpr TextKey hover[]{TextKey::button_hover_chi, TextKey::button_hover_pon,
-            TextKey::button_hover_kan, TextKey::button_hover_riichi, TextKey::button_hover_ron,
-            TextKey::button_hover_tsumo, TextKey::button_hover_abort_draw, TextKey::button_hover_pass};
-        if (control == 5151) return hot ? TextKey::button_hover_nuki : TextKey::button_normal_nuki;
-        if (control < 5121 || control > 5128) return {};
-        return hot ? hover[control - 5121] : normal[control - 5121];
-    }
-
     bool HudInteraction::Handle(HWND window, RECT board, int width, UINT message, LPARAM point) {
         if (message == WM_TIMER) {
             KillTimer(window, 9);
@@ -235,7 +219,7 @@ namespace tenhou {
             throw std::runtime_error("Cannot draw original display sprite");
     }
 
-    void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state) {
+    void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state, const HudSprite &draw_sprite) {
         const auto hud = BuildOriginalHud(state, width_);
         const float s = hud.scale;
         const auto saved = g.Save();
@@ -243,24 +227,33 @@ namespace tenhou {
             g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             // 00482fe1 pushes 0x24d. 00482f30 draws that rounded plate at
             // (9,10) inside a centered (image+18,image+20) background capture.
-            g.ResetTransform();
-            if (panel_enabled_) Sprite(g, 589, hud.panel[0], hud.panel[1]);
-            for (const auto &item: hud.sprites) {
-                const Affine base{1, 0, 0, 1, hud.center[0], hud.center[1]};
-                Transform(g, item.seat < 0 ? base : item.id == 466 ? hud.sticks[item.seat] : hud.seats[item.seat]);
-                Sprite(g, item.id, item.x, item.y, item.center_x, item.center_y);
-            }
-            Transform(g, {1, 0, 0, 1, hud.center[0], hud.center[1]});
+            const Affine center{1, 0, 0, 1, hud.center[0], hud.center[1]};
+            const auto sprite = [&](unsigned id, int x, int y, const Affine &transform,
+                                    bool cx = false, bool cy = false) {
+                if (draw_sprite) {
+                    const auto &im = Get(id);
+                    draw_sprite(id, im, x - (cx ? im.width / 2 : 0),
+                                y - (cy ? im.height / 2 : 0), transform);
+                } else {
+                    Transform(g, transform);
+                    Sprite(g, id, x, y, cx, cy);
+                }
+            };
+            if (panel_enabled_) sprite(589, hud.panel[0], hud.panel[1], {1, 0, 0, 1, 0, 0});
+            for (const auto &item: hud.sprites)
+                sprite(item.id, item.x, item.y, item.seat < 0 ? center : item.id == 466 ?
+                       hud.sticks[item.seat] : hud.seats[item.seat], item.center_x, item.center_y);
+            Transform(g, center);
             if (!state.variant) {
             const auto sticks = std::to_wstring(state.sticks), honba = std::to_wstring(state.honba);
             const float sw = MeasureText(std::to_string(state.sticks), 12 * s), hw = MeasureText(
                 std::to_string(state.honba), 12 * s);
             float cursor = -(sw + 7 + hw + 4 * s + 7) * .5f;
-            Sprite(g, 401, static_cast<int>(cursor), static_cast<int>(6 * s), false, true);
+            sprite(401, static_cast<int>(cursor), static_cast<int>(6 * s), center, false, true);
             cursor += 7;
             Caption(g, sticks, cursor, 6 * s, 12 * s, hud);
             cursor += sw + 4 * s;
-            Sprite(g, 402, static_cast<int>(cursor), static_cast<int>(6 * s), false, true);
+            sprite(402, static_cast<int>(cursor), static_cast<int>(6 * s), center, false, true);
             Caption(g, honba, cursor + 7, 6 * s, 12 * s, hud);
             }
             for (int i = 0; i < 4; ++i) {

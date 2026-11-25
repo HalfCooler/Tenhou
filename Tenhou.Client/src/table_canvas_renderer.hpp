@@ -21,6 +21,8 @@ namespace tenhou {
         virtual TileGeometryCatalog &EnsureGeometry(const std::vector<int> &red_tiles) = 0;
         virtual bool HasLoadedAssets() const = 0;
 
+        virtual bool RenderToWindow(HWND, const TableRenderFrame &) { return false; }
+        virtual void HideWindowSurface() {}
         virtual void RenderToDc(HDC dc, const TableRenderFrame &frame) = 0;
         virtual void RenderButtonToDc(HDC dc, const TableActionButton &button, unsigned dpi = 96) = 0;
     };

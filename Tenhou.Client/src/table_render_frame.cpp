@@ -3,6 +3,22 @@
 #include <string>
 
 namespace tenhou {
+    std::optional<TextKey> ActionButtonText(unsigned control, bool hot) {
+        if (control == 5173) return hot ? TextKey::button_hover_exchange : TextKey::button_normal_exchange;
+        constexpr TextKey missing_normal[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
+        constexpr TextKey missing_hover[]{TextKey::button_hover_man, TextKey::button_hover_pin, TextKey::button_hover_sou};
+        if (control >= 5170 && control <= 5172) return hot ? missing_hover[control - 5170] : missing_normal[control - 5170];
+        constexpr TextKey normal[]{TextKey::button_normal_chi, TextKey::button_normal_pon,
+            TextKey::button_normal_kan, TextKey::button_normal_riichi, TextKey::button_normal_ron,
+            TextKey::button_normal_tsumo, TextKey::button_normal_abort_draw, TextKey::button_normal_pass};
+        constexpr TextKey hover[]{TextKey::button_hover_chi, TextKey::button_hover_pon,
+            TextKey::button_hover_kan, TextKey::button_hover_riichi, TextKey::button_hover_ron,
+            TextKey::button_hover_tsumo, TextKey::button_hover_abort_draw, TextKey::button_hover_pass};
+        if (control == 5151) return hot ? TextKey::button_hover_nuki : TextKey::button_normal_nuki;
+        if (control < 5121 || control > 5128) return {};
+        return hot ? hover[control - 5121] : normal[control - 5121];
+    }
+
     TableRenderFrame BuildOnlineTableRenderFrame(
         int canvas_width, CanvasRect bounds, const OnlineState &online, HandProjection &hand,
         const TileGeometryCatalog &geometry, const TablePresentation &presentation,

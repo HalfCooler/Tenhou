@@ -24,6 +24,8 @@ namespace tenhou {
         void Image(std::string key, Gdiplus::RectF bounds, std::function<void(Gdiplus::Graphics &)> draw,
                    std::optional<Gdiplus::RectF> clip = {});
         std::vector<FinalSceneStamp> Snapshot(int width, int height, int dw, int dh) const;
+        void VisitText(int width, int height, int dw, int dh,
+                       const std::function<void(TextRenderer &, const TextRenderContext &, const SceneTextRun &)> &draw) const;
         void Paint(HDC target, int width, int height, int dw, int dh, RECT dirty) const;
     private:
         struct Command {

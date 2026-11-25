@@ -68,6 +68,49 @@ namespace tenhou {
         std::map<unsigned, LobbyStatistics> other_lifetime;
     };
 
+    std::wstring AmberProfileLabel(std::size_t index);
+    std::wstring LifetimeProfileLabel(unsigned type);
+    std::wstring LifetimeProfileCaption(unsigned type);
+    std::wstring RankedMonthlyLabel(unsigned type);
+    std::wstring MonthlyProfileCaption(unsigned type);
+    std::wstring FormatFixedTrunc(double value, int decimals, bool strip_zero, const wchar_t *plus_prefix);
+    std::wstring FormatSignedAdaptive(double value, int max_decimals);
+    std::wstring FormatRate(double value, int decimals = 3);
+    std::wstring FormatExpiry(std::wstring_view raw);
+    std::wstring RankGradeName(int code);
+    int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, unsigned monthly_type);
+    std::wstring FormatProfileClipboardText(const OfflineLobbyProfile &profile,
+                                            const std::array<LobbyStatistics, 2> &private_lifetime,
+                                            unsigned lifetime, unsigned monthly, bool official,
+                                            std::wstring_view timestamp);
+
+    class OfflineLobbyTiming {
+    public:
+        static constexpr unsigned kMoveDelay = 250, kRulesDelay = 500, kCertificateTick = 20;
+        enum class HoverEffect { None, Schedule, Redraw };
+        enum class CertificatePhase { Opening, Ready, Closing, Finished };
+
+        void BeginMove(std::uint64_t now) { move_at_ = now + kMoveDelay; }
+        bool MoveReady(std::uint64_t now) const { return now >= move_at_; }
+
+        HoverEffect Hover(int slot, std::uint64_t now);
+        void ClearRules();
+        bool AdvanceRules(std::uint64_t now);
+        int hovered() const { return hovered_; }
+        int rule_slot() const { return rule_slot_; }
+
+        void ResetCertificate(std::uint64_t now);
+        bool CloseCertificate(std::uint64_t now);
+        bool certificate_closing() const { return certificate_close_.has_value(); }
+        CertificatePhase CertificateStatus(std::uint64_t now) const;
+        std::pair<float, float> CertificateFrame(std::uint64_t now) const;
+
+    private:
+        std::uint64_t move_at_ = 0, certificate_start_ = 0;
+        std::optional<std::uint64_t> rules_at_, certificate_close_;
+        int hovered_ = -1, rule_slot_ = -1;
+    };
+
     struct OfflineLobbyCounts {
         std::array<unsigned, 4> totals{};
         std::array<unsigned, 113> waiting{}, playing{};

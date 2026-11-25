@@ -246,6 +246,15 @@ namespace tenhou {
         double info_rule_height = 0;
         std::size_t serial = 0;
     };
+    struct TextRenderer::RasterData {
+        TextRasterPixels pixels;
+        mutable Bitmap bitmap;
+
+        RasterData(int width, int height)
+            : pixels{width, height, Bytes(static_cast<std::size_t>(width) * height * 4)},
+              bitmap(width, height, width * 4, PixelFormat32bppPARGB, pixels.bgra.data()) {}
+    };
+
     struct TextRenderer::Impl {
         const TextFontService &font;
         TextRenderProfile profile;
@@ -256,7 +265,7 @@ namespace tenhou {
             std::array<REAL, 6> matrix;
             unsigned dpi;
             Rect bounds;
-            std::unique_ptr<Bitmap> bitmap;
+            std::shared_ptr<const RasterData> raster;
             std::size_t bytes;
         };
         std::list<LayoutEntry> layouts;
@@ -457,9 +466,10 @@ namespace tenhou {
         const auto device = TextGeometry(context, run).device;
         return RectF(Real(device.X), Real(device.Y), Real(device.Width), Real(device.Height));
     }
-    RectF TextRenderer::Draw(Graphics &target, const TextRenderContext &context, const SceneTextRun &run) {
+    std::shared_ptr<const TextRenderer::RasterData> TextRenderer::GetRaster(
+        const TextRenderContext &context, const SceneTextRun &run, Rect &device) {
         auto geometry = TextGeometry(context, run);
-        const auto device = geometry.device;
+        device = geometry.device;
         if (device.IsEmptyArea()) return {};
         auto elements = geometry.elements;
         const auto &data = *run.layout.data;
@@ -472,10 +482,10 @@ namespace tenhou {
                 it->bounds.Width == device.Width && it->bounds.Height == device.Height) { found = it; break; }
         if (found == impl_->rasters.end()) {
             ++impl_->raster_builds;
-            auto bitmap = std::make_unique<Bitmap>(device.Width, device.Height, PixelFormat32bppPARGB);
-            Check(bitmap->GetLastStatus(), "Cannot allocate text raster");
+            auto raster = std::make_shared<RasterData>(device.Width, device.Height);
+            Check(raster->bitmap.GetLastStatus(), "Cannot allocate text raster");
             Matrix local(elements[0], elements[1], elements[2], elements[3], elements[4], elements[5]);
-            Graphics g(bitmap.get()); g.SetPageUnit(UnitPixel); g.Clear(Color(0, 0, 0, 0));
+            Graphics g(&raster->bitmap); g.SetPageUnit(UnitPixel); g.Clear(Color(0, 0, 0, 0));
             g.SetSmoothingMode(SmoothingModeAntiAlias); g.SetPixelOffsetMode(PixelOffsetModeHalf);
             Check(g.SetTransform(&local), "Cannot set text raster transform");
             if (data.style.decoration == TextDecoration::info_gradient) {
@@ -510,12 +520,31 @@ namespace tenhou {
             SolidBrush fill(Palette(data.style.fill)); Check(g.FillPath(&fill, &data.path), "Cannot fill text outline");
             g.Flush(FlushIntentionSync);
             const auto bytes = static_cast<std::size_t>(device.Width) * device.Height * 4;
-            impl_->rasters.push_front({run.layout.data, elements, context.dpi, device, std::move(bitmap), bytes});
+            impl_->rasters.push_front({run.layout.data, elements, context.dpi, device, std::move(raster), bytes});
             impl_->raster_bytes += bytes; found = impl_->rasters.begin();
         } else {
             ++impl_->raster_hits;
             impl_->rasters.splice(impl_->rasters.begin(), impl_->rasters, found); found = impl_->rasters.begin();
         }
+        auto result = found->raster;
+        // Oversized individual rasters may be drawn once but are not retained.
+        while (impl_->rasters.size() > kRasterLimit || impl_->raster_bytes > kRasterBytes) {
+            impl_->raster_bytes -= impl_->rasters.back().bytes; impl_->rasters.pop_back();
+        }
+        return result;
+    }
+
+    TextRaster TextRenderer::Rasterize(const TextRenderContext &context, const SceneTextRun &run) {
+        Rect bounds;
+        const auto raster = GetRaster(context, run, bounds);
+        if (!raster) return {};
+        return {bounds, std::shared_ptr<const TextRasterPixels>(raster, &raster->pixels)};
+    }
+
+    RectF TextRenderer::Draw(Graphics &target, const TextRenderContext &context, const SceneTextRun &run) {
+        Rect device;
+        const auto raster = GetRaster(context, run, device);
+        if (!raster) return {};
         const auto saved = target.Save();
         try {
             // This API consumes physical device coordinates; ignore any inherited world transform.
@@ -528,14 +557,10 @@ namespace tenhou {
             if (context.device_clip) Check(target.SetClip(*context.device_clip, CombineModeIntersect), "Cannot clip text target");
             ColorMatrix opacity{1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, Real(std::clamp(run.opacity, 0.0, 1.0)), 0, 0, 0, 0, 0, 1};
             ImageAttributes attributes; Check(attributes.SetColorMatrix(&opacity), "Cannot set text opacity");
-            Check(target.DrawImage(found->bitmap.get(), device, 0, 0, device.Width, device.Height, UnitPixel, &attributes), "Cannot composite text raster");
+            Check(target.DrawImage(&raster->bitmap, device, 0, 0, device.Width, device.Height, UnitPixel, &attributes), "Cannot composite text raster");
         } catch (...) { target.Restore(saved); throw; }
         target.Restore(saved);
-        // Oversized individual rasters may be drawn once but are not retained.
-        while (impl_->rasters.size() > kRasterLimit || impl_->raster_bytes > kRasterBytes) {
-            impl_->raster_bytes -= impl_->rasters.back().bytes; impl_->rasters.pop_back();
-        }
-        return RectF(left, top, Real(device.Width), Real(device.Height));
+        return RectF(Real(device.X), Real(device.Y), Real(device.Width), Real(device.Height));
     }
     TextCacheStats TextRenderer::CacheStats() const {
         return {impl_->layouts.size(), impl_->rasters.size(), impl_->raster_bytes,

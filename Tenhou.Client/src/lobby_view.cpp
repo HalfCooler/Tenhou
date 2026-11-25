@@ -12,37 +12,13 @@
 #include <gdiplus.h>
 #include <algorithm>
 #include <stdexcept>
-#include <commctrl.h>
+#include <iterator>
 
 namespace tenhou {
     namespace {
         constexpr UINT_PTR kOpeningTimer = 12;
         constexpr wchar_t kLobbyWindow[] = L"TENHOU_REBUILD_LOBBY";
 
-        std::wstring Text(HWND window) {
-            const int length = GetWindowTextLengthW(window);
-            std::wstring value(static_cast<std::size_t>(length) + 1, L'\0');
-            GetWindowTextW(window, value.data(), length + 1);
-            value.resize(static_cast<std::size_t>(length));
-            return value;
-        }
-
-        LRESULT CALLBACK ActionButtonProcedure(HWND w, UINT m, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR data) {
-            if (m == WM_LBUTTONDOWN || (m == WM_KEYDOWN && (wp == VK_SPACE || wp == VK_RETURN)))
-                SendMessageW(GetParent(w), WM_APP + 26, static_cast<WPARAM>(GetDlgCtrlID(w)), 0);
-            if (m == WM_ERASEBKGND) return 1; // WM_DRAWITEM supplies every pixel.
-            if (data && (m == WM_LBUTTONDOWN || m == WM_LBUTTONUP)) {
-                const auto *log = reinterpret_cast<const std::function<void(const std::string &)> *>(data);
-                (*log)("ACTION POINTER button=" + std::to_string(GetDlgCtrlID(w)) + " message=" + std::to_string(m));
-            }
-            if (m == WM_MOUSEMOVE) {
-                TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, w, 0};
-                TrackMouseEvent(&track);
-                InvalidateRect(w, nullptr, FALSE);
-            }
-            if (m == WM_MOUSELEAVE) InvalidateRect(w, nullptr, FALSE);
-            return DefSubclassProc(w, m, wp, lp);
-        }
     }
 
     OnlineSequencerContext LobbyView::MakeContext() const {
@@ -181,7 +157,6 @@ namespace tenhou {
         }
 
         if (fx.arrange) {
-            UpdateActionAvailability();
             Arrange();
         }
 
@@ -274,36 +249,6 @@ namespace tenhou {
         window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kLobbyWindow, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                                   0, 0, 1024, 768, parent, reinterpret_cast<HMENU>(220), wc.hInstance, this);
         if (!font_ || !window_) throw std::runtime_error("Cannot create lobby view");
-        auto add = [&](int id, const wchar_t *type, const wchar_t *text, DWORD style) {
-            const HWND control = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
-                                                 0, 0, 100, 25, window_,
-                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), wc.hInstance,
-                                                 nullptr);
-            if (!control) throw std::runtime_error("Cannot create lobby control");
-            controls_[id] = control;
-            SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
-        };
-        const wchar_t *buttons[]{L"打牌", TextLabel(TextKey::button_normal_chi).data(),
-            TextLabel(TextKey::button_normal_pon).data(), TextLabel(TextKey::button_normal_kan).data(),
-            TextLabel(TextKey::button_normal_riichi).data(), TextLabel(TextKey::button_normal_ron).data(),
-            TextLabel(TextKey::button_normal_tsumo).data(), TextLabel(TextKey::button_normal_abort_draw).data(),
-            TextLabel(TextKey::button_normal_pass).data(), L"次局"};
-        for (int i = 1; i <= 8; ++i)
-            add(5120 + i, L"BUTTON", buttons[i], WS_TABSTOP | (i >= 1 && i <= 8 ? BS_OWNERDRAW : BS_PUSHBUTTON));
-        add(5151, L"BUTTON", TextLabel(TextKey::button_normal_nuki).data(), WS_TABSTOP | BS_OWNERDRAW);
-        constexpr TextKey suits[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
-        for (int i = 0; i < 3; ++i) add(5170 + i, L"BUTTON", TextLabel(suits[i]).data(), WS_TABSTOP | BS_OWNERDRAW);
-        add(5173, L"BUTTON", TextLabel(TextKey::button_normal_exchange).data(), WS_TABSTOP | BS_OWNERDRAW);
-        add(5174, L"BUTTON", L"结算", WS_TABSTOP | BS_PUSHBUTTON);
-        add(5129, L"BUTTON", L"下一盘", WS_TABSTOP | BS_PUSHBUTTON);
-        for (int id: {5170, 5171, 5172, 5173, 5129})
-            SetWindowSubclass(controls_[id], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
-        SetWindowSubclass(controls_[5151], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
-        for (int i = 1; i <= 8; ++i)
-            SetWindowSubclass(controls_[5120 + i], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
-        add(5137, L"BUTTON", L"返回大厅", WS_TABSTOP | BS_PUSHBUTTON);
-        add(0xbc6, L"BUTTON", L"EXIT", WS_TABSTOP | BS_OWNERDRAW);
-        SetWindowSubclass(controls_[0xbc6], ActionButtonProcedure, 1, reinterpret_cast<DWORD_PTR>(&log_));
         exit_font_ = CreateOriginalUiFont();
         WNDCLASSEXW vote_class{sizeof(vote_class)};
         vote_class.hInstance = wc.hInstance;
@@ -328,6 +273,14 @@ namespace tenhou {
             return child;
         };
         if (!exit_vote_ || !exit_font_) throw std::runtime_error("Cannot create exit vote window");
+        if (const auto dc = GetDC(window_)) {
+            const auto previous = SelectObject(dc, exit_font_);
+            GetTextExtentPoint32W(dc, L"EXIT", 4, &exit_size_);
+            SelectObject(dc, previous);
+            ReleaseDC(window_, dc);
+        }
+        exit_size_.cx += 16;
+        exit_size_.cy += 8;
         exit_vote_text_ = vote_control(L"STATIC", L"", 5162, 20, 18, 380, 105, SS_LEFT);
         exit_yes_ = vote_control(L"BUTTON", L"同意退出", 5163, 60, 135, 130, 30, WS_TABSTOP | BS_PUSHBUTTON);
         exit_no_ = vote_control(L"BUTTON", L"继续对局", 5164, 225, 135, 130, 30, WS_TABSTOP | BS_DEFPUSHBUTTON);
@@ -436,6 +389,8 @@ namespace tenhou {
 
     void LobbyView::Show(bool visible) {
         if (!visible) {
+            CancelButton();
+            table_.Renderer().HideWindowSurface();
             sequencer_.set_hover_point(-1, -1);
             ApplyEffects(sequencer_.ResetActionClock());
             ApplyEffects(sequencer_.CancelResultTimer());
@@ -475,6 +430,7 @@ namespace tenhou {
     }
 
     void LobbyView::ConfigureArtwork(const std::filesystem::path &directory, int width) {
+        CancelButton();
         CancelHandDrag();
         sequencer_.captions().Clear();
         CancelSelection();
@@ -486,10 +442,8 @@ namespace tenhou {
         sound_loaded_ = false;
         audio_error_.clear();
         settlement_view_->Configure(directory, width);
-        action_artwork_.Configure(directory, width);
         matching_->ConfigureArtwork(directory);
         if (service_lobby_) service_lobby_->ConfigureArtwork(directory, width);
-        action_artwork_error_.clear();
         resource_directory_ = directory;
         UpdateLobbyMusic(true);
         canvas_width_ = width;
@@ -514,90 +468,62 @@ namespace tenhou {
         matching_->Show(!game && !service && (!session.official || session.phase == LobbyPhase::Error));
         if (service_lobby_) service_lobby_->Show(service && !session.game.started && !session.recovering &&
                                                  lobby_ready && IsWindowVisible(window_));
-        for (const auto &item: controls_) ShowWindow(item.second, SW_HIDE);
         const auto board = BoardBounds();
         settlement_view_->Move(board);
         action_view_->Move(board);
         const bool intro_active = match_intro_ && match_intro_->Active();
-        const bool table_anim = table_.Animating();
-        if (game && !sequencer_.show_results()) {
-            if (Snapshot().variant_active) {
-                const auto &s = Snapshot();
-                const auto target = FitNativeCanvas(board, canvas_width_);
-                const auto anchor = table_.ActionAnchor(s.game);
-                const int stride = canvas_width_ == 1440 ? 154 : 110;
-                const int bw = canvas_width_ == 1440 ? 140 : 100, bh = canvas_width_ == 1440 ? 50 : 36;
-                const int y = anchor.y - (canvas_width_ == 1440 ? 63 : 45);
-                const auto place = [&](int id, int x) {
-                    MoveWindow(controls_.at(id), target.left + x * (target.right - target.left) / canvas_width_,
-                               target.top + y * (target.bottom - target.top) / (canvas_width_ * 3 / 4),
-                               bw * (target.right - target.left) / canvas_width_,
-                               bh * (target.bottom - target.top) / (canvas_width_ * 3 / 4), TRUE);
-                    ShowWindow(controls_.at(id), SW_SHOW);
-                };
-                if (s.variant.phase == VariantPhase::Missing && LocalTableInput() && !Moving())
-                    for (int suit = 0; suit < 3; ++suit) {
-                        const auto found = std::find_if(s.actions.choices.begin(), s.actions.choices.end(),
-                            [suit](const OnlineAction &a) { return a.kind == "dingque" && a.suit == suit; });
-                        if (found != s.actions.choices.end()) {
-                            place(5170 + suit, anchor.x + 65 - (2 - suit) * stride);
-                            EnableWindow(controls_.at(5170 + suit),
-                                         sequencer_.IsActionButtonEnabled(5170 + suit, session, intro_active, table_anim));
-                        }
-                    }
-                if (s.variant.phase == VariantPhase::Exchange && LocalTableInput() && !Moving() &&
-                    sequencer_.selection().group == "exchange" &&
-                    sequencer_.selection().Confirm(s.actions) != static_cast<std::size_t>(-1)) {
-                    place(5173, anchor.x + 65);
-                    EnableWindow(controls_.at(5173),
-                                 sequencer_.IsActionButtonEnabled(5173, session, intro_active, table_anim));
-                }
-                if (!s.game.settlement.receipts.empty() || !s.last_settlement.receipts.empty()) {
-                    MoveWindow(controls_.at(5174), 12, 50, 80, 26, TRUE);
-                    ShowWindow(controls_.at(5174), SW_SHOW);
-                }
-                if (s.variant.phase == VariantPhase::Ended) {
-                    place(5129, anchor.x + 65);
-                    EnableWindow(controls_.at(5129),
-                                 sequencer_.IsActionButtonEnabled(5129, session, intro_active, table_anim));
-                }
-            }
-            if (Snapshot().phase == LobbyPhase::MatchComplete) {
-                MoveWindow(controls_.at(5137), r.right - 180, r.bottom - 42, 160, 28, TRUE);
-                ShowWindow(controls_.at(5137), SW_SHOW);
-            }
-            const auto target = FitNativeCanvas(board, canvas_width_);
-            const auto anchor = table_.ActionAnchor(Snapshot().game);
-            for (const auto &p: BuildActionPlacements(Snapshot().actions, canvas_width_, {anchor.x, anchor.y})) {
-                if (SuppressCallPrompt()) continue;
-                if (p.button == 5120 || p.button == 5129) continue;
-                const int x = target.left + p.rect.left * (target.right - target.left) / canvas_width_;
-                const int y = target.top + p.rect.top * (target.bottom - target.top) / (canvas_width_ * 3 / 4);
-                const int w = (p.rect.right - p.rect.left) * (target.right - target.left) / canvas_width_;
-                const int h = (p.rect.bottom - p.rect.top) * (target.bottom - target.top) / (canvas_width_ * 3 / 4);
-                MoveWindow(controls_.at(p.button), x, y, w, h, TRUE);
-                ShowWindow(controls_.at(p.button), SW_SHOW);
-            }
-        }
         action_view_->Set(sequencer_.selection(), Snapshot().actions, Snapshot().game,
                           game && !sequencer_.show_results() && !SuppressCallPrompt() && !intro_active &&
                           !sequencer_.opening().Active() && !Moving());
         match_intro_->Move(r);
-        if (game && session.exit_allowed && session.phase == LobbyPhase::Game && !intro_active) {
-            const auto target = FitNativeCanvas(board, canvas_width_);
-            HDC dc = GetDC(window_);
-            const auto old = SelectObject(dc, exit_font_);
-            SIZE size{};
-            GetTextExtentPoint32W(dc, L"EXIT", 4, &size);
-            SelectObject(dc, old);
-            ReleaseDC(window_, dc);
-            const int y = std::min<int>(r.bottom - 22, target.bottom - (canvas_width_ == 1440 ? 57 : 32));
-            MoveWindow(controls_.at(0xbc6), target.left + 10, y, size.cx + 16, size.cy + 8, TRUE);
-            EnableWindow(controls_.at(0xbc6),
-                         sequencer_.IsActionButtonEnabled(0xbc6, session, intro_active, table_anim));
-            ShowWindow(controls_.at(0xbc6), SW_SHOW);
-            BringWindowToTop(controls_.at(0xbc6));
+        CheckButtonCapture();
+    }
+
+    std::vector<TableActionButton> LobbyView::Buttons() {
+        if (!client_ || !Snapshot().game.initialized || sequencer_.show_results()) return {};
+        const auto r = BoardBounds();
+        const auto anchor = table_.ActionAnchor(Snapshot().game);
+        auto buttons = sequencer_.BuildButtons(client_->snapshot(), {r.left, r.top, r.right, r.bottom},
+                                                canvas_width_, exit_size_.cx, exit_size_.cy,
+                                                anchor.x, anchor.y, match_intro_->Active(), table_.Animating());
+        const auto [x, y] = sequencer_.hover_point();
+        const int hot = HitButton(buttons, x, y);
+        for (auto &button: buttons) {
+            button.hot = button.enabled && button.id == hot;
+            button.focused = button.enabled && button.id == focused_button_ && GetFocus() == window_;
+            button.pressed = button.enabled &&
+                ((button.hot && button.id == sequencer_.pressed_action()) ||
+                 (button.focused && button.id == keyboard_button_));
         }
+        return buttons;
+    }
+
+    int LobbyView::HitButton(const std::vector<TableActionButton> &buttons, int x, int y) {
+        for (auto it = buttons.rbegin(); it != buttons.rend(); ++it) {
+            const auto &r = it->viewport_rect;
+            if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return it->id;
+        }
+        return -1;
+    }
+
+    void LobbyView::CancelButton() {
+        if (sequencer_.pressed_action() < 0 && keyboard_button_ < 0) return;
+        sequencer_.pressed_action() = keyboard_button_ = -1;
+        if (GetCapture() == window_) ReleaseCapture();
+        InvalidateRect(window_, nullptr, FALSE);
+    }
+
+    void LobbyView::CheckButtonCapture() {
+        const auto buttons = Buttons();
+        const auto active = [&](int id) {
+            return id < 0 || std::any_of(buttons.begin(), buttons.end(),
+                [id](const auto &button) { return button.id == id && button.enabled; });
+        };
+        if (!active(focused_button_)) focused_button_ = -1;
+        if ((sequencer_.pressed_action() >= 0 || keyboard_button_ >= 0) &&
+            (sequencer_.button_revision() != Snapshot().actions.revision ||
+             !active(sequencer_.pressed_action()) || !active(keyboard_button_)))
+            CancelButton();
     }
 
     bool LobbyView::Compact() const { return client_ && Snapshot().game.initialized; }
@@ -609,6 +535,7 @@ namespace tenhou {
     }
 
     void LobbyView::SetOriginalDisplay(bool enabled) {
+        CancelButton();
         CancelHandDrag();
         sequencer_.captions().Clear();
         CancelSelection();
@@ -667,6 +594,34 @@ namespace tenhou {
         if (!IsWindowVisible(window_) || !client_) return false;
         if (service_lobby_ && service_lobby_->HandleKey(key)) return true;
         if (settlement_view_->HandleKey(key)) return true;
+        if (GetFocus() == window_ && key == VK_TAB) {
+            auto buttons = Buttons();
+            buttons.erase(std::remove_if(buttons.begin(), buttons.end(),
+                [](const auto &button) { return !button.enabled; }), buttons.end());
+            if (!buttons.empty()) {
+                auto it = std::find_if(buttons.begin(), buttons.end(),
+                    [&](const auto &button) { return button.id == focused_button_; });
+                const bool previous = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                if (it == buttons.end()) focused_button_ = (previous ? buttons.back() : buttons.front()).id;
+                else if (previous && it != buttons.begin()) focused_button_ = std::prev(it)->id;
+                else if (!previous && std::next(it) != buttons.end()) focused_button_ = std::next(it)->id;
+                else focused_button_ = -1;
+                CancelButton();
+                InvalidateRect(window_, nullptr, FALSE);
+                return focused_button_ >= 0;
+            }
+        }
+        if (GetFocus() == window_ && (key == VK_SPACE || key == VK_RETURN) && focused_button_ >= 0) {
+            CheckButtonCapture();
+            if (focused_button_ < 0) return false;
+            if (keyboard_button_ < 0 && sequencer_.pressed_action() < 0) {
+                keyboard_button_ = focused_button_;
+                keyboard_key_ = key;
+                sequencer_.button_revision() = Snapshot().actions.revision;
+                InvalidateRect(window_, nullptr, FALSE);
+            }
+            return true;
+        }
         if (!sequencer_.selection().Active()) return key == VK_ESCAPE && !Snapshot().actions.pending.empty();
         if (key == VK_ESCAPE) {
             CancelSelection();
@@ -684,7 +639,9 @@ namespace tenhou {
     }
 
     TableInteraction LobbyView::Interaction(const LobbySnapshot &snapshot) {
-        const auto [hx, hy] = sequencer_.hover_point();
+        const auto [x, y] = sequencer_.hover_point();
+        const bool over_action = HitButton(Buttons(), x, y) >= 0;
+        const int hx = over_action ? -1 : x, hy = over_action ? -1 : y;
         return sequencer_.BuildInteraction(
             snapshot, client_->snapshot(), match_intro_ && match_intro_->Active(), table_.Animating(),
             HitAutomaticButton(hx, hy),
@@ -721,30 +678,15 @@ namespace tenhou {
         ApplyEffects(sequencer_.ApplyAutomaticSort(client_->snapshot(), MakeMotion()));
     }
 
-    void LobbyView::UpdateActionAvailability() {
-        if (!client_) return;
-        const auto &live = client_->snapshot();
-        const bool intro_active = match_intro_ && match_intro_->Active();
-        const bool table_anim = table_.Animating();
-        for (int i = 1; i <= 8; ++i)
-            EnableWindow(controls_[5120 + i],
-                         sequencer_.IsActionButtonEnabled(5120 + i, live, intro_active, table_anim));
-        EnableWindow(controls_[5151], sequencer_.IsActionButtonEnabled(5151, live, intro_active, table_anim));
-    }
-
     void LobbyView::UpdateActions() {
         if (!client_) return;
         (void) sequencer_.UpdateActions(client_->snapshot(), Compact());
-        UpdateActionAvailability();
+        CheckButtonCapture();
     }
 
     void LobbyView::Command(int id) {
         if (!client_) return;
         if (id == 0xbc6) {
-            if (sequencer_.pressed_action() == id) {
-                sequencer_.pressed_action() = -1;
-                if (sequencer_.button_revision() != Snapshot().actions.revision) return;
-            }
             client_->ExitGame();
             return;
         }
@@ -907,10 +849,13 @@ namespace tenhou {
         ApplyEffects(sequencer_.OpeningTick(client_->snapshot(), ctx));
     }
 
-    void LobbyView::Paint(HDC dc, bool table_only) {
+    void LobbyView::Paint(HDC dc, bool table_only, HWND surface_parent) {
         RECT r{};
         GetClientRect(window_, &r);
-        if (!table_only) {
+        const bool game = client_ && Snapshot().game.initialized && !sequencer_.show_results();
+        const bool paused = client_ && Snapshot().table_paused;
+        if (surface_parent && (!game || paused)) table_.Renderer().HideWindowSurface();
+        if (!table_only || (surface_parent && paused)) {
             FillRect(dc, &r, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
             if (sequencer_.original_display()) {
                 try {
@@ -929,13 +874,14 @@ namespace tenhou {
         const auto old = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, sequencer_.original_display() ? RGB(245, 245, 235) : RGB(25, 35, 45));
-        if (client_ && Snapshot().game.initialized && !sequencer_.show_results()) {
+        if (game) {
             auto bounds = BoardBounds();
             try {
                 const auto interaction = Interaction(Snapshot());
+                const auto buttons = Buttons();
                 table_.Paint(dc, bounds, Snapshot().game, Snapshot().actions.enabled,
                              sequencer_.animation_enabled() ? &sequencer_.opening() : nullptr, &interaction,
-                             AnimationNow(), &sequencer_.captions(), GetDpiForWindow(window_));
+                             AnimationNow(), &sequencer_.captions(), GetDpiForWindow(window_), &buttons, paused ? nullptr : surface_parent);
                 artwork_error_.clear();
                 painted_countdown_ = interaction.countdown;
                 painted_hover_ = interaction.hovered;
@@ -945,6 +891,7 @@ namespace tenhou {
                     artwork_painted_ = true;
                 }
             } catch (const std::exception &error) {
+                if (surface_parent) table_.Renderer().HideWindowSurface();
                 artwork_painted_ = false;
                 if (artwork_error_ != error.what()) log_("ONLINE ARTWORK ERROR " + std::string(error.what()));
                 artwork_error_ = error.what();
@@ -954,7 +901,7 @@ namespace tenhou {
             }
         }
         SelectObject(dc, old);
-        if (Snapshot().table_paused) {
+        if (paused) {
             const auto previous = SelectObject(dc, font_);
             SetTextColor(dc, RGB(255, 220, 120));
             SetBkMode(dc, TRANSPARENT);
@@ -962,77 +909,6 @@ namespace tenhou {
             DrawTextW(dc, client_->snapshot().exit_voting ? L"对局已暂停，等待退出投票" : L"对局已暂停，等待断线玩家重新登录",
                       -1, &message, DT_CENTER | DT_WORDBREAK);
             SelectObject(dc, previous);
-        }
-    }
-
-    void LobbyView::PaintAction(const DRAWITEMSTRUCT &item) {
-        bool rendered = false;
-        if (sequencer_.original_display() && ActionButtonText(item.CtlID, false)) {
-            try {
-                POINT point{};
-                GetCursorPos(&point);
-                ScreenToClient(item.hwndItem, &point);
-                const bool hot = IsWindowEnabled(item.hwndItem) && PtInRect(&item.rcItem, point);
-                const auto key = ActionButtonText(item.CtlID, hot);
-                Gdiplus::Graphics graphics(item.hDC);
-                const auto paint = [&](unsigned resource) {
-                    const auto &im = action_artwork_.Get(resource);
-                    Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
-                                           const_cast<BYTE *>(im.bgra.data()));
-                    const int offset = item.itemState & ODS_SELECTED ? 1 : 0;
-                    if (graphics.DrawImage(&bitmap, item.rcItem.left + offset, item.rcItem.top + offset,
-                                           item.rcItem.right - item.rcItem.left,
-                                           item.rcItem.bottom - item.rcItem.top) != Gdiplus::Ok)
-                        throw std::runtime_error("Cannot draw native action button");
-                };
-                FillRect(item.hDC, &item.rcItem, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-                paint(440);
-                if (!key) throw std::runtime_error("Unmapped action button text");
-                auto &renderer = action_artwork_.Text();
-                auto layout = renderer.Layout(*key);
-                const auto &ink = layout.metrics.ink;
-                const double sd = canvas_width_ == 1024 ? 1.0 / 1.4 : 1;
-                const double fit = double(item.rcItem.right - item.rcItem.left) / (canvas_width_ == 1440 ? 140 : 100);
-                TextRenderContext context;
-                context.native_layout_scale = sd;
-                context.viewport_scale_x = context.viewport_scale_y = fit;
-                context.dpi = GetDpiForWindow(item.hwndItem);
-                const float offset = item.itemState & ODS_SELECTED ? 1.f : 0.f;
-                context.origin_x = (item.rcItem.left + item.rcItem.right) / 2.0 + offset;
-                context.origin_y = (item.rcItem.top + item.rcItem.bottom) / 2.0 + offset;
-                context.device_clip = Gdiplus::RectF(static_cast<float>(item.rcItem.left), static_cast<float>(item.rcItem.top),
-                    static_cast<float>(item.rcItem.right - item.rcItem.left), static_cast<float>(item.rcItem.bottom - item.rcItem.top));
-                SceneTextRun run;
-                run.layout = layout;
-                run.transform[4] = -ink.X - ink.Width / 2;
-                run.transform[5] = -ink.Y - ink.Height / 2;
-                renderer.Draw(graphics, context, run);
-                if (item.itemState & ODS_DISABLED) {
-                    Gdiplus::SolidBrush dim(Gdiplus::Color(150, 0, 0, 0));
-                    graphics.FillRectangle(&dim, 0, 0, item.rcItem.right, item.rcItem.bottom);
-                }
-                rendered = true;
-                action_artwork_error_.clear();
-            } catch (const std::exception &e) {
-                if (action_artwork_error_ != e.what()) log_(std::string("ACTION ARTWORK ERROR ") + e.what());
-                action_artwork_error_ = e.what();
-            }
-        }
-        if (!rendered) {
-            RECT bounds = item.rcItem;
-            DrawFrameControl(item.hDC, &bounds, DFC_BUTTON,
-                             DFCS_BUTTONPUSH | ((item.itemState & ODS_SELECTED) ? DFCS_PUSHED : 0));
-            const auto font = SelectObject(item.hDC, font_);
-            SetBkMode(item.hDC, TRANSPARENT);
-            SetTextColor(item.hDC, GetSysColor((item.itemState & ODS_DISABLED) ? COLOR_GRAYTEXT : COLOR_BTNTEXT));
-            const auto text = Text(item.hwndItem);
-            DrawTextW(item.hDC, text.c_str(), -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            SelectObject(item.hDC, font);
-        }
-        if (item.itemState & ODS_FOCUS) {
-            RECT r = item.rcItem;
-            InflateRect(&r, -3, -3);
-            DrawFocusRect(item.hDC, &r);
         }
     }
 
@@ -1088,18 +964,6 @@ namespace tenhou {
         matching_->Capture(dc);
         if (service_lobby_) service_lobby_->Capture(dc);
         settlement_view_->Capture(dc);
-        POINT origin{};
-        ClientToScreen(window_, &origin);
-        for (const auto &item: controls_) {
-            if (!IsWindowVisible(item.second)) continue;
-            RECT r{};
-            GetWindowRect(item.second, &r);
-            const int saved = SaveDC(dc);
-            SetViewportOrgEx(dc, r.left - origin.x, r.top - origin.y, nullptr);
-            SendMessageW(item.second, WM_PRINT, reinterpret_cast<WPARAM>(dc),
-                         PRF_CLIENT | PRF_NONCLIENT | PRF_ERASEBKGND);
-            RestoreDC(dc, saved);
-        }
         match_intro_->Capture(dc);
         action_view_->Capture(dc);
     }
@@ -1114,6 +978,52 @@ namespace tenhou {
         if (self) {
             try {
                 if (message == WM_ERASEBKGND) return 1; // Paint supplies the complete background.
+                if (message == WM_GETDLGCODE && self->focused_button_ >= 0 &&
+                    (wparam == VK_SPACE || wparam == VK_RETURN)) return DLGC_WANTMESSAGE;
+                if (message == WM_KEYDOWN && self->HandleKey(static_cast<UINT>(wparam))) return 0;
+                if (message == WM_KEYUP && self->keyboard_button_ >= 0 && wparam == self->keyboard_key_) {
+                    self->CheckButtonCapture();
+                    const int id = self->keyboard_button_;
+                    self->CancelButton();
+                    if (id >= 0) self->Command(id);
+                    return 0;
+                }
+                if (message == WM_KILLFOCUS) {
+                    self->CancelButton();
+                    self->focused_button_ = -1;
+                    InvalidateRect(window, nullptr, FALSE);
+                }
+                if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK || message == WM_LBUTTONUP) {
+                    const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
+                    const auto buttons = self->Buttons();
+                    const int hit = HitButton(buttons, x, y);
+                    if (message == WM_LBUTTONUP && self->sequencer_.pressed_action() >= 0) {
+                        const auto pressed = self->sequencer_.pressed_action();
+                        const bool activate = pressed == hit && GetCapture() == window &&
+                            self->sequencer_.button_revision() == self->Snapshot().actions.revision &&
+                            std::any_of(buttons.begin(), buttons.end(),
+                                [pressed](const auto &button) { return button.id == pressed && button.enabled; });
+                        self->sequencer_.set_hover_point(x, y);
+                        self->CancelButton();
+                        if (activate) self->Command(pressed);
+                        return 0;
+                    }
+                    if (message != WM_LBUTTONUP && hit >= 0) {
+                        if (std::any_of(buttons.begin(), buttons.end(),
+                            [hit](const auto &button) { return button.id == hit && button.enabled; })) {
+                            self->CancelHandDrag();
+                            self->CancelButton();
+                            SetFocus(window);
+                            self->focused_button_ = hit;
+                            self->sequencer_.set_hover_point(x, y);
+                            self->sequencer_.pressed_action() = hit;
+                            self->sequencer_.button_revision() = self->Snapshot().actions.revision;
+                            SetCapture(window);
+                            InvalidateRect(window, nullptr, FALSE);
+                        }
+                        return 0;
+                    }
+                }
                 if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN ||
                     (message == WM_TIMER && wparam == 9)) {
                     if (self->sequencer_.original_display() &&
@@ -1127,19 +1037,6 @@ namespace tenhou {
                 if (message == WM_PRINTCLIENT) {
                     self->Paint(reinterpret_cast<HDC>(wparam));
                     return 0;
-                }
-                if (message == WM_DRAWITEM) {
-                    const auto &item = *reinterpret_cast<DRAWITEMSTRUCT *>(lparam);
-                    if (item.CtlID == 0xbc6) {
-                        PaintOriginalButton(item, self->exit_font_, L"EXIT");
-                        return TRUE;
-                    }
-                    if (item.CtlType == ODT_BUTTON &&
-                        ((item.CtlID >= 5121 && item.CtlID <= 5128) || item.CtlID == 5151 ||
-                         (item.CtlID >= 5170 && item.CtlID <= 5173))) {
-                        self->PaintAction(item);
-                        return TRUE;
-                    }
                 }
                 if (message == WM_CTLCOLORSTATIC && self->sequencer_.original_display()) {
                     const auto dc = reinterpret_cast<HDC>(wparam);
@@ -1159,11 +1056,6 @@ namespace tenhou {
                 }
                 if (message == WM_APP + 17) {
                     self->ApplyAutomaticSort();
-                    return 0;
-                }
-                if (message == WM_APP + 26) {
-                    self->sequencer_.pressed_action() = static_cast<int>(wparam);
-                    self->sequencer_.button_revision() = self->Snapshot().actions.revision;
                     return 0;
                 }
                 if (message == MM_WOM_DONE) {
@@ -1190,6 +1082,10 @@ namespace tenhou {
                 }
                 if (message == WM_MOUSEMOVE) {
                     const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
+                    const auto buttons = self->Buttons();
+                    const auto [last_x, last_y] = self->sequencer_.hover_point();
+                    if (HitButton(buttons, last_x, last_y) != HitButton(buttons, x, y))
+                        InvalidateRect(window, nullptr, FALSE);
                     self->sequencer_.set_hover_point(x, y);
                     TRACKMOUSEEVENT track{sizeof(TRACKMOUSEEVENT), TME_LEAVE, window, 0};
                     TrackMouseEvent(&track);
@@ -1206,7 +1102,7 @@ namespace tenhou {
                                 if (self->sequencer_.animation_enabled() && self->table_.Animating())
                                     self->motion_timer_.Start(window, 6);
                                 else self->table_.CancelAnimation();
-                                self->UpdateActionAvailability();
+                                self->CheckButtonCapture();
                                 self->log_("ONLINE HAND MOVE tile=" + std::to_string(self->sequencer_.pressed_tile()) +
                                            " target=" + std::to_string(target) + " sort=0");
                                 InvalidateRect(window, nullptr, FALSE);
@@ -1225,6 +1121,7 @@ namespace tenhou {
                     return 0;
                 }
                 if (message == WM_CAPTURECHANGED || message == WM_CANCELMODE) {
+                    self->CancelButton();
                     self->CancelHandDrag();
                     return 0;
                 }
@@ -1325,7 +1222,7 @@ namespace tenhou {
                         self->sequencer_.set_automatic(button, next_value);
                         if (button == 0 && !self->sequencer_.sort_refresh_pending()) {
                             self->sequencer_.set_sort_refresh_pending(true);
-                            self->UpdateActionAvailability();
+                            self->CheckButtonCapture();
                             PostMessageW(window, WM_APP + 17, 0, 0);
                         }
                         self->log_("ONLINE AUTO index=" + std::to_string(button) + " enabled=" +
@@ -1378,10 +1275,10 @@ namespace tenhou {
                     RECT update{};
                     GetUpdateRect(window, &update, FALSE);
                     const auto board = self->BoardBounds();
-                    const bool table_only = self->Snapshot().game.initialized && !self->sequencer_.show_results() &&
+                    const bool table_only = self->client_ && self->Snapshot().game.initialized && !self->sequencer_.show_results() &&
                                             update.left >= board.left && update.top >= board.top &&
                                             update.right <= board.right && update.bottom <= board.bottom;
-                    self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only); });
+                    self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only, window); });
                     return 0;
                 }
             } catch (const std::exception &error) {

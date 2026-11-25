@@ -61,8 +61,8 @@ namespace tenhou {
 
         void Command(int id);
         void Update();
-        void Paint(HDC dc, bool table_only = false);
-        void PaintTable(HDC dc, RECT bounds);
+        void Paint(HDC dc, bool table_only = false, HWND surface_parent = nullptr);
+        void PaintTable(HDC dc, RECT bounds, HWND surface_parent = nullptr);
 
         void Stop();
         void Start();

@@ -5,7 +5,7 @@
 ## 静态取证
 
 - 原版反编译 `Tenhou.Client.Origin/tenhou/tenhou.exe.c` 中的 `FUN_004761a0`（约 78028 行）在 `param_6 == 1.0` 且源与目标尺寸相同时调用 `GdipDrawImagePointRectI`，其余情况使用带颜色矩阵的 `GdipDrawImageRectRectI`。这个调用点确认了两条位图绘制分支。滤波核和混合舍入仍待验证。
-- 重建端的 [OnlineGame](../../Tenhou.Client/src/online_game.hpp)、[LobbySnapshot](../../Tenhou.Client/src/network_protocol.hpp) 和 [ReplaySession](../../Tenhou.Client/src/replay.hpp) 已提供状态边界。[LobbyView](../../Tenhou.Client/src/lobby_view.cpp) 仍在窗口消息路径中协调协议快照、开局及结算时序、自动操作、声音和绘制。[OnlineTable::Paint](../../Tenhou.Client/src/online_table.cpp#L164) 负责状态投影、动画取样、排序、阴影和绘制。
+- 重建端的 [OnlineGame](../../Tenhou.Client/src/online_game.hpp)、[LobbySnapshot](../../Tenhou.Client/src/network_protocol.hpp) 和 [ReplaySession](../../Tenhou.Client/src/replay.hpp) 已提供状态边界。[LobbyView](../../Tenhou.Client/src/lobby_view.cpp) 仍在窗口消息路径中协调协议快照、开局及结算时序、自动操作、声音和绘制。[OnlineTable::Paint](../../Tenhou.Client/src/online_table.cpp) 负责状态投影、动画取样、排序、阴影和绘制。
 - [RetainedScene](../../Tenhou.Client/src/retained_scene.hpp#L135) 已跟踪受损区域并保留底层画面。[PaintBuffer](../../Tenhou.Client/src/paint_buffer.hpp#L119) 的最终合成路径包含逐行像素比较、带裁切的 `HALFTONE StretchBlt` 及变更后的源像素备份。[MotionTimer](../../Tenhou.Client/src/motion_timer.hpp) 在 UI 线程调度按需重绘，窗口隐藏或最小化时放慢唤醒。
 
 ## 收益与验证
@@ -20,5 +20,12 @@
 
 本次验证范围为静态调用点和现有测试入口。待验证项包括实际 CPU/GPU 耗时、不同物理尺寸下的画面差异及原版实窗对照。现有 [客户端测试说明](../Tenhou.Client.Tests/README.md)列出呈现事件、局部重绘和离屏图片的覆盖范围。
 
-> [!NOTE]
-> 基于本调研已形成并核准分阶段实施路线，当前已完成 `tenhou_presenter` 演出编排下沉与 `ITableCanvasRenderer` / `GdiTableRenderer` 抽象合流；具体任务目标、约束边界、已完成清单与后续 Stage 3.2-B（画布动作按钮 + Direct2D 1.1 / D3D11 后端）待推进项详见 [解耦与 Direct2D 迁移路线](DECOUPLING-PLAN.md)。
+## 2026-11-25 迁移取证
+
+原版仍为 Windows `130/0005`。本次核对仓库 PE 的 SHA-256 与页首指纹一致。
+
+- **战绩**：`tenhou.exe.c:34390–34561` 的 `FUN_00434290`、`FUN_00434650`、`FUN_004346b0` 固定了 `float` 转换、截断、符号、自适应精度和恰为 1 时的比率显示。原版有效期与月间布局锚点见[战绩取证](ORIGIN-PROFILE-AND-SHELL.md#14-数值格式化规则)。本次沿用重建端既有的本地切厅 250 ms、悬浮 500 ms、认定 20 ms 步进、1980 ms 可确认与 420 ms 关闭。本地切厅是夹具延迟，规则与认定的完整原版实窗对照仍待验证。
+- **动作按钮**：`tenhou.exe.txt` 的 `0x004a8b93–0x004a8bc3` 读取牌桌按钮底图 `0x1b8`（440），并按按钮类型读入两组文字资源。重建端继续用 440 和现有 `ActionButtonText` 文本映射；使用 `BuildActionPlacements` 的锚点与 1024/1440 布局刻度。四川定缺、换三张和本地状态按钮沿用项目既有布局。
+- **EXIT**：`tenhou.exe.txt` 的 `0x0047d25c–0x0047d29f` 查找或创建 `0xbc6`，`FUN_004a7920` 是 `WC_ITEM_BTN` 绘制路径。画布沿用既有的文字量测后加宽 16 px、加高 8 px，以及悬浮描边和半幅渐变。
+- **阴影和采样**：地影缓存复用 `ComposeTileShadows` 的原版四字节比较与低位择取规则（`FUN_004828e0` / `FUN_00482630`）。同尺寸绘制保持像素对位，视口缩放用 D2D 多采样线性或高质量三次插值。Direct2D 与 GDI 的抗锯齿、缩放核和混合舍入允许有可测差异。[Direct2D 设备上下文](https://learn.microsoft.com/en-us/windows/win32/direct2d/devices-and-device-contexts) · [DXGI Flip Model](https://learn.microsoft.com/windows/win32/direct3ddxgi/dxgi-flip-model) · [颜色矩阵](https://learn.microsoft.com/en-us/windows/win32/direct2d/color-matrix)
+- **验收**：自动化采用原生 Win32 测试窗口、WARP、内存 DIB 和离屏截图。重建端在隔离立直牌谱上实窗检查终点画面和回到起点的显隐。跨 DPI 的同局面原版实窗对照、硬件 GPU 利用率及 UI 线程耗时仍待实测。[路线与验收范围](DECOUPLING-PLAN.md#四验收范围)

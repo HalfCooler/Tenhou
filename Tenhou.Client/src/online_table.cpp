@@ -1,13 +1,13 @@
 #include "online_table.hpp"
-#include "gdi_table_renderer.hpp"
+#include "d2d_table_renderer.hpp"
 #include <stdexcept>
 #include <utility>
 
 namespace tenhou {
-    OnlineTable::OnlineTable() : renderer_(std::make_unique<GdiTableRenderer>()) {}
+    OnlineTable::OnlineTable() : renderer_(std::make_unique<D2DTableRenderer>()) {}
 
     OnlineTable::OnlineTable(std::unique_ptr<ITableCanvasRenderer> renderer)
-        : renderer_(renderer ? std::move(renderer) : std::make_unique<GdiTableRenderer>()) {}
+        : renderer_(renderer ? std::move(renderer) : std::make_unique<D2DTableRenderer>()) {}
 
     void OnlineTable::SetRenderer(std::unique_ptr<ITableCanvasRenderer> renderer) {
         if (renderer) renderer_ = std::move(renderer);
@@ -84,7 +84,7 @@ namespace tenhou {
     void OnlineTable::Paint(HDC dc, RECT bounds, const OnlineState &online, bool interactive,
                             const OpeningPresentation *opening, const TableInteraction *interaction,
                             double now, const ActionCaptions *captions, unsigned dpi,
-                            const std::vector<TableActionButton> *buttons) {
+                            const std::vector<TableActionButton> *buttons, HWND window) {
         if (paused_at_) now = paused_at_;
         const auto &geometry = renderer_->EnsureGeometry(online.red_tiles);
         auto frame = BuildOnlineTableRenderFrame(
@@ -92,7 +92,7 @@ namespace tenhou {
             presentation_, opening, interaction, captions, settlement_presented_, relative_scores_,
             original_display_, interactive, now, dpi);
         if (buttons) frame.buttons = *buttons;
-        renderer_->RenderToDc(dc, frame);
+        if (!window || !renderer_->RenderToWindow(window, frame)) renderer_->RenderToDc(dc, frame);
     }
 
     int OnlineTable::HitTile(RECT bounds, const OnlineState &online, int x, int y) {

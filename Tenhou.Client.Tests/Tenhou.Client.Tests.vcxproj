@@ -1,0 +1,39 @@
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{CD89755A-232A-4A38-8D1D-AA4EFA33B3E8}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ReadOnlyProject>true</ReadOnlyProject>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">Win32</Platform>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" Condition="'$(MSBuildRuntimeType)' != 'Core'" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" Condition="'$(MSBuildRuntimeType)' != 'Core'" />
+  <PropertyGroup>
+    <NMakeOutput>bin\$(Configuration)\tenhou_presenter_check.exe</NMakeOutput>
+    <LocalDebuggerWorkingDirectory>$(MSBuildProjectDirectory)\bin\$(Configuration)</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerCommandArguments>resources</LocalDebuggerCommandArguments>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="src\**\*.cpp" />
+    <ClInclude Include="src\**\*.hpp" />
+    <None Include="Tests.cmake" />
+    <None Include="Build-Tenhou.Client.Tests.ps1" />
+    <None Include="..\docs\Tenhou.Client.Tests\**\*.md" />
+  </ItemGroup>
+  <Import Project="..\scripts\Tenhou.Native.targets" />
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" Condition="'$(MSBuildRuntimeType)' != 'Core'" />
+</Project>

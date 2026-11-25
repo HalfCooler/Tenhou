@@ -310,8 +310,8 @@ namespace tenhou {
         return nullptr;
     }
 
-    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, int strength) {
-        if (!strength || scene.empty()) return;
+    const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, int strength) {
+        if (!strength || scene.empty()) return nullptr;
         bool changed = strength_ != strength || scene.size() != previous_.size();
         if (!changed)
             for (std::size_t i = 0; i < scene.size(); ++i) {
@@ -329,7 +329,13 @@ namespace tenhou {
             pixels_ = std::move(pixels);
             previous_ = scene;
             strength_ = strength;
+            ++revision_;
         }
+        return &pixels_;
+    }
+
+    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, int strength) {
+        if (!Raster(scene, strength)) return;
         // RGB is identically black, hence already premultiplied for every alpha.
         Gdiplus::Bitmap bitmap(pixels_.width, pixels_.height, pixels_.width * 4, PixelFormat32bppPARGB,
                                pixels_.bgra.data());

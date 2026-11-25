@@ -58,7 +58,7 @@ namespace tenhou {
         void Paint(HDC dc, RECT bounds, const OnlineState &state, bool interactive = false,
                    const OpeningPresentation *opening = nullptr, const TableInteraction *interaction = nullptr,
                    double now = AnimationNow(), const ActionCaptions *captions = nullptr, unsigned dpi = 0,
-                   const std::vector<TableActionButton> *buttons = nullptr);
+                   const std::vector<TableActionButton> *buttons = nullptr, HWND window = nullptr);
 
         int HitTile(RECT bounds, const OnlineState &state, int x, int y);
 

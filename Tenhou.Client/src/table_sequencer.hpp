@@ -5,6 +5,7 @@
 #include "network_protocol.hpp"
 #include "online_actions.hpp"
 #include "replay_effects.hpp"
+#include "table_render_frame.hpp"
 #include "variant_state.hpp"
 #include <array>
 #include <cstddef>
@@ -295,6 +296,10 @@ namespace tenhou {
         bool AutomaticInput(const LobbySnapshot &live) const;
         bool SuppressCallPrompt(const LobbySnapshot &live) const;
         bool ActionReady(const LobbySnapshot &live, bool intro_active, bool table_animating) const;
+        std::vector<TableActionButton> BuildButtons(const LobbySnapshot &live, CanvasRect bounds,
+                                                     int width, int exit_width, int exit_height,
+                                                     int anchor_x, int anchor_y, bool intro_active,
+                                                     bool table_animating) const;
         bool IsActionButtonEnabled(int control_id, const LobbySnapshot &live,
                                    bool intro_active, bool table_animating) const;
 

@@ -1,3 +1,5 @@
+#include "d2d_table_renderer.hpp"
+#include "gdi_table_renderer.hpp"
 #include "lobby_view.hpp"
 #include "table_view.hpp"
 #include <fstream>
@@ -72,7 +74,8 @@ namespace tenhou {
         }
         void Online(const std::filesystem::path &resources, const std::filesystem::path &output) {
             for (int rule = 0; rule < 3; ++rule) for (int width : {1024, 1197, 1440}) {
-                OnlineTable cached, reference;
+                OnlineTable cached(std::make_unique<GdiTableRenderer>());
+                OnlineTable reference(std::make_unique<GdiTableRenderer>());
                 cached.Configure(resources, 1440); reference.Configure(resources, 1440);
                 reference.SetReferenceRendering(true);
                 auto state = State(rule); TableInteraction interaction; ActionCaptions captions;
@@ -96,6 +99,89 @@ namespace tenhou {
                 }
             }
         }
+        void Direct2D(HWND parent, const std::filesystem::path &resources, const std::filesystem::path &output) {
+            D2DTableRenderer gpu(true);
+            GdiTableRenderer gdi;
+            gpu.Configure(resources, 1440);
+            gdi.Configure(resources, 1440);
+            ClientPreferences preferences;
+            preferences.tile_shadow = 6;
+            gpu.SetPreferences(preferences, {}, false);
+            gdi.SetPreferences(preferences, {}, false);
+            Surface actual(1460, 1100), reference(actual.width, actual.height);
+            for (int rule = 0; rule < 3; ++rule) {
+                const auto state = State(rule);
+                HandProjection hand;
+                ActionCaptions captions;
+                captions.AcceptResource(473, 0);
+                for (int i = 0; i < 12; ++i) captions.Tick();
+                auto frame = BuildOnlineTableRenderFrame(1440, {10, 10, 1450, 1090}, state, hand,
+                    gpu.EnsureGeometry(state.red_tiles), {}, nullptr, nullptr, &captions,
+                    false, false, true, true, 0, 96);
+                actual.Clear(); reference.Clear();
+                const auto before = gpu.PresentedFrames();
+                gpu.RenderToDc(actual.dc, frame);
+                gdi.RenderToDc(reference.dc, frame);
+                Require(gpu.PresentedFrames() == before + 1, "WARP table used the compatibility renderer");
+                const auto expected = reference.Pixels(), pixels = actual.Pixels();
+                std::size_t different = 0;
+                for (std::size_t i = 0; i < pixels.size(); ++i) {
+                    const auto a = pixels[i], b = expected[i];
+                    const auto delta = [&](int shift) { return std::abs(int(a >> shift & 255) - int(b >> shift & 255)); };
+                    if (std::max({delta(0), delta(8), delta(16)}) > 12) ++different;
+                }
+                if (different >= pixels.size() / 100)
+                    throw std::runtime_error("Direct2D native geometry diverges from GDI for rule " +
+                                             std::to_string(rule) + " at " + std::to_string(different) + " pixels");
+
+                Require(pixels.front() == expected.front(), "Readback wrote outside the destination");
+                actual.Save(output / ("direct2d-" + std::to_string(rule) + ".png"));
+                if (rule != 0) continue;
+
+                const auto hand_tile = std::find_if(frame.tiles.begin(), frame.tiles.end(), [](const auto &tile) {
+                    return tile.tile.direction == 0 && std::string_view(tile.tile.role) == "hand";
+                });
+                Require(hand_tile != frame.tiles.end(), "Direct2D fixture has no local hand");
+                const auto color_index = static_cast<std::size_t>(hand_tile - frame.tiles.begin());
+                for (unsigned color = 1; color < 7; ++color) {
+                    frame.tile_colors[color_index] = static_cast<HandColor>(color);
+                    gpu.RenderToDc(actual.dc, frame);
+                    Require(actual.Pixels() != pixels, "HandColor did not change a Direct2D tile");
+                }
+                frame.tile_colors[color_index] = HandColor::Normal;
+                frame.tiles.push_back({hand_tile->tile, 220, 125,
+                    TileFlightImage{hand_tile->tile, {{{0, 0}, {8, 4}, {16, 8}, {24, 12}}},
+                                    4, .5f, 220, 125, true}});
+                const TableActionButton button{5125, {100, 210, 240, 260}, false, false, false, false, TableActionButtonStyle::Sprite440, {}};
+                frame.buttons.push_back(button);
+                gpu.RenderToDc(actual.dc, frame);
+                const auto composited = actual.Pixels();
+                Require(composited[155 * actual.width + 253] != pixels[155 * actual.width + 253],
+                        "Direct2D flight did not paint its alpha trail");
+                Require(composited[235 * actual.width + 170] != pixels[235 * actual.width + 170],
+                        "Direct2D frame omitted its disabled button");
+                actual.Save(output / "direct2d-flight.png");
+                const auto generation = gpu.DeviceGeneration();
+                const auto frames = gpu.PresentedFrames();
+                gpu.SimulateDeviceLoss();
+                gpu.RenderToDc(actual.dc, frame);
+                Require(gpu.DeviceGeneration() == generation + 1 && gpu.PresentedFrames() == frames + 1 &&
+                        actual.Pixels() == composited, "Direct2D readback did not recover after a device reset");
+
+                frame.bounds = {0, 0, 640, 480};
+                frame.destination = frame.bounds;
+                Require(gpu.RenderToWindow(parent, frame), "WARP flip swap chain did not present");
+                frame.bounds = {2, 3, 721, 540};
+                frame.destination = frame.bounds;
+                Require(gpu.RenderToWindow(parent, frame), "WARP flip swap chain did not resize");
+                gpu.SimulateDeviceLoss();
+                Require(gpu.RenderToWindow(parent, frame) && gpu.DeviceGeneration() == generation + 2,
+                        "WARP flip swap chain did not recover after a device reset");
+                gpu.HideWindowSurface();
+            }
+            std::cout << "Direct2D WARP: three rules, textures, flight, text, buttons, staging, flip resize and device recovery\n";
+        }
+
         void TextLayers(const std::filesystem::path &resources) {
             // Native SD layout does not require the optional original SD image packs.
             for (int native : {1024, 1440}) {
@@ -230,14 +316,22 @@ namespace tenhou {
             view.ConfigureArtwork(resources, 1440);
             int row = 0;
             for (unsigned control : {5121u,5122u,5123u,5124u,5125u,5126u,5127u,5128u,5151u,5170u,5171u,5172u,5173u}) {
-                for (UINT state : {0u, unsigned(ODS_SELECTED), unsigned(ODS_DISABLED)}) {
-                    const int saved = SaveDC(surface.dc);
-                    SetViewportOrgEx(surface.dc, static_cast<int>(state == ODS_SELECTED ? 160 : state == ODS_DISABLED ? 320 : 0), row * 56, nullptr);
-                    DRAWITEMSTRUCT item{}; item.CtlID = control; item.hDC = surface.dc;
-                    item.hwndItem = view.controls_.at(control); item.rcItem = {0, 0, 140, 50}; item.itemState = state;
-                    view.PaintAction(item);
-                    RestoreDC(surface.dc, saved);
-                    Require(view.action_artwork_error_.empty(), "P3 production button renderer failed");
+                for (int state = 0; state < 3; ++state) {
+                    const int x = state * 160, y = row * 56;
+                    TableActionButton button;
+                    button.id = control;
+                    button.viewport_rect = {x, y, x + 140, y + 50};
+                    button.hot = button.pressed = state == 1;
+                    button.enabled = state != 2;
+                    view.table_.Renderer().RenderButtonToDc(surface.dc, button);
+                    if (state != 0) {
+                        GdiFlush();
+                        bool different = false;
+                        for (int py = y; py < y + 50 && !different; ++py)
+                            for (int px = 0; px < 140 && !different; ++px)
+                                different = GetPixel(surface.dc, px, py) != GetPixel(surface.dc, x + px, py);
+                        Require(different, "Action button state rendered identically to its normal state");
+                    }
                 }
                 ++row;
             }
@@ -386,6 +480,7 @@ namespace tenhou {
             std::filesystem::create_directories(settlement_output);
             SettlementTextLayout(resources);
             TextLayers(resources); Online(resources, output); SettlementScores(resources, output);
+            Direct2D(parent, resources, output);
             {
                 Surface surface(1197,897); auto game = State(1);
                 OnlineTable table; table.Configure(resources,1440);

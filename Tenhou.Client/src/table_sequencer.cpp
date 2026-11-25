@@ -297,6 +297,71 @@ namespace tenhou {
                !show_results_ && !s.table_paused && !s.recovering && a.enabled && a.pending.empty();
     }
 
+    std::vector<TableActionButton> OnlineTableSequencer::BuildButtons(
+        const LobbySnapshot &live, CanvasRect bounds, int width, int exit_width, int exit_height,
+        int anchor_x, int anchor_y, bool intro_active, bool table_animating) const {
+        const auto &s = Snapshot(live);
+        std::vector<TableActionButton> buttons;
+        if (!s.game.initialized || show_results_) return buttons;
+        const auto target = FitNativeCanvasBounds(bounds, width);
+        const int tw = target.right - target.left, th = target.bottom - target.top;
+        const int height = width * 3 / 4;
+        if (tw <= 0 || th <= 0) return buttons;
+
+        using Style = TableActionButtonStyle;
+        const auto append = [&](int id, CanvasRect rect, Style style, std::wstring label) {
+            buttons.push_back({id, rect, IsActionButtonEnabled(id, live, intro_active, table_animating),
+                               false, false, false, style, std::move(label)});
+        };
+        const auto place = [&](int id, CanvasRect rect, Style style, std::wstring label) {
+            const int x = target.left + rect.left * tw / width;
+            const int y = target.top + rect.top * th / height;
+            append(id, {x, y, x + (rect.right - rect.left) * tw / width,
+                         y + (rect.bottom - rect.top) * th / height}, style, std::move(label));
+        };
+        const auto action_style = original_display_ ? Style::Sprite440 : Style::PushButton;
+        const auto add_action = [&](int id, CanvasRect rect) {
+            const auto key = ActionButtonText(id, false);
+            if (key) place(id, rect, action_style, std::wstring(TextLabel(*key)));
+        };
+
+        if (!SuppressCallPrompt(live)) {
+            for (const auto &p: BuildActionPlacements(s.actions, width, {anchor_x, anchor_y}))
+                if (p.button != 5120 && p.button != 5129)
+                    add_action(p.button, {p.rect.left, p.rect.top, p.rect.right, p.rect.bottom});
+        }
+        if (s.variant_active) {
+            const int stride = width == 1440 ? 154 : 110;
+            const int bw = width == 1440 ? 140 : 100, bh = width == 1440 ? 50 : 36;
+            const int y = anchor_y - (width == 1440 ? 63 : 45);
+            const auto rect = [&](int x) { return CanvasRect{x, y, x + bw, y + bh}; };
+            if (LocalTableInput(live, intro_active) && !Moving(table_animating)) {
+                if (s.variant.phase == VariantPhase::Missing) {
+                    for (int suit = 0; suit < 3; ++suit)
+                        if (std::any_of(s.actions.choices.begin(), s.actions.choices.end(), [suit](const auto &a) {
+                            return a.kind == "dingque" && a.suit == suit;
+                        })) add_action(5170 + suit, rect(anchor_x + 65 - (2 - suit) * stride));
+                }
+                if (s.variant.phase == VariantPhase::Exchange && selection_.group == "exchange" &&
+                    selection_.Confirm(s.actions) != static_cast<std::size_t>(-1))
+                    add_action(5173, rect(anchor_x + 65));
+            }
+            if (s.variant.phase == VariantPhase::Ended)
+                place(5129, rect(anchor_x + 65), Style::PushButton, L"下一盘");
+            if (!s.game.settlement.receipts.empty() || !s.last_settlement.receipts.empty())
+                append(5174, {12, 50, 92, 76}, Style::PushButton, L"结算");
+        }
+        if (s.phase == LobbyPhase::MatchComplete)
+            append(5137, {bounds.right - 180, bounds.bottom - 42, bounds.right - 20, bounds.bottom - 14},
+                   Style::PushButton, L"返回大厅");
+        if (live.exit_allowed && live.phase == LobbyPhase::Game && !intro_active) {
+            const int x = target.left + 10;
+            const int y = std::min(bounds.bottom - 22, target.bottom - (width == 1440 ? 57 : 32));
+            append(0xbc6, {x, y, x + exit_width, y + exit_height}, Style::OriginalExit, L"EXIT");
+        }
+        return buttons;
+    }
+
     bool OnlineTableSequencer::IsActionButtonEnabled(int control_id, const LobbySnapshot &live,
                                                      bool intro_active, bool table_animating) const {
         const auto &s = Snapshot(live);
@@ -388,7 +453,7 @@ namespace tenhou {
         OnlineSequencerEffects fx;
         pressed_tile_ = pressed_auto_ = -1;
         hand_dragged_ = false;
-        fx.release_capture = true;
+        fx.release_capture = pressed_action_ < 0;
         return fx;
     }
 

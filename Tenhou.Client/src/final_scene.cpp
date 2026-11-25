@@ -76,6 +76,17 @@ namespace tenhou {
         }
         return result;
     }
+    void FinalScene::VisitText(
+        int width, int height, int dw, int dh,
+        const std::function<void(TextRenderer &, const TextRenderContext &, const SceneTextRun &)> &draw) const {
+        const auto viewport = Context(width, height, dw, dh);
+        for (const auto &command : commands_) {
+            if (command.image) throw std::logic_error("Text visitor requires a text-only scene");
+            const auto context = Clipped(viewport, command);
+            if (!Bounds(context, command).IsEmptyArea()) draw(renderer_, context, command.text);
+        }
+    }
+
     void FinalScene::Paint(HDC target, int width, int height, int dw, int dh, RECT dirty) const {
         const auto viewport = Context(width, height, dw, dh);
         for (const auto &command : commands_) {

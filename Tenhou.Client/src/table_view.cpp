@@ -1,5 +1,5 @@
 #include "table_view.hpp"
-#include "gdi_table_renderer.hpp"
+#include "d2d_table_renderer.hpp"
 #include "settings_view.hpp"
 #include "window_layout.hpp"
 #include <commdlg.h>
@@ -76,7 +76,7 @@ namespace tenhou {
     } // namespace
 
     TableView::TableView(HWND parent, std::function<void(const std::string &)> log, const std::filesystem::path &config)
-        : parent_(parent), renderer_(std::make_unique<GdiTableRenderer>()), log_(std::move(log)), audio_(log_),
+        : parent_(parent), renderer_(std::make_unique<D2DTableRenderer>()), log_(std::move(log)), audio_(log_),
           config_path_(config) {
         renderer_->SetPreferences(preferences_, config_path_, false);
         const auto instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(parent, GWLP_HINSTANCE));
@@ -600,7 +600,7 @@ namespace tenhou {
         ApplyEffects(sequencer_.OpeningTick(AnimationNow(), match_intro_->Active()));
     }
 
-    void TableView::PaintTable(HDC dc, RECT bounds) {
+    void TableView::PaintTable(HDC dc, RECT bounds, HWND surface_parent) {
         try {
             const auto &session_state = sequencer_.session()->state();
             const auto &geometry = renderer_->EnsureGeometry(session_state.red_tiles);
@@ -610,13 +610,14 @@ namespace tenhou {
                 sequencer_.red_tiles(), sequencer_.original_display(), sequencer_.animation_enabled(),
                 hud_interaction_.relative(), sequencer_.draw_end_ticks(), AnimationNow(),
                 GetDpiForWindow(viewport_));
-            renderer_->RenderToDc(dc, frame);
+            if (!surface_parent || !renderer_->RenderToWindow(surface_parent, frame)) renderer_->RenderToDc(dc, frame);
             if (!artwork_loaded_logged_) {
                 artwork_loaded_logged_ = true;
                 log_("REPLAY ARTWORK canvas=" + std::to_string(canvas_width_));
             }
             artwork_error_.clear();
         } catch (const std::exception &error) {
+            if (surface_parent) renderer_->HideWindowSurface();
             if (artwork_error_ != error.what()) log_("REPLAY ARTWORK ERROR " + std::string(error.what()));
             artwork_error_ = error.what();
             const bool was_playing = sequencer_.playing();
@@ -628,13 +629,14 @@ namespace tenhou {
         }
     }
 
-    void TableView::Paint(HDC dc, bool table_only) {
+    void TableView::Paint(HDC dc, bool table_only, HWND surface_parent) {
         if (!table_only) Fill(dc, {0, 0, width_, height_}, RGB(23, 45, 44));
         const auto old_font = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(245, 245, 235));
         if (!Compact()) Text(dc, "Offline replay | Original tile artwork", {16, 12, width_ - 304, 34});
         const auto *session = sequencer_.session();
+        if (surface_parent && (!session || !session->state().initialized)) renderer_->HideWindowSurface();
         if (!error_.empty() && !session) {
             SetTextColor(dc, RGB(255, 177, 160));
             Text(dc, "Replay loading failed:\n\n" + error_ + "\n\nChoose another file, then Load.",
@@ -665,7 +667,7 @@ namespace tenhou {
             const auto board = BoardBounds();
             const int clip = SaveDC(dc);
             IntersectClipRect(dc, 0, board.top, width_, board.bottom);
-            if (state.initialized) PaintTable(dc, board);
+            if (state.initialized) PaintTable(dc, board, surface_parent);
             else {
                 SetTextColor(dc, RGB(225, 235, 230));
                 Text(dc, "等待首局 INIT 事件，点击“前进”或“播放”开始查看牌桌。",
@@ -770,7 +772,7 @@ namespace tenhou {
                     const auto board = view->BoardBounds();
                     const bool table_only = update.left >= board.left && update.top >= board.top &&
                                             update.right <= board.right && update.bottom <= board.bottom;
-                    view->paint_buffer_.Paint(window, [&](HDC dc) { view->Paint(dc, table_only); });
+                    view->paint_buffer_.Paint(window, [&](HDC dc) { view->Paint(dc, table_only, window); });
                     return 0;
                 }
             } catch (const std::exception &error) {

@@ -53,7 +53,6 @@ namespace tenhou {
         void ShowMenu();
         void ShowPractice();
         void ShowProfileExportMenu();
-        std::wstring FormatProfileClipboardText() const;
         void CopyProfileText();
         void SaveProfileImage();
         void ChooseProfile(bool monthly);
@@ -69,17 +68,16 @@ namespace tenhou {
         RankedTier tier_ = RankedTier::General;
         unsigned outer_ = 0, lifetime_ = kRankedFourProfile, monthly_ = kDefaultMonthlyProfile;
         std::array<LobbyStatistics, 2> private_lifetime_{};
-        std::uint64_t seconds_ = 0, move_at_ = 0, rules_at_ = 0;
+        OfflineLobbyTiming timing_;
+        std::uint64_t seconds_ = 0;
         std::uint64_t service_clock_ = 0, service_clock_at_ = 0;
         std::string service_pending_, service_error_;
-        int hovered_ = -1, rule_slot_ = -1;
         bool visible_ = false, move_declined_ = false, toutenkou_ = false, official_ = false, service_ready_ = true;
         HWND parent_, viewport_ = nullptr, panel_ = nullptr;
         HFONT font_ = nullptr;
         HWND certificate_ = nullptr, certificate_ok_ = nullptr;
         std::uint64_t certificate_receipt_ = 0;
         std::wstring certificate_body_;
-        ULONGLONG certificate_start_ = 0, certificate_close_ = 0;
         int certificate_width_ = 812, certificate_height_ = 658;
         float certificate_scale_ = 1.4f;
         std::unique_ptr<Gdiplus::Bitmap> certificate_image_;

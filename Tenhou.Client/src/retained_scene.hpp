@@ -27,8 +27,7 @@ namespace tenhou {
         return bounds;
     }
 
-    inline void PaintTableFlights(Gdiplus::Graphics &graphics, RECT region,
-                                  const std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red) {
+    inline std::vector<std::size_t> TableFlightOrder(const std::vector<PositionedTile> &scene) {
         std::vector<std::size_t> order;
         for (std::size_t i = 0; i < scene.size(); ++i) if (scene[i].flight) order.push_back(i);
         const auto depth = [&](std::size_t index) {
@@ -37,7 +36,12 @@ namespace tenhou {
                    std::min(0, flight.offsets[0].y);
         };
         std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return depth(a) < depth(b); });
-        for (const auto index: order) {
+        return order;
+    }
+
+    inline void PaintTableFlights(Gdiplus::Graphics &graphics, RECT region,
+                                  const std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red) {
+        for (const auto index: TableFlightOrder(scene)) {
             const auto &placed = scene[index];
             const auto &flight = *placed.flight;
             const auto &pixels = artwork.Get(flight.sprite, red).image;

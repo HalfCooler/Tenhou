@@ -60,6 +60,16 @@ namespace tenhou {
         std::array<double, 6> transform{1, 0, 0, 1, 0, 0};
         double opacity = 1;
     };
+    struct TextRasterPixels {
+        int width, height;
+        Bytes bgra; // Top-down premultiplied BGRA.
+    };
+
+    struct TextRaster {
+        Gdiplus::Rect bounds;
+        std::shared_ptr<const TextRasterPixels> pixels;
+    };
+
     struct TextCacheStats {
         std::size_t layouts = 0, rasters = 0, raster_bytes = 0;
         std::size_t layout_builds = 0, raster_builds = 0, raster_hits = 0;
@@ -78,10 +88,14 @@ namespace tenhou {
         SceneTextRun Caption(TextKey key, Gdiplus::PointF center, double scale = 1, double opacity = 1);
         // Conservative physical raster bounds; uses exactly the same geometry as Draw.
         static Gdiplus::RectF Bounds(const TextRenderContext &context, const SceneTextRun &run);
+        TextRaster Rasterize(const TextRenderContext &context, const SceneTextRun &run);
         Gdiplus::RectF Draw(Gdiplus::Graphics &target, const TextRenderContext &context, const SceneTextRun &run);
         TextCacheStats CacheStats() const;
         void ClearCaches();
     private:
+        struct RasterData;
+        std::shared_ptr<const RasterData> GetRaster(const TextRenderContext &context, const SceneTextRun &run,
+                                                     Gdiplus::Rect &device);
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };

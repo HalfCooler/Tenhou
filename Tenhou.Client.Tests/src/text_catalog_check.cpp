@@ -1,3 +1,4 @@
+#include "table_render_frame.hpp"
 #include "text_catalog.hpp"
 #include "action_captions.hpp"
 #include "settlement_scene.hpp"

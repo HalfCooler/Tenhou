@@ -59,11 +59,14 @@ namespace tenhou {
     class TileShadowLayer {
     public:
         void Paint(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, int strength);
+        const Image *Raster(const std::vector<TileShadow> &scene, int strength);
+        std::size_t revision() const { return revision_; }
 
     private:
         std::vector<TileShadow> previous_;
         Image pixels_;
         int strength_ = -1;
+        std::size_t revision_ = 0;
     };
 
     std::vector<RetainedScene::Damage> TileShadowDamage(const std::vector<PositionedTile> &scene,

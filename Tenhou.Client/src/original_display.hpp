@@ -57,7 +57,6 @@ namespace tenhou {
     RECT FitNativeCanvas(RECT bounds, int width);
 
     RECT OriginalAutoButtonRect(int width, int index);
-    std::optional<TextKey> ActionButtonText(unsigned control, bool hot);
     // FUN_0049c900 (0049c900..0049ca75): top-right table info rows before オーラス.
     std::vector<TextKey> OriginalInfoKeys(unsigned type, bool variant = false);
 
@@ -93,7 +92,8 @@ namespace tenhou {
 
         static std::array<float, 2> MeasureTextExtent(const std::string &text, float em);
 
-        void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state);
+        using HudSprite = std::function<void(unsigned, const Image &, int, int, const std::array<float, 6> &)>;
+        void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state, const HudSprite &draw_sprite = {});
 
         void PaintChromeBackground(Gdiplus::Graphics &graphics, int hovered = -1);
 

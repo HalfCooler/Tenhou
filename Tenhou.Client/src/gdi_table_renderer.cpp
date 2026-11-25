@@ -75,6 +75,61 @@ namespace tenhou {
         return artwork_.geometry();
     }
 
+    void PaintTableInteraction(HDC memory, const TableRenderFrame &frame, TableArtwork &artwork,
+                               bool grayscale) {
+        if (!frame.interaction) return;
+        const auto *interaction = &*frame.interaction;
+        const int w = frame.canvas_width, h = w * 3 / 4;
+        const double unit = double(w) / 1024.0;
+        const auto &tiles = frame.tiles;
+        const bool red = frame.red_tiles;
+        if (!interaction->hint.empty()) {
+            const auto font = CreateFontW(-static_cast<int>(14 * unit), 0, 0, 0, FW_NORMAL,
+                                          FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                          CLIP_DEFAULT_PRECIS, grayscale ? ANTIALIASED_QUALITY : CLEARTYPE_QUALITY,
+                                          DEFAULT_PITCH, L"KaiTi");
+            const auto old = SelectObject(memory, font);
+            SetBkMode(memory, TRANSPARENT);
+            SetTextColor(memory, RGB(255, 242, 190));
+            RECT hint{w / 8, h - static_cast<int>(52 * unit), w * 7 / 8, h - static_cast<int>(28 * unit)};
+            DrawTextW(memory, interaction->hint.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            SelectObject(memory, old);
+            DeleteObject(font);
+        }
+        if (!interaction->countdown.empty()) {
+            int right = 0, top = 0;
+            for (const auto &tile: tiles)
+                if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand") {
+                    const auto &image = artwork.Get(tile.tile, red).image;
+                    if (tile.x + image.width > right) {
+                        right = tile.x + image.width;
+                        top = tile.y;
+                    }
+                }
+            const auto clock_font = CreateFontW(
+                -std::max(8, static_cast<int>(9 * unit)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY,
+                DEFAULT_PITCH, L"Arial");
+            const auto old = SelectObject(memory, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
+            SIZE size{};
+            const auto &text = interaction->countdown;
+            const int length = static_cast<int>(text.size());
+            GetTextExtentPoint32W(memory, text.c_str(), length, &size);
+            const int x = std::min(right + std::max(2, static_cast<int>(2 * unit)),
+                                   w - static_cast<int>(size.cx) - 3);
+            SetBkMode(memory, TRANSPARENT);
+            SetTextColor(memory, RGB(0, 0, 0));
+            TextOutW(memory, x - 1, top, text.c_str(), length);
+            TextOutW(memory, x + 1, top, text.c_str(), length);
+            TextOutW(memory, x, top - 1, text.c_str(), length);
+            TextOutW(memory, x, top + 1, text.c_str(), length);
+            SetTextColor(memory, RGB(255, 255, 255));
+            TextOutW(memory, x, top, text.c_str(), length);
+            SelectObject(memory, old);
+            if (clock_font) DeleteObject(clock_font);
+        }
+    }
+
     void GdiTableRenderer::RenderToDc(HDC dc, const TableRenderFrame &frame) {
         if (!artwork_.width() || background_.bgra.empty() || width_ != frame.canvas_width) {
             if (width_ != frame.canvas_width) {
@@ -260,50 +315,7 @@ namespace tenhou {
                         }
                     DeleteObject(gold);
                 }
-                if (interaction && !interaction->hint.empty()) {
-                    const auto font = CreateFontW(-static_cast<int>(14 * unit), 0, 0, 0, FW_NORMAL,
-                                                  FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                                                  CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"KaiTi");
-                    const auto old = SelectObject(memory, font);
-                    SetBkMode(memory, TRANSPARENT);
-                    SetTextColor(memory, RGB(255, 242, 190));
-                    RECT hint{w / 8, h - static_cast<int>(52 * unit), w * 7 / 8, h - static_cast<int>(28 * unit)};
-                    DrawTextW(memory, interaction->hint.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-                    SelectObject(memory, old);
-                    DeleteObject(font);
-                }
-                if (interaction && !interaction->countdown.empty()) {
-                    int right = 0, top = 0;
-                    for (const auto &tile: tiles)
-                        if (tile.tile.direction == 0 && std::string(tile.tile.role) == "hand") {
-                            const auto &image = artwork_.Get(tile.tile, red).image;
-                            if (tile.x + image.width > right) {
-                                right = tile.x + image.width;
-                                top = tile.y;
-                            }
-                        }
-                    const auto clock_font = CreateFontW(
-                        -std::max(8, static_cast<int>(9 * unit)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY,
-                        DEFAULT_PITCH, L"Arial");
-                    const auto old = SelectObject(memory, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
-                    SIZE size{};
-                    const auto &text = interaction->countdown;
-                    const int length = static_cast<int>(text.size());
-                    GetTextExtentPoint32W(memory, text.c_str(), length, &size);
-                    const int x = std::min(right + std::max(2, static_cast<int>(2 * unit)),
-                                           w - static_cast<int>(size.cx) - 3);
-                    SetBkMode(memory, TRANSPARENT);
-                    SetTextColor(memory, RGB(0, 0, 0));
-                    TextOutW(memory, x - 1, top, text.c_str(), length);
-                    TextOutW(memory, x + 1, top, text.c_str(), length);
-                    TextOutW(memory, x, top - 1, text.c_str(), length);
-                    TextOutW(memory, x, top + 1, text.c_str(), length);
-                    SetTextColor(memory, RGB(255, 255, 255));
-                    TextOutW(memory, x, top, text.c_str(), length);
-                    SelectObject(memory, old);
-                    if (clock_font) DeleteObject(clock_font);
-                }
+                PaintTableInteraction(memory, frame, artwork_);
                 if (frame.original_display) {
                     if (Overlaps(region, atomic_layers.front())) {
                         const auto draw_hud = [&](HDC target) {

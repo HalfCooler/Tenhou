@@ -309,6 +309,11 @@ namespace tenhou {
                 {"scores", "50000,50000,50000,50000"}, {"hand0", "0,4,8,12,16,20,24,28,32,36,40,44,48"},
                 {"hidden0", "13"}, {"hidden1", "13"}, {"hidden2", "13"}, {"hidden3", "13"},
                 {"actions", sichuan ? "exchange:0,4,8;exchange:4,8,12" : "discard:0;discard:4"}};
+            const auto button = [&](int id) -> std::optional<TableActionButton> {
+                for (const auto &item: view.Buttons())
+                    if (item.id == id) return item;
+                return std::nullopt;
+            };
             for (int hand = 1; hand <= 2; ++hand) {
                 fields["hand_number"] = std::to_string(hand); fields["seq"] = fields["event_seq"] = std::to_string(hand);
                 fields["events"] = std::to_string(hand) + ":start:0:-1:-1";
@@ -317,7 +322,7 @@ namespace tenhou {
                     "Variant snapshot lost the relative seat ranks");
                 require(view.sequencer_.opening().Active() && view.sequencer_.variant_hand() == hand, "Protocol opening did not install the new hand");
                 require(view.match_intro_->Active() == (hand == 1), "First match introduction was skipped or repeated between hands");
-                require(!IsWindowVisible(view.controls_.at(5173)), "Exchange confirmation appeared before dealing/selection");
+                require(!button(5173), "Exchange confirmation appeared before dealing/selection");
                 if (hand == 1) {
                     const auto steps = view.sequencer_.opening().steps();
                     receive({"PAUSED", {{"show", "1"}, {"offline", "2"}}});
@@ -342,12 +347,12 @@ namespace tenhou {
                 const auto now = AnimationNow();
                 for (int tick = 1; tick <= 400 && view.sequencer_.opening().Active(); ++tick)
                     view.OpeningTick(now + tick * kTableTickMs);
-                require(!view.sequencer_.opening().Active() && !IsWindowVisible(view.controls_.at(5173)),
+                require(!view.sequencer_.opening().Active() && !button(5173),
                     "Exchange confirmation appeared without three selected tiles");
                 if (sichuan) {
                     for (int tile: {0, 4, 8}) view.sequencer_.selection().Pick(view.Snapshot().actions, tile);
                     view.Arrange();
-                    require(IsWindowVisible(view.controls_.at(5173)) && IsWindowEnabled(view.controls_.at(5173)),
+                    require(button(5173) && button(5173)->enabled,
                         "A legal three-tile exchange has no confirmation button");
                 }
             }
@@ -366,16 +371,41 @@ namespace tenhou {
                 receive({"VSTATE", fields});
                 require(view.Snapshot().actions.revision != revision && !view.sequencer_.selection().Active(),
                     "New preparation phase retained an old exchange request");
-                SendMessageW(view.window_, WM_APP + 26, 5170, 0);
+                const auto suit = button(5170);
+                require(suit && suit->enabled, "Missing-suit action has no enabled canvas button");
+                const auto &rect = suit->viewport_rect;
+                const auto point = MAKELPARAM(rect.left + 1, rect.top + 1);
+                SendMessageW(view.window_, WM_LBUTTONDOWN, MK_LBUTTON, point);
+                require(view.sequencer_.pressed_action() == 5170 && GetCapture() == view.window_,
+                    "Canvas button did not capture the press");
                 const auto missing_revision = view.sequencer_.button_revision();
                 fields["seq"] = fields["event_seq"] = "5";
                 fields["events"] += ";5:dingque:3:-1:-1";
                 receive({"VSTATE", fields});
                 require(view.Snapshot().actions.revision == missing_revision && view.sequencer_.button_revision() == missing_revision &&
-                    IsWindowEnabled(view.controls_.at(5170)), "Peer dingque interrupted a pressed suit button");
+                    view.sequencer_.pressed_action() == 5170 && button(5170)->enabled,
+                    "Peer dingque interrupted a pressed suit button");
                 fields["window"] = "3";
                 receive({"VSTATE", fields});
-                require(view.Snapshot().actions.revision != missing_revision, "Changed server window retained a stale request");
+                require(view.Snapshot().actions.revision != missing_revision && view.sequencer_.pressed_action() == -1 &&
+                    GetCapture() != view.window_, "Changed server window retained a stale button capture");
+                SendMessageW(view.window_, WM_LBUTTONUP, 0, point);
+                require(view.Snapshot().actions.pending.empty(), "Stale release submitted a current action");
+
+                const auto current_suit = button(5170);
+                require(current_suit && current_suit->enabled, "New preparation window lost its suit action");
+                const auto &current_rect = current_suit->viewport_rect;
+                SendMessageW(view.window_, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(current_rect.left + 1, current_rect.top + 1));
+                SendMessageW(view.window_, WM_CANCELMODE, 0, 0);
+                SetFocus(view.window_);
+                require(view.HandleKey(VK_SPACE) && view.keyboard_button_ == 5170,
+                        "Space did not arm the focused canvas button");
+                auto &live = const_cast<LobbySnapshot &>(view.client_->snapshot());
+                // Drive the full command path with no socket payload in this fixture.
+                for (auto &choice: live.actions.choices) choice.messages.clear();
+                SendMessageW(view.window_, WM_KEYUP, VK_SPACE, 0);
+                require(live.actions.pending == "dingque" && view.keyboard_button_ == -1,
+                        "Space release did not submit the focused suit action once");
             }
             view.Disconnect();
         }

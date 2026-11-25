@@ -90,7 +90,6 @@ namespace tenhou {
 
         void Command(int id);
         void UpdateActions();
-        void UpdateActionAvailability();
         void Submit(std::size_t index);
         void CancelSelection();
         bool LocalTableInput() const;
@@ -102,8 +101,11 @@ namespace tenhou {
         RECT BoardBounds() const;
         void Update(const LobbySnapshot &snapshot);
         void Arrange();
-        void Paint(HDC dc, bool table_only = false);
-        void PaintAction(const DRAWITEMSTRUCT &item);
+        void Paint(HDC dc, bool table_only = false, HWND surface_parent = nullptr);
+        std::vector<TableActionButton> Buttons();
+        static int HitButton(const std::vector<TableActionButton> &buttons, int x, int y);
+        void CancelButton();
+        void CheckButtonCapture();
 
         void OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot);
         const LobbySnapshot &Snapshot() const;
@@ -134,7 +136,9 @@ namespace tenhou {
         bool queue_timer_ = false, clock_timer_ = false, automatic_timer_ = false, caption_timer_ = false;
         std::wstring painted_countdown_;
         int painted_hover_ = -1, painted_auto_hover_ = -1;
-        std::map<int, HWND> controls_;
+        SIZE exit_size_{};
+        int focused_button_ = -1, keyboard_button_ = -1;
+        UINT keyboard_key_ = 0;
         std::filesystem::path config_;
         std::function<void(const std::string &)> log_;
         ReplayAudio audio_;
@@ -163,7 +167,5 @@ namespace tenhou {
         std::filesystem::path resource_directory_;
         int canvas_width_ = 1440;
         Image lobby_background_;
-        DisplayArtwork action_artwork_;
-        std::string action_artwork_error_;
     };
 } // namespace tenhou
