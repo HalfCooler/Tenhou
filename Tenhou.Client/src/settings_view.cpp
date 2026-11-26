@@ -1,6 +1,7 @@
 #define UNICODE
 #define _UNICODE
 #include "settings_view.hpp"
+#include "settings_schema.hpp"
 #include "replay_effects.hpp"
 #include "background.hpp"
 #include "music_preferences.hpp"
@@ -96,8 +97,11 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             p.dwSize = sizeof(p);
             p.hInstance = GetModuleHandleW(nullptr);
             const auto resource = ResourceManager::Embedded(pages_[i].asset);
+            // comctl32 PropertySheetW with PSP_DLGINDIRECT mutates DLGTEMPLATE::style in place,
+            // so copy read-only static embedded bytes into a writable member buffer.
+            page_templates_[i].assign(resource.data, resource.data + resource.size);
             p.dwFlags = PSP_DLGINDIRECT;
-            p.pResource = reinterpret_cast<const DLGTEMPLATE *>(resource.data);
+            p.pResource = reinterpret_cast<const DLGTEMPLATE *>(page_templates_[i].data());
             p.pfnDlgProc = Procedure;
             p.lParam = reinterpret_cast<LPARAM>(&pages_[i]);
         }
@@ -303,20 +307,21 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
 
     void SettingsView::InitScreen(HWND page) {
         // Original Dialog 114 (FUN_0041d...): 0x426 = ScreenSize, 0x429 = FullscreenSize.
-        for (const auto *label: {L"自动", L"1024 x 768", L"1440 x 1080", L"1920 x 1440", L"2640 x 1980"})
-            SendDlgItemMessageW(page, 0x426, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
-        const int configured = ParseScreenSizeSetting(PreferenceString(config_, "STATUS", "SCREENSIZE"));
-        const int selected = configured == 1024 ? 1 :
-                             configured == 1440 ? 2 :
-                             configured == 1920 ? 3 :
-                             configured == 2640 ? 4 : 0;
+        const auto &presets = SettingsScreenSizePresets();
+        const int configured = ParseScreenSizeSetting(SettingsStore(config_).LoadScreenSize());
+        int selected = 0;
+        for (std::size_t i = 0; i < presets.size(); ++i) {
+            const auto label = Utf8ToWide(presets[i].label);
+            SendDlgItemMessageW(page, 0x426, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label.c_str()));
+            if (presets[i].width == configured) selected = static_cast<int>(i);
+        }
         SendDlgItemMessageW(page, 0x426, CB_SETCURSEL, selected, 0);
 
         const auto fs_combo = GetDlgItem(page, 0x429);
         const auto auto_idx = SendMessageW(fs_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"自动"));
         if (auto_idx >= 0) SendMessageW(fs_combo, CB_SETITEMDATA, auto_idx, 0);
         int want_w = 0, want_h = 0;
-        const auto saved_fs = PreferenceString(config_, "STATUS", "FULLSCREENSIZE");
+        const auto saved_fs = SettingsStore(config_).LoadFullscreenSize();
         if (const auto comma = saved_fs.find(','); comma != std::string::npos) {
             try {
                 want_w = std::stoi(saved_fs.substr(0, comma));
@@ -345,12 +350,14 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     }
 
     void SettingsView::ScreenCommand(HWND page, int control) {
+        SettingsStore store(config_);
         if (control == 0x426) {
             const auto sel = static_cast<int>(SendDlgItemMessageW(page, 0x426, CB_GETCURSEL, 0, 0));
-            constexpr const char *values[]{"default", "1024x768", "1440x1080", "1920x1440", "2640x1980"};
-            const char *chosen = (sel >= 0 && sel < 5) ? values[sel] : "default";
-            if (PreferenceString(config_, "STATUS", "SCREENSIZE") != chosen) {
-                WritePreference(config_, "STATUS", "SCREENSIZE", chosen);
+            const auto &presets = SettingsScreenSizePresets();
+            const char *chosen = (sel >= 0 && static_cast<std::size_t>(sel) < presets.size())
+                                     ? presets[static_cast<std::size_t>(sel)].value
+                                     : "default";
+            if (store.SaveScreenSize(chosen)) {
                 log_(std::string("SETTINGS SCREENSIZE=") + chosen);
                 changed_(PreferenceChange::ScreenSize);
             }
@@ -358,10 +365,9 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
             const auto sel = SendDlgItemMessageW(page, 0x429, CB_GETCURSEL, 0, 0);
             const auto data = sel >= 0 ? SendDlgItemMessageW(page, 0x429, CB_GETITEMDATA, sel, 0) : 0;
             if (!data || data == CB_ERR) {
-                WritePreference(config_, "STATUS", "FULLSCREENSIZE", nullptr);
+                store.SaveFullscreenSize(std::nullopt);
             } else {
-                const auto text = std::to_string(LOWORD(data)) + "," + std::to_string(HIWORD(data));
-                WritePreference(config_, "STATUS", "FULLSCREENSIZE", text.c_str());
+                store.SaveFullscreenSize(std::pair<int, int>{LOWORD(data), HIWORD(data)});
             }
         }
     }
@@ -574,46 +580,45 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
     }
 
     void SettingsView::Appearance(HWND page, int id, int command) {
+        SettingsStore store(config_);
         if (id == 104) {
             if (command == 0x408) {
                 HMENU menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 0x260000, L"DarkBlue(default)");
-                AppendMenuW(menu, MF_STRING, 0x2600, L"DarkGreen");
-                AppendMenuW(menu, MF_STRING, 0x26, L"DarkRed");
-                AppendMenuW(menu, MF_STRING, 0x181818, L"DarkGray");
-                AppendMenuW(menu, MF_STRING, 0xffffffff, L"Black");
+                for (const auto &preset: SettingsTilePresets())
+                    AppendMenuW(menu, MF_STRING, preset.menu_command, Utf8ToWide(preset.name).c_str());
                 RECT bounds{};
                 GetWindowRect(GetDlgItem(page, command), &bounds);
                 const auto color = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, bounds.right, bounds.top, 0,
                                                   page, nullptr);
                 DestroyMenu(menu);
                 if (!color) return;
-                const auto rgb = color == 0xffffffff ? 0 : color;
-                SetDlgItemInt(page, 0x403, rgb & 255, FALSE);
-                SetDlgItemInt(page, 0x404, (rgb >> 8) & 255, FALSE);
-                SetDlgItemInt(page, 0x405, (rgb >> 16) & 255, FALSE);
-                SetDlgItemInt(page, 0x3ee, 6, FALSE); // Original 004175b0 resets shadow with every preset.
+                for (const auto &preset: SettingsTilePresets()) {
+                    if (preset.menu_command == static_cast<std::uint32_t>(color)) {
+                        SetDlgItemInt(page, 0x403, static_cast<UINT>(preset.rgb[0]), FALSE);
+                        SetDlgItemInt(page, 0x404, static_cast<UINT>(preset.rgb[1]), FALSE);
+                        SetDlgItemInt(page, 0x405, static_cast<UINT>(preset.rgb[2]), FALSE);
+                        SetDlgItemInt(page, 0x3ee, static_cast<UINT>(preset.shadow), FALSE);
+                        break;
+                    }
+                }
             }
-            const char *keys[]{"TileRed", "TileGreen", "TileBlue"};
-            for (unsigned i = 0; i < 3; ++i) WritePreferenceInt(config_, "REBUILD", keys[i],
-                                                                static_cast<int>(GetDlgItemInt(
-                                                                    page, 0x403 + i, nullptr, FALSE)));
-            WritePreferenceInt(config_, "RESOURCE", "HAI_SDW",
-                               static_cast<int>(GetDlgItemInt(page, 0x3ee, nullptr, FALSE)));
+            store.SaveTileAppearance(
+                {static_cast<int>(GetDlgItemInt(page, 0x403, nullptr, FALSE)),
+                 static_cast<int>(GetDlgItemInt(page, 0x404, nullptr, FALSE)),
+                 static_cast<int>(GetDlgItemInt(page, 0x405, nullptr, FALSE))},
+                static_cast<int>(GetDlgItemInt(page, 0x3ee, nullptr, FALSE)));
             changed_(PreferenceChange::Artwork);
         } else if (command == 0x420) {
-            auto prefs = ClientPreferences::Load(config_); // Preserve every unrelated flag.
-            prefs.flags = (prefs.flags & ~0x2000u) | (IsDlgButtonChecked(page, 0x420) == BST_CHECKED ? 0x2000u : 0);
-            WritePreferenceInt(config_, "STATUS", "FLAGS0", static_cast<int>(prefs.flags));
+            store.SetCenterPanelHidden(IsDlgButtonChecked(page, 0x420) == BST_CHECKED);
             changed_(PreferenceChange::Artwork);
         } else {
             BackgroundLayer(page, true);
             appearance_.background_lhsv[0] = std::to_string(GetDlgItemInt(page, 0x3f4, nullptr, FALSE));
             if (command == 0x408) {
                 HMENU menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 100, L"标准");
-                AppendMenuW(menu, MF_STRING, 200, L"单色");
-                AppendMenuW(menu, MF_STRING, 300, L"BG1");
+                for (const auto &preset: SettingsBackgroundPresets())
+                    AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(preset.menu_command),
+                                Utf8ToWide(preset.name).c_str());
                 AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(menu, MF_STRING, 400, L"指定文件...");
                 RECT bounds{};
@@ -645,22 +650,18 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                             "2", "0", "255", "255", "0", "255", "255", "0", "255", "255"
                         };
                 } else {
-                    appearance_.background_source = selected == 200 ? "#FF0000" : selected == 300 ? "./BG1" : "";
-                    appearance_.background_lhsv = {
-                        "2", selected == 200 ? "240" : "0", selected == 200 ? "16" : "255",
-                        selected == 200 ? "128" : "255", "", "", "", "", "", ""
-                    };
-                    if (selected == 300) appearance_.background_lhsv = {
-                                             "2", "0", "255", "255", "0", "255", "255", "0", "255", "255"
-                                         };
+                    for (const auto &preset: SettingsBackgroundPresets()) {
+                        if (preset.menu_command == selected) {
+                            appearance_.background_source = preset.source;
+                            for (std::size_t i = 0; i < 10; ++i) appearance_.background_lhsv[i] = preset.lhsv[i];
+                            break;
+                        }
+                    }
                 }
             }
             BuildPreferredBackground(resources_, config_, 1440, 1080, appearance_);
             // Validate before persistence/cache notification.
-            const auto lhsv = appearance_.BackgroundLhsv();
-            WritePreference(config_, "RESOURCE", "BG_LHSV", lhsv.c_str());
-            WritePreference(config_, "RESOURCE", "BG_SRC",
-                            appearance_.background_source.empty() ? nullptr : appearance_.background_source.c_str());
+            store.SaveBackground(appearance_.background_source, appearance_.background_lhsv);
             changed_(PreferenceChange::Artwork);
             if (command == 0x408) {
                 initializing_ = true;

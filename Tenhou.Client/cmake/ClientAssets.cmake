@@ -4,7 +4,8 @@ file(MAKE_DIRECTORY "${asset_generated_directory}")
 set(TENHOU_ASSET_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets" CACHE PATH "External client assets")
 set(asset_ids "")
 set(asset_entries "")
-set(asset_rc "// Generated from assets/catalog.cmake. Do not edit.\n")
+set(embedded_manifest "")
+set(embedded_sources "")
 set(asset_keys "")
 set(asset_resource_ids "")
 # Keep Unicode asset paths out of native makefiles and shell command lines.
@@ -39,7 +40,8 @@ macro(tenhou_asset key path storage resource_id requirement legacy)
     string(APPEND asset_entries "        {AssetId::${key}, \"${key}\", \"${path}\", \"${legacy}\", ${resource_id}, ${asset_required}},\n")
     if (EXISTS "${asset_source}")
         if ("${storage}" STREQUAL "EMBEDDED")
-            string(APPEND asset_rc "${resource_id} RCDATA \"${asset_source}\"\n")
+            string(APPEND embedded_manifest "${key}|${asset_source}\n")
+            list(APPEND embedded_sources "${asset_source}")
         else ()
             get_filename_component(asset_subdirectory "${path}" DIRECTORY)
             string(APPEND asset_copy_script
@@ -109,5 +111,19 @@ set(asset_header "// Generated from assets/catalog.cmake. Do not edit.\n#pragma 
 # configure_file preserves timestamps when catalog contents have not changed.
 file(WRITE "${asset_generated_directory}/asset_catalog.hpp.in" "${asset_header}")
 configure_file("${asset_generated_directory}/asset_catalog.hpp.in" "${asset_generated_directory}/asset_catalog.hpp" COPYONLY)
-file(WRITE "${asset_generated_directory}/client_assets.rc.in" "${asset_rc}")
-configure_file("${asset_generated_directory}/client_assets.rc.in" "${asset_generated_directory}/client_assets.rc" COPYONLY)
+file(WRITE "${asset_generated_directory}/embedded_assets.hpp.in"
+    "// Generated from assets/catalog.cmake. Do not edit.\n#pragma once\n#include \"resource_manager.hpp\"\nnamespace tenhou {\n    EmbeddedAsset FindEmbeddedAsset(AssetId id);\n}\n")
+configure_file("${asset_generated_directory}/embedded_assets.hpp.in" "${asset_generated_directory}/embedded_assets.hpp" COPYONLY)
+file(WRITE "${asset_generated_directory}/embedded_assets.manifest.in" "${embedded_manifest}")
+configure_file("${asset_generated_directory}/embedded_assets.manifest.in" "${asset_generated_directory}/embedded_assets.manifest" COPYONLY)
+add_custom_command(
+    OUTPUT "${asset_generated_directory}/embedded_assets.cpp"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DMANIFEST_FILE=${asset_generated_directory}/embedded_assets.manifest"
+            "-DOUTPUT_CPP=${asset_generated_directory}/embedded_assets.cpp"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedAssets.cmake"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedAssets.cmake"
+            "${asset_generated_directory}/embedded_assets.manifest"
+            ${embedded_sources}
+    COMMENT "Generating portable C++ static embedded assets"
+    VERBATIM)

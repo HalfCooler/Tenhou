@@ -12,7 +12,7 @@
 | **Phase A** | 基础设施全面现代化：原生 x64、核心层去平台/架构类型（UTF-8 与 `<cstdint>`）、主窗口统一 `W` + 滚动日志、进程级 `SharedAssetStore`、音频迁移至 `miniaudio`（WASAPI）、网络栈独立 I/O 线程（`getaddrinfo` + `WSAPoll`）与纯 C++ `ini_store` | **已完成并验收** |
 | **Phase B** | 渲染性能专项优化：建立 `tenhou_render_bench` 基准、消除主循环 1440×1080 Host DIB 往返、`ID2D1StrokeStyle` 焦点框、静态底图缓存、消除阴影 `O(N²)` 扫描与增量阴影上传、O(1) LRU 与结算背景缓存 | **已完成并验收** |
 | **Phase C** | 4 档原生分辨率材质与原版分辨率选择恢复：回滚 SVG 烘焙牌面与 7 张重绘精灵至原版视觉风格；接入原版 `1024×768` 与 C-EGG 授权 CDN `1920×1440` / `2640×1980` 原生 3D 透视牌面及配套阴影包；恢复原版设置页 `画面`（Dialog `114`）与 `[STATUS] SCREENSIZE` / `FULLSCREENSIZE` 分辨率选择逻辑，并保留自由窗口缩放与无边框全屏 | **已完成并验收** |
-| **Phase D** | 跨平台结构解耦：拆分大文件、提取声明式 `SettingsSchema`（移除 `104.bin`–`114.bin` 对话框依赖）与视图 ViewModel、清理最后 Win32 尾项（`RCDATA`/`bcrypt`/`ITextRasterizer`），再替换 UI 壳层 | 待开始 |
+| **Phase D** | 跨平台结构解耦：拆分大文件、提取声明式 `SettingsSchema` 与 4 个纯 C++ ViewModel、清理核心层最后 Win32 尾项（`RCDATA`/`bcrypt`/`ITextRasterizer`），为最终跨平台 UI 壳层替换（D.3）铺平道路 | **D.1–D.2 已完成，D.3 待选型** |
 
 ---
 
@@ -125,6 +125,46 @@
 
 ---
 
+## Phase D（D.1 + D.2）已确认的取证与实施细节
+
+> 本阶段在保持 100% 演出逻辑、时序、INI 配置键位及 4 档原生分辨率行为不变的前提下，完成全部结构解耦与核心层 Win32 尾项清理；最终 UI 壳层替换（Phase D.3）待用户确认跨平台框架选型后推进。
+
+### D.1 大文件拆分、声明式设置 Schema 与纯 C++ ViewModel
+1. **大文件职责拆分与具名枚举**
+   - [table_sequencer.cpp](../../Tenhou.Client/src/table_sequencer.hpp) 拆分为独立的 [replay_sequencer.cpp](../../Tenhou.Client/src/replay_sequencer.cpp)（回放编排）与 [online_sequencer.cpp](../../Tenhou.Client/src/online_sequencer.cpp)（在线牌局编排）。
+   - [network_protocol.cpp](../../Tenhou.Client/src/network_protocol.cpp) 拆分为 [network_protocol_internal.hpp](../../Tenhou.Client/src/network_protocol_internal.hpp)、[network_protocol_wire.cpp](../../Tenhou.Client/src/network_protocol_wire.cpp)（XML 解析/组帧/认证/服务端错误与 JSON 工具）、[network_protocol.cpp](../../Tenhou.Client/src/network_protocol.cpp)（`LobbySession` 核心会话状态机）与 [network_protocol_lobby.cpp](../../Tenhou.Client/src/network_protocol_lobby.cpp)（官方/原版大厅画像、统计与提交）。
+   - [lobby_view.cpp](../../Tenhou.Client/src/lobby_view.cpp) 将全部裸数字定时器（`2..12`）与 `WM_APP + 16/17/18/25` 消息字面量替换为强语义具名枚举 `LobbyTimerId` 与 `LobbyAppMessage`。
+2. **声明式 `SettingsSchema` 与纯 C++ `SettingsStore`**
+   - 新增 [settings_schema.hpp](../../Tenhou.Client/src/settings_schema.hpp) / [settings_schema.cpp](../../Tenhou.Client/src/settings_schema.cpp)，完整声明全部 7 个原版设置页（`104 牌`、`105 卓`、`106 SE`、`109 BGM`、`110 牌谱`、`114 画面`、`107 其他`）的字段范围、INI 节/键、`FLAGS0` 位掩码与反转语义，以及牌背/桌布/画面尺寸/音效模式预设集合；提供零 Win32 依赖的无头读写器 `SettingsStore`。
+   - [settings_view.cpp](../../Tenhou.Client/src/settings_view.cpp) 已将 `画面`（`InitScreen`/`ScreenCommand`）与 `牌/卓` 预设及持久化接入 `SettingsSchema` 与 `SettingsStore`；将 `client_preferences.cpp` 上移至 `tenhou_resources` 静态库以便无头复用。
+3. **4 个零 Win32/HWND 依赖的纯 C++ ViewModel**
+   - [welcome_view_model.hpp](../../Tenhou.Client/src/welcome_view_model.hpp) / [.cpp](../../Tenhou.Client/src/welcome_view_model.cpp)：登录偏好加载/保存、密码永不落盘、隐藏 ID 掩码（`ID########-########`）保真、19 位官方 ID 与端口范围校验及 `ConnectionOptions` 构造；已接入 [welcome_view.cpp](../../Tenhou.Client/src/welcome_view.cpp)。
+   - [room_settings_view_model.hpp](../../Tenhou.Client/src/room_settings_view_model.hpp) / [.cpp](../../Tenhou.Client/src/room_settings_view_model.cpp)：规则集过滤（`riichi-v1`/`mahjong-v1`）、8 项分页、选项与数值步长校验及切规则清理旧键；已完整接入 [room_settings_view.cpp](../../Tenhou.Client/src/room_settings_view.cpp)。
+   - [matchmaking_view_model.hpp](../../Tenhou.Client/src/matchmaking_view_model.hpp) / [.cpp](../../Tenhou.Client/src/matchmaking_view_model.cpp)：人机队列选择、1000–9999 房号校验、`Lxxxx` 房主/成员确认、按钮可见/可用态与服务端错误本地化；已接入 [matchmaking_view.cpp](../../Tenhou.Client/src/matchmaking_view.cpp)。
+   - [offline_lobby_view_model.hpp](../../Tenhou.Client/src/offline_lobby_view_model.hpp) / [.cpp](../../Tenhou.Client/src/offline_lobby_view_model.cpp)：离线大厅 250 ms 移动节拍、服务大厅快照同步与命令构造、预约切换与大会室报名/入场/取消状态机。
+   - `matchmaking.cpp`、`settings_schema.cpp` 与 4 个 ViewModel 统一归入零 GDI+/D3D11/Win32 UI 依赖的 `tenhou_presenter` 目标。
+
+### D.2 核心层最后 Win32 尾项清理
+1. **移除 `bcrypt.dll` 依赖（纯 C++ FIPS 180-4 SHA-256）**
+   - [resource_pack.cpp](../../Tenhou.Client/src/resource_pack.cpp) 移除 `<windows.h>` / `<bcrypt.h>` 与 `BCrypt*` 调用，替换为无外部依赖的标准 C++17 SHA-256 实现，并通过 NIST FIPS 180-4 测试向量校验；[CMakeLists.txt](../../Tenhou.Client/CMakeLists.txt) 移除 `tenhou_resources` 的 `bcrypt` 链接项。
+   - 静态 PE 导入表校验确认最终 `build/Tenhou.Client/tenhou_rebuild.exe` 已零 `bcrypt.dll` 导入。
+2. **移除 Win32 `RCDATA`（构建期静态字节数组生成）**
+   - 新增纯 CMake 生成器 [EmbedAssets.cmake](../../Tenhou.Client/cmake/EmbedAssets.cmake)，修改 [ClientAssets.cmake](../../Tenhou.Client/cmake/ClientAssets.cmake) 与 [resource_manager.cpp](../../Tenhou.Client/src/resource_manager.cpp)，将全部 9 份 `EMBEDDED` 资产（`Dialog104`–`Dialog114` 与 `TileShadows`）生成为 `alignas(16) constexpr std::uint8_t` 静态只读数组（`embedded_assets.cpp`），彻底移除 `client_assets.rc` 与 `FindResourceW`/`LoadResource`/`LockResource`。
+   - **实窗取证记录（`COMCTL32.dll` `5.82.26100.8328`）**：实窗打开设置页时发现经典 `PropertySheetW`（`PSP_DLGINDIRECT`）会在原地修改 `DLGTEMPLATE::style`，直接传入 `.rdata` 只读数组会触发 `0xC0000005`。已在 [settings_view.cpp](../../Tenhou.Client/src/settings_view.cpp) 中于 `SettingsView::Open()` 将 7 份模板字节拷贝至实例成员可写缓冲（`page_templates_`）后再传入 `pResource`，既保持 `.rdata` 只读零启动拷贝，又彻底兼容 `COMCTL32.dll`。
+3. **`tenhou_text` 平台无关接口 `ITextRasterizer`**
+   - 新增零 `<windows.h>` / `<gdiplus.h>` 依赖的 [text_rasterizer.hpp](../../Tenhou.Client/src/text_rasterizer.hpp)（`TextPointF`/`TextRectF`/`TextRectI`/`TextRasterPixels`/`TextCacheStats`/`PortableTextLayout`/`PortableTextContext`/`PortableTextRun`/`PortableTextRaster` 与纯虚接口 `ITextRasterizer`）。
+   - Windows 端 [text_renderer.hpp](../../Tenhou.Client/src/text_renderer.hpp) / [text_renderer.cpp](../../Tenhou.Client/src/text_renderer.cpp) 继承并实现 `ITextRasterizer`，保留 GDI+ 精确像素参考实现，为后续 FreeType + HarfBuzz 后端提供可直接替换的契约。
+
+### Phase D（D.1–D.2）验收范围
+
+| 验收维度 | 覆盖内容 | 结果 |
+| --- | --- | --- |
+| **静态与构建检查** | MSVC C++17 `/W4 /WX /utf-8 /EHsc` x64 Release（全 4 项目）与 Debug（`Tenhou.Client`）零警告通过；PE x64 导入表校验确认零 `bcrypt.dll` 导入；源码审计确认 `tenhou_resources` 零 `FindResourceW`/`LoadResource`/`LockResource`/`BCrypt*` 残留；`text_rasterizer.hpp`、`settings_schema.hpp` 与 4 个 ViewModel 头文件零 `<windows.h>` 依赖 | 全部通过 |
+| **自动化测试** | `ctest` **9/9** 全量通过，含新增无头套件 `client_phase_d`（[phase_d_check.cpp](../../Tenhou.Client.Tests/src/phase_d_check.cpp)：FIPS 180-4 SHA-256 向量、全部 9 份静态内嵌资产与磁盘逐字节 SHA-256 一致性、跨平台 Mock `ITextRasterizer` 多态契约、`SettingsSchema` 7 页顺序与 `SettingsStore` 全键位/位掩码持久化、4 个纯 C++ ViewModel 状态机与校验）；`Tenhou.Server.Tests`（含 `tenhou_protocol_check`）全部通过；`scripts/tests` 6/6 通过 | 全部通过 |
+| **实窗冒烟验证** | 独立 `--config-dir` 启动 `build/Tenhou.Client/tenhou_rebuild.exe --offline-lobby` 并通过 `WM_COMMAND 4023` 实窗打开/关闭设置属性页（验证从纯 C++ 静态数组加载 `104..114` 模板及 `COMCTL32` 可写缓冲修复），再启动 `--replay` 实窗验证内嵌 `TileShadows` 加载与 D2D 渲染；两次均无 `ERROR` 日志并以 `EXIT code=0` 正常退出 | 全部通过 |
+
+---
+
 ## 待验证项（后续阶段）
-- **4 档实窗细检**：在 2K/4K 实机上人工打开设置页 `画面` 切档，核对 `1024 / 1440 / 1920 / 2640` 下的牌局、立直飞牌、鸣牌偏移、结算界面与全屏切换体验。
-- **Phase D**：设置页 `SettingsSchema` 与原版 `104.bin`–`114.bin` 控件项逐项对照，以及跨平台 UI 壳层替换后的实窗行为核对。
+- **4 档实窗细检**：在 2K/4K 实机上人工打开设置页 `画面` 切档，核对 `1024 / 1440 / 1920 / 2640` 下的牌局、立直飞牌、鸣牌偏移、结算界面与全屏切换体验，以及未来对背景板/底板高分材质的重新规划。
+- **Phase D.3（跨平台 UI 壳层替换）**：在确认最终跨平台框架选型（如 `SDL3 + SDL_GPU + RmlUi` / `Qt6` / `Slint`）与文字后端（FreeType + HarfBuzz 实现 `ITextRasterizer`）后，基于已就绪的 `SettingsSchema`、4 个 ViewModel、`miniaudio` 与独立网络线程替换 Win32 视图与 `D2DTableRenderer` 壳层。

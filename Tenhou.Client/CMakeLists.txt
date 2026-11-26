@@ -32,11 +32,12 @@ add_library(miniaudio_impl STATIC vendor/miniaudio/miniaudio_impl.c)
 target_include_directories(miniaudio_impl PUBLIC vendor/miniaudio)
 target_compile_definitions(miniaudio_impl PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(miniaudio_impl PRIVATE /W0)
-add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp src/resource_manager.cpp src/ini_store.cpp)
+add_library(tenhou_resources STATIC src/resource_pack.cpp src/object_pack.cpp src/resource_manager.cpp src/ini_store.cpp
+        src/client_preferences.cpp "${asset_generated_directory}/embedded_assets.cpp")
 target_include_directories(tenhou_resources PUBLIC src "${asset_generated_directory}")
 target_compile_definitions(tenhou_resources PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_resources PRIVATE /W4 /WX /utf-8 /EHsc)
-target_link_libraries(tenhou_resources PUBLIC zlib_inflate bcrypt)
+target_link_libraries(tenhou_resources PUBLIC zlib_inflate)
 add_library(tenhou_text STATIC src/text_renderer.cpp src/final_scene.cpp)
 target_link_libraries(tenhou_text PUBLIC tenhou_resources gdiplus gdi32 usp10)
 target_compile_options(tenhou_text PRIVATE /W4 /WX /utf-8 /EHsc)
@@ -46,29 +47,32 @@ target_compile_definitions(tenhou_replay PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_replay PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_replay PUBLIC zlib_inflate)
 add_library(tenhou_table STATIC src/table_scene.cpp src/variant_artwork.cpp src/replay_audio.cpp src/original_display.cpp
-        src/wall_scene.cpp src/settlement_scene.cpp src/client_preferences.cpp src/tile_shadow.cpp
+        src/wall_scene.cpp src/settlement_scene.cpp src/tile_shadow.cpp
         src/background.cpp src/shared_assets.cpp src/gdi_table_renderer.cpp src/d2d_table_renderer.cpp)
 target_include_directories(tenhou_table PUBLIC src)
 target_compile_options(tenhou_table PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_table PUBLIC tenhou_resources tenhou_replay tenhou_text miniaudio_impl ole32 gdiplus d3d11 dxgi d2d1 dxguid)
-add_library(tenhou_network STATIC src/network_protocol.cpp src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp src/offline_lobby.cpp src/variant_state.cpp)
+add_library(tenhou_network STATIC src/network_protocol_wire.cpp src/network_protocol.cpp src/network_protocol_lobby.cpp
+        src/network_client.cpp src/online_game.cpp src/online_actions.cpp src/replay_archive.cpp
+        src/offline_lobby.cpp src/variant_state.cpp)
 target_include_directories(tenhou_network PUBLIC src)
 target_compile_definitions(tenhou_network PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(tenhou_network PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_network PUBLIC tenhou_resources tenhou_replay ws2_32 user32)
 add_library(tenhou_presenter STATIC src/tile_geometry.cpp src/wall_geometry.cpp src/replay_effects.cpp
         src/action_selection_scene.cpp src/hand_projection.cpp src/settlement_sequencer.cpp
-        src/table_sequencer.cpp src/table_render_frame.cpp)
+        src/replay_sequencer.cpp src/online_sequencer.cpp src/table_render_frame.cpp
+        src/matchmaking.cpp src/settings_schema.cpp src/welcome_view_model.cpp
+        src/room_settings_view_model.cpp src/matchmaking_view_model.cpp src/offline_lobby_view_model.cpp)
 target_include_directories(tenhou_presenter PUBLIC src "${asset_generated_directory}")
 target_compile_options(tenhou_presenter PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_presenter PUBLIC tenhou_resources tenhou_network)
 target_link_libraries(tenhou_table PUBLIC tenhou_presenter)
-set(tenhou_lobby_sources src/lobby_view.cpp src/matchmaking.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
+set(tenhou_lobby_sources src/lobby_view.cpp src/matchmaking_view.cpp src/online_table.cpp src/settlement_view.cpp
         src/match_intro_view.cpp src/action_selection_view.cpp src/settings_view.cpp src/room_settings_view.cpp src/offline_lobby_view.cpp
 )
 add_executable(tenhou_rebuild WIN32 src/main.cpp src/application.cpp src/welcome_view.cpp src/table_view.cpp
-        ${tenhou_lobby_sources}
-        "${asset_generated_directory}/client_assets.rc")
+        ${tenhou_lobby_sources})
 target_compile_options(tenhou_rebuild PRIVATE /W4 /WX /utf-8 /EHsc)
 target_link_libraries(tenhou_rebuild PRIVATE tenhou_table tenhou_network gdiplus comdlg32 shell32 comctl32 ole32)
 # Runs even when only an asset changed, without relinking the executable.

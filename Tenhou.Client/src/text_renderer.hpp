@@ -1,6 +1,7 @@
 #pragma once
 #include "resource_manager.hpp"
 #include "text_catalog.hpp"
+#include "text_rasterizer.hpp"
 #include "text_render_profile.hpp"
 #include <windows.h>
 #include <objidl.h>
@@ -60,26 +61,16 @@ namespace tenhou {
         std::array<double, 6> transform{1, 0, 0, 1, 0, 0};
         double opacity = 1;
     };
-    struct TextRasterPixels {
-        int width, height;
-        Bytes bgra; // Top-down premultiplied BGRA.
-    };
-
     struct TextRaster {
         Gdiplus::Rect bounds;
         std::shared_ptr<const TextRasterPixels> pixels;
     };
 
-    struct TextCacheStats {
-        std::size_t layouts = 0, rasters = 0, raster_bytes = 0;
-        std::size_t layout_builds = 0, raster_builds = 0, raster_hits = 0;
-    };
-
     // UI-thread service. Layouts are reusable; transparent rasters are bounded and background-independent.
-    class TextRenderer {
+    class TextRenderer final : public ITextRasterizer {
     public:
         explicit TextRenderer(const TextFontService &font, TextRenderProfile profile = {});
-        ~TextRenderer();
+        ~TextRenderer() override;
         TextRenderer(const TextRenderer &) = delete;
         TextRenderer &operator=(const TextRenderer &) = delete;
         TextLayout Layout(TextKey key);
@@ -90,8 +81,15 @@ namespace tenhou {
         static Gdiplus::RectF Bounds(const TextRenderContext &context, const SceneTextRun &run);
         TextRaster Rasterize(const TextRenderContext &context, const SceneTextRun &run);
         Gdiplus::RectF Draw(Gdiplus::Graphics &target, const TextRenderContext &context, const SceneTextRun &run);
-        TextCacheStats CacheStats() const;
-        void ClearCaches();
+
+        PortableTextLayout LayoutPortable(TextKey key) override;
+        PortableTextLayout LayoutPortable(std::string_view utf8_text, TextStyleKey style) override;
+        TextRectF MeasureBoundsPortable(const PortableTextContext &context,
+                                        const PortableTextRun &run) const override;
+        PortableTextRaster RasterizePortable(const PortableTextContext &context,
+                                             const PortableTextRun &run) override;
+        TextCacheStats CacheStats() const override;
+        void ClearCaches() override;
     private:
         struct RasterData;
         std::shared_ptr<const RasterData> GetRaster(const TextRenderContext &context, const SceneTextRun &run,

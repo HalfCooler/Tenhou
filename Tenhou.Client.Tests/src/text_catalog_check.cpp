@@ -89,7 +89,7 @@ int main() {
         Check(std::size(kInfoBodyGradient) == 3 && std::size(kInfoPenultimateGradient) == 6 &&
             std::size(kInfoLastGradient) == 3 && kInfoPenultimateGradient[2].position == 0.30 &&
             kInfoPenultimateGradient[2].gray == 239 && kInfoLastGradient[1].gray == 156 &&
-            kInfoLastGradient[2].gray == 134 && kInfoWidthBaseAdvances == 6.5 && !kInfoBackgroundAlpha,
+            kInfoLastGradient[2].gray == 134 && kInfoWidthBaseAdvances == 6.5,
             "independent Info gradient decorations");
         std::set<unsigned> pattern_ids;
         for (const auto &pattern : kTextRulePatterns) {

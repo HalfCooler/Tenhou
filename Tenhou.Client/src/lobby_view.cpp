@@ -18,9 +18,28 @@
 
 namespace tenhou {
     namespace {
-        constexpr UINT_PTR kOpeningTimer = 12;
-        constexpr wchar_t kLobbyWindow[] = L"TENHOU_REBUILD_LOBBY";
+        enum LobbyTimerId : UINT_PTR {
+            kTimerDeferredAudio = 2,
+            kTimerActionClock = 3,
+            kTimerAutoAction = 4,
+            kTimerResultDelay = 5,
+            kTimerMotionTick = 6,
+            kTimerPresentationQueue = 7,
+            kTimerActionCaption = 8,
+            kTimerHudHoverGrace = 9,
+            kTimerAutoDiscardDelay = 10,
+            kTimerExitVoteCountdown = 11,
+            kOpeningTimer = 12,
+        };
 
+        enum LobbyAppMessage : UINT {
+            kMsgRefreshActions = WM_APP + 16,
+            kMsgApplyAutoSort = WM_APP + 17,
+            kMsgUpdateLobbyMusic = WM_APP + 18,
+            kMsgReturnToWelcome = WM_APP + 25,
+        };
+
+        constexpr wchar_t kLobbyWindow[] = L"TENHOU_REBUILD_LOBBY";
     }
 
     OnlineSequencerContext LobbyView::MakeContext() const {
@@ -41,7 +60,7 @@ namespace tenhou {
         OnlineMotionCallbacks motion;
         motion.accept = [this](const OnlineState &game, const ReplayEvent &event, bool animate, double now) {
             table_.Accept(game, event, animate, now);
-            if (table_.Animating()) motion_timer_.Start(window_, 6, kTableTickMs);
+            if (table_.Animating()) motion_timer_.Start(window_, kTimerMotionTick, kTableTickMs);
             else motion_timer_.Stop();
         };
         motion.begin_opening = [this](OpeningPresentation &opening, const OnlineState &game, bool wall) {
@@ -49,7 +68,7 @@ namespace tenhou {
         };
         motion.set_auto_sort = [this](bool enabled, const OnlineState &game) {
             table_.SetAutoSort(enabled, game);
-            if (sequencer_.animation_enabled() && table_.Animating()) motion_timer_.Start(window_, 6);
+            if (sequencer_.animation_enabled() && table_.Animating()) motion_timer_.Start(window_, kTimerMotionTick);
             else {
                 table_.CancelAnimation();
                 motion_timer_.Stop();
@@ -79,30 +98,30 @@ namespace tenhou {
         else opening_timer_.Stop();
 
         const bool queue_needed = sequencer_.QueueTimerNeeded();
-        if (queue_needed && !queue_timer_) queue_timer_ = SetTimer(window_, 7, 15, nullptr) != 0;
+        if (queue_needed && !queue_timer_) queue_timer_ = SetTimer(window_, kTimerPresentationQueue, 15, nullptr) != 0;
         else if (!queue_needed && queue_timer_) {
-            KillTimer(window_, 7);
+            KillTimer(window_, kTimerPresentationQueue);
             queue_timer_ = false;
         }
 
         const bool clock_needed = sequencer_.ClockTimerNeeded();
-        if (clock_needed && !clock_timer_) clock_timer_ = SetTimer(window_, 3, 100, nullptr) != 0;
+        if (clock_needed && !clock_timer_) clock_timer_ = SetTimer(window_, kTimerActionClock, 100, nullptr) != 0;
         else if (!clock_needed && clock_timer_) {
-            KillTimer(window_, 3);
+            KillTimer(window_, kTimerActionClock);
             clock_timer_ = false;
         }
 
         const bool auto_needed = sequencer_.AutoTimerNeeded(client_->snapshot());
-        if (auto_needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, 4, 100, nullptr) != 0;
+        if (auto_needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, kTimerAutoAction, 100, nullptr) != 0;
         else if (!auto_needed && automatic_timer_) {
-            KillTimer(window_, 4);
+            KillTimer(window_, kTimerAutoAction);
             automatic_timer_ = false;
         }
 
         const bool caption_needed = sequencer_.captions().Active();
-        if (caption_needed && !caption_timer_) caption_timer_ = SetTimer(window_, 8, 15, nullptr) != 0;
+        if (caption_needed && !caption_timer_) caption_timer_ = SetTimer(window_, kTimerActionCaption, 15, nullptr) != 0;
         else if (!caption_needed && caption_timer_) {
-            KillTimer(window_, 8);
+            KillTimer(window_, kTimerActionCaption);
             caption_timer_ = false;
         }
     }
@@ -118,7 +137,7 @@ namespace tenhou {
             if (!sequencer_.opening().Active()) opening_timer_.Stop();
             if (!table_.Animating()) motion_timer_.Stop();
             if (settlement_view_) settlement_view_->CancelPresentation();
-            KillTimer(window_, 2);
+            KillTimer(window_, kTimerDeferredAudio);
             try { audio_.Stop(); } catch (const std::exception &e) {
                 log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
             }
@@ -178,16 +197,16 @@ namespace tenhou {
         }
         for (unsigned sound_id: fx.play_sounds) ScheduleSound(sound_id, 0);
         if (fx.start_deferred_sound_timer && !sequencer_.deferred_sounds().empty())
-            SetTimer(window_, 2, 25, nullptr);
+            SetTimer(window_, kTimerDeferredAudio, 25, nullptr);
 
         if (fx.result_timer_ms.has_value()) {
-            if (*fx.result_timer_ms == 0) KillTimer(window_, 5);
-            else if (!SetTimer(window_, 5, *fx.result_timer_ms, nullptr))
+            if (*fx.result_timer_ms == 0) KillTimer(window_, kTimerResultDelay);
+            else if (!SetTimer(window_, kTimerResultDelay, *fx.result_timer_ms, nullptr))
                 throw std::runtime_error("Cannot start settlement delay");
         }
         if (fx.auto_discard_timer_ms.has_value()) {
-            if (*fx.auto_discard_timer_ms == 0) KillTimer(window_, 10);
-            else if (!SetTimer(window_, 10, *fx.auto_discard_timer_ms, nullptr))
+            if (*fx.auto_discard_timer_ms == 0) KillTimer(window_, kTimerAutoDiscardDelay);
+            else if (!SetTimer(window_, kTimerAutoDiscardDelay, *fx.auto_discard_timer_ms, nullptr))
                 throw std::runtime_error("Cannot start automatic discard wait");
         }
         SyncTimers();
@@ -361,7 +380,7 @@ namespace tenhou {
                     case OfflineLobbyView::Action::OpenReplay: replay(); break;
                     case OfflineLobbyView::Action::Logout:
                         Disconnect();
-                        PostMessageW(parent_, WM_APP + 25, 0, 0);
+                        PostMessageW(parent_, kMsgReturnToWelcome, 0, 0);
                         break;
                     case OfflineLobbyView::Action::RoomConfirmed: UpdateLobbyMusic(); break;
                 }
@@ -405,7 +424,7 @@ namespace tenhou {
         ShowWindow(window_, visible ? SW_SHOW : SW_HIDE);
         if (visible) Arrange();
         UpdateLobbyMusic();
-        if (visible) PostMessageW(window_, WM_APP + 18, 0, 0);
+        if (visible) PostMessageW(window_, kMsgUpdateLobbyMusic, 0, 0);
     }
 
     void LobbyView::SetWelcomeMusic(bool visible, bool official) {
@@ -451,7 +470,7 @@ namespace tenhou {
         artwork_error_.clear();
         artwork_painted_ = false;
         InvalidateRect(window_, nullptr, FALSE);
-        PostMessageW(window_, WM_APP + 18, 0, 0);
+        PostMessageW(window_, kMsgUpdateLobbyMusic, 0, 0);
     }
 
     void LobbyView::Arrange() {
@@ -724,7 +743,7 @@ namespace tenhou {
         sequencer_.ResetForStopSound();
         table_.CancelAnimation();
         if (settlement_view_) settlement_view_->CancelPresentation();
-        KillTimer(window_, 2);
+        KillTimer(window_, kTimerDeferredAudio);
         StopAudio();
     }
 
@@ -806,7 +825,7 @@ namespace tenhou {
                 log_("ONLINE AUDIO BANK loaded");
             }
             audio_.Schedule(id, sounds_.Get(id), delay);
-            if (!SetTimer(window_, 2, 25, nullptr)) throw std::runtime_error("Cannot start online sound timer");
+            if (!SetTimer(window_, kTimerDeferredAudio, 25, nullptr)) throw std::runtime_error("Cannot start online sound timer");
         } catch (const std::exception &e) {
             audio_error_ = e.what();
             log_("ONLINE AUDIO ERROR " + audio_error_);
@@ -913,7 +932,7 @@ namespace tenhou {
         const auto &s = client_->snapshot();
         if (!s.exit_voting || s.recovering || !IsWindowVisible(window_)) {
             ShowWindow(exit_vote_, SW_HIDE);
-            KillTimer(window_, 11);
+            KillTimer(window_, kTimerExitVoteCountdown);
             return;
         }
         auto now = MonotonicMs();
@@ -938,7 +957,7 @@ namespace tenhou {
                          SWP_NOSIZE | SWP_SHOWWINDOW);
             SetFocus(exit_no_);
         }
-        SetTimer(window_, 11, 100, nullptr);
+        SetTimer(window_, kTimerExitVoteCountdown, 100, nullptr);
     }
 
     LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
@@ -1021,7 +1040,7 @@ namespace tenhou {
                     }
                 }
                 if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN ||
-                    (message == WM_TIMER && wparam == 9)) {
+                    (message == WM_TIMER && wparam == kTimerHudHoverGrace)) {
                     if (self->sequencer_.original_display() &&
                         self->hud_interaction_.Handle(window, self->BoardBounds(), self->canvas_width_, message, lparam)) {
                         self->table_.SetRelativeScores(self->hud_interaction_.relative());
@@ -1045,16 +1064,16 @@ namespace tenhou {
                     self->Arrange();
                     return 0;
                 }
-                if (message == WM_APP + 16) {
+                if (message == kMsgRefreshActions) {
                     self->UpdateActions();
                     self->Arrange();
                     return 0;
                 }
-                if (message == WM_APP + 17) {
+                if (message == kMsgApplyAutoSort) {
                     self->ApplyAutomaticSort();
                     return 0;
                 }
-                if (message == WM_APP + 18) {
+                if (message == kMsgUpdateLobbyMusic) {
                     self->UpdateLobbyMusic();
                     return 0;
                 }
@@ -1130,40 +1149,40 @@ namespace tenhou {
                         SetCapture(window);
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 11) {
+                if (message == WM_TIMER && wparam == kTimerExitVoteCountdown) {
                     self->UpdateExitVote();
                     return 0;
                 }
                 if (message == WM_TIMER && self->client_ && self->client_->snapshot().table_paused &&
-                    wparam >= 2 && wparam <= 10)
+                    wparam >= kTimerDeferredAudio && wparam <= kTimerAutoDiscardDelay)
                     return 0;
-                if (message == WM_TIMER && wparam == 8) {
+                if (message == WM_TIMER && wparam == kTimerActionCaption) {
                     self->sequencer_.captions().Tick();
                     self->SyncTimers();
                     const auto bounds = self->BoardBounds();
                     InvalidateRect(window, &bounds, FALSE);
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 3) {
+                if (message == WM_TIMER && wparam == kTimerActionClock) {
                     self->ActionClockTick();
                     if (self->Interaction(self->Snapshot()).countdown != self->painted_countdown_)
                         InvalidateRect(window, nullptr, FALSE);
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 7) {
+                if (message == WM_TIMER && wparam == kTimerPresentationQueue) {
                     self->PresentationTick();
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 10) {
-                    KillTimer(window, 10);
+                if (message == WM_TIMER && wparam == kTimerAutoDiscardDelay) {
+                    KillTimer(window, kTimerAutoDiscardDelay);
                     self->AutomaticAction();
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 4) {
+                if (message == WM_TIMER && wparam == kTimerAutoAction) {
                     self->AutomaticAction();
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 5) {
+                if (message == WM_TIMER && wparam == kTimerResultDelay) {
                     if (self->client_) {
                         self->ApplyEffects(self->sequencer_.ResultTimerExpired(
                             self->client_->snapshot(), self->MakeContext(), self->MakeMotion()));
@@ -1174,7 +1193,7 @@ namespace tenhou {
                     self->OpeningTick(AnimationNow());
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 2) {
+                if (message == WM_TIMER && wparam == kTimerDeferredAudio) {
                     if (const auto id = self->sequencer_.PopDeferredSound(self->match_intro_->Active()))
                         self->PlaySoundId(*id);
                     try { self->audio_.Poll(); } catch (const std::exception &e) {
@@ -1183,10 +1202,10 @@ namespace tenhou {
                         self->StopAudio();
                     }
                     if (self->sequencer_.deferred_sounds().empty() && !self->audio_.Active())
-                        KillTimer(window, 2);
+                        KillTimer(window, kTimerDeferredAudio);
                     return 0;
                 }
-                if (message == WM_TIMER && wparam == 6) {
+                if (message == WM_TIMER && wparam == kTimerMotionTick) {
                     const bool active = self->table_.Animating();
                     if (self->table_.Tick()) {
                         self->log_("ONLINE ANIMATION END");
@@ -1215,7 +1234,7 @@ namespace tenhou {
                         if (button == 0 && !self->sequencer_.sort_refresh_pending()) {
                             self->sequencer_.set_sort_refresh_pending(true);
                             self->CheckButtonCapture();
-                            PostMessageW(window, WM_APP + 17, 0, 0);
+                            PostMessageW(window, kMsgApplyAutoSort, 0, 0);
                         }
                         self->log_("ONLINE AUTO index=" + std::to_string(button) + " enabled=" +
                                    std::to_string(next_value));
@@ -1255,8 +1274,8 @@ namespace tenhou {
                         }
                     return 0;
                 }
-                if (message == WM_APP + 25) {
-                    PostMessageW(self->parent_, WM_APP + 25, 0, 0);
+                if (message == kMsgReturnToWelcome) {
+                    PostMessageW(self->parent_, kMsgReturnToWelcome, 0, 0);
                     return 0;
                 }
                 if (message == WM_COMMAND) {

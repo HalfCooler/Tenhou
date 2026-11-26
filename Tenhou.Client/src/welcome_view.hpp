@@ -1,6 +1,7 @@
 #pragma once
 #include "resource_pack.hpp"
 #include "network_client.hpp"
+#include "welcome_view_model.hpp"
 #include <windows.h>
 #include <functional>
 #include <memory>
@@ -42,14 +43,14 @@ namespace tenhou {
 
         unsigned Port() const;
 
-        bool OfficialServer() const { return official_server_; }
+        bool OfficialServer() const { return vm_.official_server(); }
 
         bool HasOfficialId() const;
 
         void ClearPassword();
 
-        char Gender() const { return gender_; }
-        bool Connecting() const { return connecting_; }
+        char Gender() const { return vm_.gender(); }
+        bool Connecting() const { return vm_.connecting(); }
 
         void SetLoginState(bool connecting, const std::wstring &status);
 
@@ -78,17 +79,17 @@ namespace tenhou {
 
         void SetServer(bool official);
 
+        void SyncModelFromControls() const;
+
         HWND parent_ = nullptr, viewport_ = nullptr, panel_ = nullptr, edit_ = nullptr;
         HWND password_ = nullptr, nickname_ = nullptr;
         HWND server_ = nullptr, host_ = nullptr, port_ = nullptr, official_id_ = nullptr;
         HFONT font_ = nullptr;
-        bool connecting_ = false, official_server_ = false;
+        mutable WelcomeViewModel vm_;
         std::wstring login_status_;
         std::vector<std::unique_ptr<Control> > controls_;
         Image banner_, background_;
         std::string error_;
-        char gender_ = 'M';
-        std::wstring masked_identity_;
         std::function<void(Action)> action_;
         std::function<void(const std::string &)> log_;
     };

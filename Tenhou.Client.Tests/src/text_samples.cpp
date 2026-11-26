@@ -264,7 +264,6 @@ int wmain(int argc, wchar_t **argv) {
             << "- Font: HGSeikaishotaiPRO (" << (font->private_font() ? "private resource" : "installed") << ")\n"
             << "- Bold: " << (font->native_bold() ? "native face" : "shared geometric emboldening") << "\n"
             << "- Profile: " << kTextRenderProfileStatus << "\n- DPI metadata: " << options.dpi << " (no additional size multiplier)\n"
-            << "- Catalog source SHA-256: " << kTextSourceSha256 << "\n"
             << "- Compiled catalog JSON SHA-256: " << kTextRenderCatalogSha256 << "\n"
             << "- Compiled rendering profile SHA-256: " << kTextRenderProfileSha256 << "\n"
             << "- Fixed-label missing glyphs: " << Scalars(font->MissingGlyphs(fixed)) << "\n"

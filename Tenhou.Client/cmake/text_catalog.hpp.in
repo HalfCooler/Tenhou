@@ -28,7 +28,7 @@ enum class TextImageKey {
 @image_enum@    Count
 };
 struct TextRgba { std::uint8_t r, g, b, a; };
-struct TextPaletteEntry { TextColor key; TextRgba rgba; bool calibrated; };
+struct TextPaletteEntry { TextColor key; TextRgba rgba; };
 inline constexpr TextPaletteEntry kTextPalette[]{
 @color_entries@};
 struct TextStyle {
@@ -75,16 +75,11 @@ inline constexpr TextGradientStop kInfoPenultimateGradient[]{
 inline constexpr TextGradientStop kInfoLastGradient[]{
 @gradient_last_row@};
 inline constexpr double kInfoWidthBaseAdvances = @info_width@;
-inline constexpr unsigned kInfoReferenceOriginId = @info_reference@;
-inline constexpr std::optional<double> kInfoBackgroundAlpha = std::nullopt;
-inline constexpr std::optional<double> kInfoPaddingPt = std::nullopt;
 struct ChiSelectionDefinition {
     std::string_view main, secondary;
-    std::optional<double> secondary_size_pt, offset_pt;
+    std::optional<double> secondary_size_pt;
 };
-inline constexpr ChiSelectionDefinition kChiSelection{@chi_main_literal@, @chi_secondary_literal@, @chi_secondary_size@, std::nullopt};
-inline constexpr std::string_view kTextSourceSha256 = "@source_sha@";
-inline constexpr std::string_view kTextSourceWorksheet = @worksheet_literal@;
+inline constexpr ChiSelectionDefinition kChiSelection{@chi_main_literal@, @chi_secondary_literal@, @chi_secondary_size@};
 
 constexpr const TextDefinition *FindText(TextKey key) {
     const auto index = static_cast<std::size_t>(key);

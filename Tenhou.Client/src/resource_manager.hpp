@@ -4,7 +4,7 @@
 #include <utility>
 
 namespace tenhou {
-    // A view into the executable's RCDATA; valid for the process lifetime.
+    // A view into a compile-time embedded static byte array; valid for the process lifetime.
     struct EmbeddedAsset {
         const std::uint8_t *data;
         std::size_t size;

@@ -633,4 +633,60 @@ namespace tenhou {
         impl_->raster_index.clear();
         impl_->raster_bytes = 0;
     }
+
+    namespace {
+        TextRectF FromGdip(const RectF &r) { return {r.X, r.Y, r.Width, r.Height}; }
+        RectF ToGdip(const TextRectF &r) { return {r.x, r.y, r.width, r.height}; }
+
+        PortableTextLayout ToPortable(const TextLayout &layout) {
+            return {{layout.metrics.advance, layout.metrics.line_height,
+                     FromGdip(layout.metrics.ink), FromGdip(layout.metrics.effects)},
+                    layout.data};
+        }
+
+        TextRenderContext FromPortable(const PortableTextContext &c) {
+            TextRenderContext out;
+            out.native_layout_scale = c.native_layout_scale;
+            out.viewport_scale_x = c.viewport_scale_x;
+            out.viewport_scale_y = c.viewport_scale_y;
+            out.origin_x = c.origin_x;
+            out.origin_y = c.origin_y;
+            out.dpi = c.dpi;
+            if (c.device_clip) out.device_clip = ToGdip(*c.device_clip);
+            return out;
+        }
+
+        SceneTextRun FromPortable(const PortableTextRun &r) {
+            SceneTextRun out;
+            out.layout.metrics.advance = r.layout.metrics.advance;
+            out.layout.metrics.line_height = r.layout.metrics.line_height;
+            out.layout.metrics.ink = ToGdip(r.layout.metrics.ink);
+            out.layout.metrics.effects = ToGdip(r.layout.metrics.effects);
+            out.layout.data = r.layout.data;
+            out.anchor = PointF(r.anchor.x, r.anchor.y);
+            out.alignment = r.alignment;
+            out.transform = r.transform;
+            out.opacity = r.opacity;
+            return out;
+        }
+    } // namespace
+
+    PortableTextLayout TextRenderer::LayoutPortable(TextKey key) {
+        return ToPortable(Layout(key));
+    }
+
+    PortableTextLayout TextRenderer::LayoutPortable(std::string_view utf8_text, TextStyleKey style) {
+        return ToPortable(Layout(utf8_text, style));
+    }
+
+    TextRectF TextRenderer::MeasureBoundsPortable(const PortableTextContext &context,
+                                                  const PortableTextRun &run) const {
+        return FromGdip(Bounds(FromPortable(context), FromPortable(run)));
+    }
+
+    PortableTextRaster TextRenderer::RasterizePortable(const PortableTextContext &context,
+                                                       const PortableTextRun &run) {
+        const auto raster = Rasterize(FromPortable(context), FromPortable(run));
+        return {{raster.bounds.X, raster.bounds.Y, raster.bounds.Width, raster.bounds.Height}, raster.pixels};
+    }
 }

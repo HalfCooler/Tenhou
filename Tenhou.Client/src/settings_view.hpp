@@ -82,6 +82,7 @@ namespace tenhou {
         std::function<void(PreferenceChange)> changed_;
         std::function<void(const std::string &)> log_;
         std::array<Page, 7> pages_{};
+        std::array<std::vector<std::uint8_t>, 7> page_templates_{};
         ReplayAudio audio_;
         ReplaySoundBank sounds_;
         bool initializing_ = false;

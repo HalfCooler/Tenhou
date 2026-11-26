@@ -1,5 +1,6 @@
 #pragma once
 #include "matchmaking.hpp"
+#include "matchmaking_view_model.hpp"
 #include "network_protocol.hpp"
 #include "original_display.hpp"
 #include <windows.h>
@@ -21,7 +22,7 @@ namespace tenhou {
 
         void Reset();
 
-        const MatchmakingDraft &draft() const { return draft_; }
+        const MatchmakingDraft &draft() const { return vm_.draft(); }
         using Request = std::function<void(const std::string &, unsigned, const std::map<std::string, std::string> &)>;
         void Bind(Request request) { request_ = std::move(request); }
 
@@ -41,12 +42,10 @@ namespace tenhou {
         HWND window_ = nullptr;
         HFONT font_ = nullptr;
         std::map<int, HWND> controls_;
-        MatchmakingDraft draft_;
-        bool custom_ = false, editing_ = false;
+        MatchmakingViewModel vm_;
         std::wstring status_;
         std::function<void(const std::string &)> log_;
         Request request_;
-        LobbySnapshot snapshot_;
         DisplayArtwork artwork_;
     };
 }

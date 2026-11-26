@@ -168,27 +168,36 @@ namespace tenhou {
         InvalidateRect(panel_, nullptr, TRUE);
     }
 
+    void WelcomeView::SyncModelFromControls() const {
+        if (edit_) vm_.SetIdentity(WideToUtf8(EditText(edit_)));
+        if (official_id_) vm_.SetOfficialIdentity(WideToUtf8(EditText(official_id_)));
+        if (host_) vm_.SetHost(WideToUtf8(EditText(host_)));
+        if (port_) vm_.SetPortText(WideToUtf8(EditText(port_)));
+        if (nickname_) vm_.SetNickname(WideToUtf8(EditText(nickname_)));
+        if (password_) vm_.SetPassword(WideToUtf8(EditText(password_)));
+    }
+
     void WelcomeView::LoadPreferences(const std::filesystem::path &config) {
-        SetWindowTextW(edit_, Utf8ToWide(PreferenceString(config, "REBUILD", "WelcomeName", "NoName")).c_str());
-        // Remember official Tenhou login ID via [STATUS] UNAME (matching tenhou.exe.c:110564).
-        const auto official_name = PreferenceString(config, "STATUS", "UNAME", "NoName");
-        SetWindowTextW(official_id_, Utf8ToWide(official_name.empty() ? "NoName" : official_name).c_str());
-        SetWindowTextW(host_, Utf8ToWide(PreferenceString(config, "REBUILD", "NativeHost", "localhost")).c_str());
-        SetWindowTextW(port_, std::to_wstring(PreferenceInt(config, "REBUILD", "NativePort", 10080)).c_str());
-        SetGender(PreferenceInt(config, "REBUILD", "WelcomeFemale", 0) ? 'F' : 'M');
-        SetServer(PreferenceInt(config, "REBUILD", "OfficialServer", 0) != 0);
+        vm_.LoadPreferences(config);
+        SetWindowTextW(edit_, Utf8ToWide(vm_.DisplayIdentity()).c_str());
+        SetWindowTextW(official_id_, Utf8ToWide(vm_.TrimmedOfficialIdentity()).c_str());
+        SetWindowTextW(host_, Utf8ToWide(vm_.TrimmedHost()).c_str());
+        SetWindowTextW(port_, Utf8ToWide(vm_.port_text()).c_str());
+        SetGender(vm_.gender());
+        SetServer(vm_.official_server());
     }
 
     void WelcomeView::Arrange() {
         if (!panel_ || !edit_ || controls_.size() != 6) return;
+        const bool official_server = vm_.official_server();
         RECT viewport{};
         GetClientRect(viewport_, &viewport);
         SetWindowPos(panel_, nullptr, (viewport.right - 728) / 2, (viewport.bottom - 330) / 2, 728, 330, SWP_NOZORDER);
-        int total = official_server_ ? 0 : 160;
-        for (unsigned i = official_server_ ? 2 : 0; i < 5; ++i) total += controls_[i]->width;
+        int total = official_server ? 0 : 160;
+        for (unsigned i = official_server ? 2 : 0; i < 5; ++i) total += controls_[i]->width;
         // Exact gaps from 004a44d0: 5,3,3,1,1; original centering uses728-4.
         int x = (724 - total) / 2;
-        if (!official_server_) {
+        if (!official_server) {
             SetWindowPos(controls_[0]->window, nullptr, x, 265 - controls_[0]->height / 2, 0, 0,
                          SWP_NOSIZE | SWP_NOZORDER);
             x += controls_[0]->width + 5;
@@ -198,7 +207,7 @@ namespace tenhou {
             x += 160 + 3;
         }
         const int row_top = 265 - controls_[2]->height / 2;
-        for (unsigned i = official_server_ ? 2 : 1; i < 5; ++i) {
+        for (unsigned i = official_server ? 2 : 1; i < 5; ++i) {
             SetWindowPos(controls_[i]->window, nullptr, x, row_top, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
             x += controls_[i]->width + (i < 2 ? 3 : 1);
         }
@@ -214,102 +223,77 @@ namespace tenhou {
     void WelcomeView::Show(bool visible) { ShowWindow(viewport_, visible ? SW_SHOW : SW_HIDE); }
 
     void WelcomeView::SetGender(char gender) {
-        gender_ = gender;
+        vm_.SetGender(gender);
         if (controls_.size() < 2) return;
-        controls_[1]->text = gender == 'F' ? L"女" : L"男";
+        controls_[1]->text = vm_.gender() == 'F' ? L"女" : L"男";
         InvalidateRect(controls_[1]->window, nullptr, FALSE);
     }
 
     void WelcomeView::Save(const std::filesystem::path &config) {
-        const auto name = WideToUtf8(Identity());
-        const auto official = WideToUtf8(OfficialIdentity());
-        // Remember both local account name and official Tenhou ID ([STATUS] UNAME), never passwords.
-        WritePreference(config, "REBUILD", "WelcomeName", name.empty() ? "NoName" : name.c_str());
-        WritePreferenceInt(config, "REBUILD", "WelcomeFemale", gender_ == 'F' ? 1 : 0);
-        WritePreference(config, "STATUS", "UNAME", official.empty() ? "NoName" : official.c_str());
-        WritePreferenceInt(config, "REBUILD", "OfficialServer", official_server_ ? 1 : 0);
-        const auto host = WideToUtf8(Host());
-        if (!host.empty()) WritePreference(config, "REBUILD", "NativeHost", host.c_str());
-        const auto port = Port();
-        if (port) WritePreferenceInt(config, "REBUILD", "NativePort", static_cast<int>(port));
+        SyncModelFromControls();
+        vm_.SavePreferences(config);
     }
 
     std::wstring WelcomeView::Identity() const {
-        wchar_t name[80]{};
-        GetWindowTextW(edit_, name, 80);
-        return !masked_identity_.empty() && std::wstring(name) == L"ID########-########" ? masked_identity_ : name;
+        SyncModelFromControls();
+        return Utf8ToWide(vm_.EffectiveIdentity());
     }
 
     std::wstring WelcomeView::Password() const {
-        wchar_t value[129]{};
-        GetWindowTextW(password_, value, 129);
-        return value;
+        SyncModelFromControls();
+        return Utf8ToWide(vm_.password());
     }
 
     std::wstring WelcomeView::Nickname() const {
-        wchar_t value[65]{};
-        GetWindowTextW(nickname_, value, 65);
-        return value;
+        SyncModelFromControls();
+        return Utf8ToWide(vm_.nickname());
     }
 
     std::wstring WelcomeView::Host() const {
-        auto host = EditText(host_);
-        const auto start = host.find_first_not_of(L" \t");
-        if (start == std::wstring::npos) return {};
-        return host.substr(start, host.find_last_not_of(L" \t") - start + 1);
+        SyncModelFromControls();
+        return Utf8ToWide(vm_.TrimmedHost());
     }
 
     unsigned WelcomeView::Port() const {
-        const auto value = WideToUtf8(EditText(port_));
-        unsigned port = 0;
-        const auto end = value.data() + value.size();
-        const auto parsed = std::from_chars(value.data(), end, port);
-        return parsed.ec == std::errc{} && parsed.ptr == end && port <= 65535 ? port : 0;
+        SyncModelFromControls();
+        return vm_.ParsedPort();
     }
 
     bool WelcomeView::HasOfficialId() const {
-        const auto id = OfficialIdentity();
-        if (id == L"NoName") return true;
-        const auto alphanumeric = [](wchar_t c) {
-            return (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z');
-        };
-        return id.size() == 19 && id.compare(0, 2, L"ID") == 0 && id[10] == L'-' &&
-               std::all_of(id.begin() + 2, id.begin() + 10, alphanumeric) &&
-               std::all_of(id.begin() + 11, id.end(), alphanumeric);
+        SyncModelFromControls();
+        return vm_.HasValidOfficialId();
     }
 
     std::wstring WelcomeView::OfficialIdentity() const {
-        auto id = EditText(official_id_);
-        const auto start = id.find_first_not_of(L" \t\r\n");
-        if (start == std::wstring::npos) return {};
-        return id.substr(start, id.find_last_not_of(L" \t\r\n") - start + 1);
+        SyncModelFromControls();
+        return Utf8ToWide(vm_.TrimmedOfficialIdentity());
     }
 
-    void WelcomeView::ClearPassword() { SetWindowTextW(password_, L""); }
+    void WelcomeView::ClearPassword() {
+        vm_.ClearPassword();
+        SetWindowTextW(password_, L"");
+    }
 
     void WelcomeView::SetHiddenId(bool hidden) {
+        SyncModelFromControls();
+        vm_.SetHiddenId(hidden);
         SendMessageW(official_id_, EM_SETPASSWORDCHAR, hidden ? L'*' : 0, 0);
         InvalidateRect(official_id_, nullptr, TRUE);
-        const auto identity = Identity();
-        masked_identity_.clear();
-        if (hidden && !identity.empty() && identity != L"NoName") {
-            masked_identity_ = identity;
-            SetWindowTextW(edit_, L"ID########-########");
-        } else SetWindowTextW(edit_, identity.c_str());
+        SetWindowTextW(edit_, Utf8ToWide(vm_.DisplayIdentity()).c_str());
     }
 
     void WelcomeView::SetServer(bool official) {
-        official_server_ = official;
+        vm_.SetServer(official);
         SendMessageW(server_, CB_SETCURSEL, official ? 1 : 0, 0);
         for (auto field: {edit_, host_, port_, nickname_, password_, controls_[0]->window, controls_[1]->window})
-            ShowWindow(field, official_server_ ? SW_HIDE : SW_SHOW);
-        ShowWindow(official_id_, official_server_ ? SW_SHOW : SW_HIDE);
+            ShowWindow(field, official ? SW_HIDE : SW_SHOW);
+        ShowWindow(official_id_, official ? SW_SHOW : SW_HIDE);
         Arrange();
         SetLoginState(false, L"");
     }
 
     void WelcomeView::SetLoginState(bool connecting, const std::wstring &status) {
-        connecting_ = connecting;
+        vm_.SetLoginState(connecting, WideToUtf8(status));
         login_status_ = status;
         for (auto field: {server_, edit_, host_, port_, nickname_, password_, official_id_,
                           controls_[0]->window, controls_[1]->window})
@@ -321,10 +305,11 @@ namespace tenhou {
     }
 
     void WelcomeView::Command(int id) {
+        const bool official_server = vm_.official_server();
         if (id == 3003) {
             HMENU menu = CreatePopupMenu();
-            AppendMenuW(menu, MF_STRING | (gender_ == 'M' ? MF_CHECKED : 0), 100, L"男");
-            AppendMenuW(menu, MF_STRING | (gender_ == 'F' ? MF_CHECKED : 0), 101, L"女");
+            AppendMenuW(menu, MF_STRING | (vm_.gender() == 'M' ? MF_CHECKED : 0), 100, L"男");
+            AppendMenuW(menu, MF_STRING | (vm_.gender() == 'F' ? MF_CHECKED : 0), 101, L"女");
             RECT position{};
             GetWindowRect(controls_[1]->window, &position);
             const UINT command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, position.left, position.bottom, 0,
@@ -335,11 +320,11 @@ namespace tenhou {
                 log_("WELCOME gender changed");
             }
         } else if (id == 1) action_(Action::Lobby);
-        else if (id == 3001 && !official_server_) action_(Action::Register);
+        else if (id == 3001 && !official_server) action_(Action::Register);
         else if (id == 3004) action_(Action::Settings);
         else if (id == 2) action_(Action::Exit);
         else if (id == 3006) {
-            MessageBoxW(panel_, official_server_ ? L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName。" :
+            MessageBoxW(panel_, official_server ? L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName。" :
                         L"填写第三方服务器主机和端口，默认 localhost:10080。\n\n"
                         L"使用注册账号和密码登录，或以 NoName 访客登录。\n\n"
                         L"大厅战等待 10 秒后补齐人机；只有全注册真人对局计入排位。",
@@ -379,9 +364,10 @@ namespace tenhou {
         const auto old_font = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(90, 90, 90));
+        const bool official_server = vm_.official_server();
         RECT announcement{30, 29, 698, 66};
         if (error_.empty()) {
-            DrawTextW(dc, official_server_ ? L"使用天凤官方 ID 或 NoName 访客登录" : L"使用注册账号登录，或以 NoName 访客登录",
+            DrawTextW(dc, official_server ? L"使用天凤官方 ID 或 NoName 访客登录" : L"使用注册账号登录，或以 NoName 访客登录",
                       -1, &announcement,
                       DT_CENTER | DT_WORDBREAK);
         } else {
@@ -394,7 +380,7 @@ namespace tenhou {
             DrawTextW(dc, text, -1, &rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
         };
         label(L"连接方式", 70);
-        if (official_server_) {
+        if (official_server) {
             label(L"官方 ID", 112);
             RECT format{260, 143, 470, 166};
             DrawTextW(dc, L"IDxxxxxxxx-xxxxxxxx（19 位）", -1, &format, DT_SINGLELINE);
@@ -411,7 +397,7 @@ namespace tenhou {
         LineTo(dc, 668, 235);
         SelectObject(dc, old_pen);
         DeleteObject(pen);
-        if (!official_server_) {
+        if (!official_server) {
             RECT edit{};
             GetWindowRect(edit_, &edit);
             MapWindowPoints(nullptr, panel_, reinterpret_cast<POINT *>(&edit), 2);
