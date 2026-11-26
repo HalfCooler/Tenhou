@@ -17,18 +17,18 @@ namespace tenhou {
         void Set(const ActionSelection &selection, const ActionSnapshot &actions, const OnlineState &game,
                  bool visible);
 
-        void Move(RECT bounds);
+        void Move(RECT bounds) const;
 
-        void Capture(HDC dc);
+        void Capture(HDC dc) const;
 
-        void Focus();
+        void Focus() const;
 
     private:
         static LRESULT CALLBACK Procedure(HWND, UINT, WPARAM, LPARAM);
 
-        void Arrange();
+        void Arrange() const;
 
-        void Paint(HDC dc);
+        void Paint(HDC dc) const;
 
         void PaintChoice(const DRAWITEMSTRUCT &item);
 

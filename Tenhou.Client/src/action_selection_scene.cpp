@@ -6,23 +6,23 @@ namespace tenhou {
 
     std::vector<CandidateTile> BuildCandidateTiles(const OnlineAction &choice, const OnlineState &game) {
         std::vector<CandidateTile> result;
-        for (int tile: choice.tiles) result.push_back({tile, false});
+        result.reserve(choice.tiles.size());
+        for (const int tile: choice.tiles) result.push_back({tile, false});
         if ((choice.kind == "chi" || choice.kind == "pon" || choice.kind == "open_kan") && game.last_discard_seat > 0) {
-            const auto &river = game.players[game.last_discard_seat].discards;
-            if (!river.empty()) result.push_back({river.back().tile, true});
+            if (const auto &river = game.players[game.last_discard_seat].discards; !river.empty()) result.push_back({river.back().tile, true});
         }
         if (choice.kind == "added_kan" && !choice.tiles.empty())
             for (const auto &meld: game.players[0].melds)
                 if (meld.kind == MeldKind::Pon && meld.tiles.front() / 4 == choice.tiles.front() / 4)
-                    for (int tile: meld.tiles) result.push_back({tile, true});
+                    for (const int tile: meld.tiles) result.push_back({tile, true});
         std::stable_sort(result.begin(), result.end(), [](const CandidateTile &a, const CandidateTile &b) {
             return a.tile < b.tile;
         });
         return result;
     }
 
-    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, int width,
-                                                       std::pair<int, int> anchor) {
+    std::vector<ActionPlacement> BuildActionPlacements(const ActionSnapshot &actions, const int width,
+                                                       const std::pair<int, int> anchor) {
         const char *kinds[]{"discard", "chi", "pon", "kan", "riichi", "ron", "tsumo", "draw", "skip", "next", "nuki"};
         std::vector<int> buttons;
         if (!actions.enabled) return {};
@@ -31,12 +31,12 @@ namespace tenhou {
                 return ActionGroup(a.kind) == kinds[i];
             }))
                 buttons.push_back(i == 10 ? 5151 : 5120 + i);
-        const double ui_ratio = width == 1024 ? 1.0 : double(width) / 1440.0;
+        const double ui_ratio = width == 1024 ? 1.0 : static_cast<double>(width) / 1440.0;
         const double scale = width == 1024 ? 1.0 : 1.4 * ui_ratio;
         int x = std::max(0, static_cast<int>(anchor.first + 65.0 * ui_ratio - (static_cast<int>(buttons.size()) - 1) * 110 * scale));
         const int y = static_cast<int>(anchor.second - 45 * scale);
         std::vector<ActionPlacement> result;
-        for (int button: buttons) {
+        for (const int button: buttons) {
             result.push_back({button, {x, y, x + static_cast<int>(100 * scale), y + static_cast<int>(36 * scale)}});
             x = static_cast<int>(x + 110 * scale);
         }
@@ -51,7 +51,7 @@ namespace tenhou {
 
     void ActionSelection::Sync(const ActionSnapshot &actions) {
         if (!actions.enabled || actions.revision != revision || !actions.pending.empty() ||
-            std::any_of(indices.begin(), indices.end(), [&](std::size_t i) {
+            std::any_of(indices.begin(), indices.end(), [&](const std::size_t i) {
                 return i >= actions.choices.size() || (group != "call" && ActionGroup(actions.choices[i].kind) != group);
             })) Clear();
         revision = actions.revision;
@@ -62,15 +62,14 @@ namespace tenhou {
         revision = actions.revision;
         if (!actions.enabled || !actions.pending.empty()) return;
         for (std::size_t i = 0; i < actions.choices.size(); ++i) {
-            const auto &kind = actions.choices[i].kind;
-            if (ActionGroup(kind) == wanted || (wanted == "call" && (kind == "chi" || kind == "pon")))
+            if (const auto &kind = actions.choices[i].kind; ActionGroup(kind) == wanted || (wanted == "call" && (kind == "chi" || kind == "pon")))
                 indices.push_back(i);
         }
         if (!indices.empty()) group = wanted;
     }
 
     std::size_t ActionSelection::UniqueCall(const ActionSnapshot &actions, bool red) const {
-        const auto none = static_cast<std::size_t>(-1);
+        constexpr auto none = static_cast<std::size_t>(-1);
         if ((!HandSelection() && group != "kan") || group == "exchange" || !actions.enabled || revision != actions.revision ||
             !actions.pending.empty() || indices.empty())
             return none;
@@ -78,7 +77,8 @@ namespace tenhou {
             // Ordinary copies are interchangeable; red fives remain distinct.
             // Keep the original physical IDs in the action submitted to the server.
             std::vector<int> result;
-            for (int tile: choice.tiles) result.push_back(TileVariant(tile, red));
+            result.reserve(choice.tiles.size());
+            for (const int tile: choice.tiles) result.push_back(TileVariant(tile, red));
             std::sort(result.begin(), result.end());
             return result;
         };
@@ -94,10 +94,10 @@ namespace tenhou {
     std::vector<int> ActionSelection::Selectable(const ActionSnapshot &actions) const {
         std::vector<int> result;
         if (!HandSelection() || !actions.enabled || revision != actions.revision || !actions.pending.empty()) return result;
-        for (auto index: indices) {
+        for (const auto index: indices) {
             if (index >= actions.choices.size()) continue;
             const auto &tiles = actions.choices[index].tiles;
-            if (!std::all_of(selected.begin(), selected.end(), [&](int tile) {
+            if (!std::all_of(selected.begin(), selected.end(), [&](const int tile) {
                 return std::find(tiles.begin(), tiles.end(), tile) != tiles.end();
             }))
                 continue;
@@ -107,24 +107,21 @@ namespace tenhou {
         return result;
     }
 
-    std::size_t ActionSelection::Pick(const ActionSnapshot &actions, int tile) {
-        const auto none = static_cast<std::size_t>(-1);
+    std::size_t ActionSelection::Pick(const ActionSnapshot &actions, const int tile) {
+        constexpr auto none = static_cast<std::size_t>(-1);
         if (!actions.enabled || revision != actions.revision || !actions.pending.empty()) return none;
-        const auto old = std::find(selected.begin(), selected.end(), tile);
-        if (old != selected.end()) { selected.erase(old); return none; }
-        const auto allowed = Selectable(actions);
-        if (std::find(allowed.begin(), allowed.end(), tile) == allowed.end()) return none;
+        if (const auto old = std::find(selected.begin(), selected.end(), tile); old != selected.end()) { selected.erase(old); return none; }
+        if (const auto allowed = Selectable(actions); std::find(allowed.begin(), allowed.end(), tile) == allowed.end()) return none;
         selected.push_back(tile);
         return group == "exchange" ? none : Confirm(actions);
     }
 
     std::size_t ActionSelection::Confirm(const ActionSnapshot &actions) const {
-        const auto none = static_cast<std::size_t>(-1);
+        constexpr auto none = static_cast<std::size_t>(-1);
         if (!actions.enabled || revision != actions.revision || !actions.pending.empty()) return none;
-        for (auto index: indices) {
+        for (const auto index: indices) {
             if (index >= actions.choices.size()) continue;
-            const auto &tiles = actions.choices[index].tiles;
-            if (tiles.size() == selected.size() && std::all_of(selected.begin(), selected.end(), [&](int value) {
+            if (const auto &tiles = actions.choices[index].tiles; tiles.size() == selected.size() && std::all_of(selected.begin(), selected.end(), [&](const int value) {
                 return std::find(tiles.begin(), tiles.end(), value) != tiles.end();
             }))
                 return index;

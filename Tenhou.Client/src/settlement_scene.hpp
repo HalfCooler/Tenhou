@@ -42,7 +42,7 @@ namespace tenhou {
         int width = 1024, dealer = 0, honba = -1, sticks = -1;
         std::size_t pattern_page = 0;
         double yaku_entrance = 1;
-        // Resource geometry is read by the view/probe, without exposing live hands.
+        // resource geometry is read by the view/probe, without exposing live hands.
         std::function<RECT(const TableTile &)> tile_bounds;
         std::function<float(const std::string &, float)> text_width;
 
@@ -58,7 +58,7 @@ namespace tenhou {
         std::vector<SettlementImageItem> images;
     };
 
-    // Native 1024/1440 canvas. Text spans are laid out in HD design pixels.
+    // Native 1024/1440 canvas. text spans are laid out in HD design pixels.
     SettlementScene BuildSettlementScene(const SettlementState &state, std::size_t selected,
                                          const std::array<std::string, 4> &names,
                                          std::size_t shown_yaku = std::numeric_limits<std::size_t>::max(),

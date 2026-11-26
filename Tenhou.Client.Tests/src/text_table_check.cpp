@@ -512,12 +512,12 @@ namespace tenhou {
                 DisplayArtwork display; display.Configure(isolated, 1440);
                 VariantArtwork overrides; overrides.Configure(isolated);
                 for (const auto &text : kTextDefinitions) {
-                    Require(!overrides.GetSprite(text.origin_id), "Text OriginId still resolves to a PNG");
+                    Require(!overrides.GetSprite(text.origin_id), "text OriginId still resolves to a PNG");
                     bool rejected = false;
                     try { display.Get(text.origin_id); } catch (const std::runtime_error &error) {
                         rejected = error.what() == "Unsupported display image ID " + std::to_string(text.origin_id);
                     }
-                    Require(rejected, "Text OriginId remains accessible through the display pack");
+                    Require(rejected, "text OriginId remains accessible through the display pack");
                 }
                 Surface original(480, 13 * 56), changed(original.width, original.height);
                 Buttons(parent, resources, original); Buttons(parent, isolated, changed); Equal(original, changed, "P3 text PNG independence: buttons");

@@ -38,7 +38,7 @@ namespace tenhou {
         constexpr UINT_PTR kAudioTimer = 1;
         constexpr int kMeterWidth = 14, kMeterHeight = 16, kMeterInterior = 14;
         constexpr unsigned kMeterPeriodMs = 50;
-        constexpr std::uint64_t kMaxLogBytes = 4u * 1024u * 1024u;
+        constexpr std::uint64_t kMaxLogBytes = static_cast<uint64_t>(4) * 1024 * 1024;
 
         std::filesystem::path ExecutableDirectory() {
             std::vector<wchar_t> buffer(32768);
@@ -48,18 +48,17 @@ namespace tenhou {
         }
     } // namespace
 
-    Options ParseOptions(int argc, char **argv) {
+    Options ParseOptions(const int argc, char **argv) {
         (void) argv;
         Options options;
         int count = 0;
-        auto **arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+        const std::unique_ptr<wchar_t*, FreeDeleter> arguments(CommandLineToArgvW(GetCommandLineW(), &count));
         if (!arguments || count != argc) {
-            if (arguments) LocalFree(arguments);
             throw std::runtime_error("无法读取启动参数");
         }
         try {
             for (int i = 1; i < count; ++i) {
-                const std::wstring name = arguments[i];
+                const std::wstring name = arguments.get()[i];
                 if (name == L"--offline-lobby") {
                     options.offline_lobby = true;
                     continue;
@@ -70,7 +69,7 @@ namespace tenhou {
                 }
                 if (name == L"--width" || name == L"--height") {
                     if (++i >= count) throw std::runtime_error("启动参数缺少数值");
-                    const int v = std::stoi(arguments[i]);
+                    const int v = std::stoi(arguments.get()[i]);
                     if (name == L"--width") options.initial_width = v;
                     else options.initial_height = v;
                     continue;
@@ -78,16 +77,14 @@ namespace tenhou {
                 if (name != L"--config-dir" && name != L"--resources" && name != L"--replay") throw std::runtime_error(
                     "不支持的启动参数");
                 if (++i >= count) throw std::runtime_error("启动参数缺少路径");
-                const auto value = std::filesystem::absolute(arguments[i]);
+                const auto value = std::filesystem::absolute(arguments.get()[i]);
                 if (name == L"--config-dir") options.config_directory = value;
                 else if (name == L"--resources") options.resource_directory = value;
                 else options.replay = value;
             }
         } catch (...) {
-            LocalFree(arguments);
             throw;
         }
-        LocalFree(arguments);
         return options;
     }
 
@@ -181,18 +178,19 @@ namespace tenhou {
         }
     }
 
-    void Application::Check(bool success, const char *action) const {
+    void Application::Check(const bool success, const char *action)
+    {
         if (!success) throw std::runtime_error(
             std::string(action) + " failed; Win32 error=" + std::to_string(GetLastError()));
     }
 
-    int Application::Run(HINSTANCE instance, int show) {
+    int Application::Run(const HINSTANCE instance, const int show) {
         Check(SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE,
               "SetProcessDpiAwarenessContext");
         // Separate identity from the original client. Atomic mutex also covers startup races.
         SetLastError(ERROR_SUCCESS);
         auto canonical = std::filesystem::weakly_canonical(options_.config_directory).wstring();
-        std::transform(canonical.begin(), canonical.end(), canonical.begin(), [](wchar_t c) {
+        std::transform(canonical.begin(), canonical.end(), canonical.begin(), [](const wchar_t c) {
             return static_cast<wchar_t>(towlower(c));
         });
         std::vector<std::uint8_t> identity(canonical.size() * sizeof(wchar_t));
@@ -203,7 +201,7 @@ namespace tenhou {
         const DWORD mutex_error = GetLastError();
         Check(mutex_ != nullptr, "CreateMutexW");
         if (mutex_error == ERROR_ALREADY_EXISTS) {
-            EnumWindows([](HWND window, LPARAM context) -> BOOL {
+            EnumWindows([](const HWND window, const LPARAM context) -> BOOL {
                 if (GetPropW(window, reinterpret_cast<const wchar_t *>(context))) {
                     ShowWindow(window, SW_RESTORE);
                     SetForegroundWindow(window);
@@ -214,16 +212,16 @@ namespace tenhou {
             return 0;
         }
         OpenLog();
-        Log("START x64; 本机麻将客户端 0.27.0");
+        Log("START x64; Tenhou Rebuild Client 0.27.0");
         Log("CONFIG " + PathToUtf8(config_path_));
         Log("RESOURCES " + PathToUtf8(resource_directory_));
-        Gdiplus::GdiplusStartupInput startup;
+        const Gdiplus::GdiplusStartupInput startup;
         if (Gdiplus::GdiplusStartup(&gdiplus_token_, &startup, nullptr) != Gdiplus::Ok)
             throw std::runtime_error("GDI+ startup failed");
         font_ = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         Check(font_ != nullptr, "CreateFontW");
-        WNDCLASSEXW window_class{sizeof(WNDCLASSEXW)};
+        WNDCLASSEXW window_class{sizeof(WNDCLASSEXW), 0};
         window_class.lpfnWndProc = WindowProc;
         window_class.hInstance = instance;
         window_class.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
@@ -248,7 +246,7 @@ namespace tenhou {
         int outer_h = client_bounds.bottom - client_bounds.top;
         // Clamp initial non-override window cleanly inside the monitor work area.
         if (options_.initial_width <= 0 && options_.initial_height <= 0) {
-            MONITORINFO mi{sizeof(MONITORINFO)};
+            MONITORINFO mi{sizeof(MONITORINFO), {}, {}, 0};
             if (GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) {
                 const int work_w = mi.rcWork.right - mi.rcWork.left;
                 const int work_h = mi.rcWork.bottom - mi.rcWork.top;
@@ -257,7 +255,7 @@ namespace tenhou {
                 const int max_cw = std::max(kMinClientWidth, work_w - chrome_w);
                 const int max_ch = std::max(kMinClientHeight, work_h - chrome_h);
                 if (width_ > max_cw || height_ > max_ch) {
-                    const double scale = std::min(double(max_cw) / width_, double(max_ch) / height_);
+                    const double scale = std::min(static_cast<double>(max_cw) / width_, static_cast<double>(max_ch) / height_);
                     width_ = std::max(kMinClientWidth, static_cast<int>(width_ * scale));
                     height_ = std::max(kMinClientHeight, static_cast<int>(height_ * scale));
                     outer_w = width_ + chrome_w;
@@ -271,7 +269,7 @@ namespace tenhou {
             " canvas=" + std::to_string(screen_width_) + "x" + std::to_string(screen_width_ * 3 / 4));
         SetupSystemMenu();
         UpdateWindowTitle();
-        welcome_ = std::make_unique<WelcomeView>(window_, [this](WelcomeView::Action action) {
+        welcome_ = std::make_unique<WelcomeView>(window_, [this](const WelcomeView::Action action) {
             switch (action) {
                 case WelcomeView::Action::Exit: PostMessageW(window_, WM_CLOSE, 0, 0); break;
                 case WelcomeView::Action::Settings: settings_->Open(); break;
@@ -292,7 +290,7 @@ namespace tenhou {
             [this] { PostMessageW(window_, WM_APP + 27, 0, 0); });
         lobby_->ConfigureArtwork(resource_directory_, screen_width_);
         if (options_.offline_lobby) {
-            offline_lobby_ = std::make_unique<OfflineLobbyView>(window_, config_path_, [this](OfflineLobbyView::Action action) {
+            offline_lobby_ = std::make_unique<OfflineLobbyView>(window_, config_path_, [this](const OfflineLobbyView::Action action) {
                 switch (action) {
                     case OfflineLobbyView::Action::Settings: settings_->Open(); break;
                     case OfflineLobbyView::Action::OpenReplay: PostMessageW(window_, WM_COMMAND, kReplay, 0); break;
@@ -327,7 +325,7 @@ namespace tenhou {
             }
         });
         settings_ = std::make_unique<SettingsView>(window_, config_path_, resource_directory_,
-                                                   [this](PreferenceChange change) { ApplyPreferences(change); },
+                                                   [this](const PreferenceChange change) { ApplyPreferences(change); },
                                                    [this](const std::string &message) { Log(message); });
         table_->SetOriginalDisplay(original_display_);
         lobby_->SetOriginalDisplay(original_display_);
@@ -346,8 +344,7 @@ namespace tenhou {
         Check(audio_meter_ != nullptr && SetTimer(window_, kAudioTimer, kMeterPeriodMs, nullptr) != 0, "Create audio meter");
         if (!options_.replay.empty()) table_->Load(options_.replay);
         SetView(options_.offline_lobby && options_.replay.empty() ? "offline_lobby" : view_);
-        const int effective_show = show == SW_HIDE ? SW_SHOWNORMAL
-                                                   : (start_maximized_ && !start_fullscreen_ ? SW_SHOWMAXIMIZED : show);
+        const int effective_show = show == SW_HIDE ? SW_SHOWNORMAL : start_maximized_ && !start_fullscreen_ ? SW_SHOWMAXIMIZED : show;
         ShowWindow(window_, effective_show);
         if (start_fullscreen_) SetFullscreen(true);
         UpdateWindow(window_);
@@ -355,29 +352,14 @@ namespace tenhou {
         BOOL result;
         while ((result = MotionTimer::GetMessage(&message)) > 0) {
             if (settings_->HandleMessage(message)) continue;
-            if (message.message == WM_KEYDOWN && message.wParam == VK_F11) {
-                SetFullscreen(!fullscreen_);
-                continue;
-            }
-            if (message.message == WM_SYSKEYDOWN && message.wParam == VK_RETURN && (message.lParam & (1 << 29))) {
-                SetFullscreen(!fullscreen_);
-                continue;
-            }
-            if (message.message == WM_KEYDOWN && offline_lobby_ &&
-                offline_lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
+            if (message.message == WM_KEYDOWN && message.wParam == VK_F11) { SetFullscreen(!fullscreen_); continue; }
+            if (message.message == WM_SYSKEYDOWN && message.wParam == VK_RETURN && message.lParam & (1 << 29)) { SetFullscreen(!fullscreen_); continue; }
+            if (message.message == WM_KEYDOWN && offline_lobby_ && offline_lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
             if (lobby_ && lobby_->HandleExitVoteMessage(message)) continue;
-            if (message.message == WM_KEYDOWN && lobby_ && lobby_->HandleKey(static_cast<UINT>(message.wParam)))
-                continue;
-            if (message.message == WM_KEYDOWN && table_ && table_->HandleKey(static_cast<UINT>(message.wParam)))
-                continue;
-            if (message.message == WM_KEYDOWN && message.wParam == VK_F5) {
-                LoadResources();
-                continue;
-            }
-            if (!IsDialogMessageW(window_, &message)) {
-                TranslateMessage(&message);
-                DispatchMessageW(&message);
-            }
+            if (message.message == WM_KEYDOWN && lobby_ && lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
+            if (message.message == WM_KEYDOWN && table_ && table_->HandleKey(static_cast<UINT>(message.wParam))) continue;
+            if (message.message == WM_KEYDOWN && message.wParam == VK_F5) { LoadResources(); continue; }
+            if (!IsDialogMessageW(window_, &message)) { TranslateMessage(&message); DispatchMessageW(&message); }
         }
         if (result == -1) {
             Log("ERROR GetMessageW");
@@ -388,7 +370,7 @@ namespace tenhou {
     }
 
     void Application::SetupSystemMenu() {
-        HMENU sys = GetSystemMenu(window_, FALSE);
+        const HMENU sys = GetSystemMenu(window_, FALSE);
         if (!sys) return;
         AppendMenuW(sys, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(sys, MF_STRING, kSysSize1024, L"窗口尺寸：1024×768");
@@ -401,13 +383,13 @@ namespace tenhou {
         SyncSystemMenu();
     }
 
-    void Application::SyncSystemMenu() {
-        HMENU sys = GetSystemMenu(window_, FALSE);
+    void Application::SyncSystemMenu() const {
+        const HMENU sys = GetSystemMenu(window_, FALSE);
         if (!sys) return;
         CheckMenuItem(sys, kSysFullscreen, MF_BYCOMMAND | (fullscreen_ ? MF_CHECKED : MF_UNCHECKED));
     }
 
-    void Application::UpdateWindowTitle() {
+    void Application::UpdateWindowTitle() const {
         if (!window_) return;
         const std::wstring title = L"Tenhou Rebuild / Windows x64 [" +
                                    std::to_wstring(screen_width_) + L"x" +
@@ -420,18 +402,17 @@ namespace tenhou {
         if (IsZoomed(window_)) ShowWindow(window_, SW_RESTORE);
         RECT frame{0, 0, client_width, client_height};
         const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
-        const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
-        if (AdjustWindowRectExForDpi(&frame, style, GetMenu(window_) != nullptr, ex_style, GetDpiForWindow(window_))) {
+        if (const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE)); AdjustWindowRectExForDpi(&frame, style, GetMenu(window_) != nullptr, ex_style, GetDpiForWindow(window_))) {
             int outer_w = frame.right - frame.left;
             int outer_h = frame.bottom - frame.top;
             const int chrome_w = outer_w - client_width;
             const int chrome_h = outer_h - client_height;
-            MONITORINFO mi{sizeof(MONITORINFO)};
+            MONITORINFO mi{sizeof(MONITORINFO), {}, {}, 0};
             if (GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) {
                 const int max_cw = std::max(kMinClientWidth, static_cast<int>(mi.rcWork.right - mi.rcWork.left) - chrome_w);
                 const int max_ch = std::max(kMinClientHeight, static_cast<int>(mi.rcWork.bottom - mi.rcWork.top) - chrome_h);
                 if (client_width > max_cw || client_height > max_ch) {
-                    const double scale = std::min(double(max_cw) / client_width, double(max_ch) / client_height);
+                    const double scale = std::min(static_cast<double>(max_cw) / client_width, static_cast<double>(max_ch) / client_height);
                     client_width = std::max(kMinClientWidth, static_cast<int>(client_width * scale));
                     client_height = std::max(kMinClientHeight, static_cast<int>(client_height * scale));
                     outer_w = client_width + chrome_w;
@@ -445,19 +426,17 @@ namespace tenhou {
         }
     }
 
-    void Application::SetFullscreen(bool enabled) {
+    void Application::SetFullscreen(const bool enabled) {
         if (fullscreen_ == enabled || !window_) return;
         if (enabled) {
             windowed_style_ = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
             windowed_ex_style_ = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
             windowed_placement_.length = sizeof(WINDOWPLACEMENT);
             GetWindowPlacement(window_, &windowed_placement_);
-            MONITORINFO mi{sizeof(MONITORINFO)};
+            MONITORINFO mi{sizeof(MONITORINFO), {}, {}, 0};
             if (!GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) return;
-            SetWindowLongPtrW(window_, GWL_STYLE,
-                              (windowed_style_ & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN);
-            SetWindowLongPtrW(window_, GWL_EXSTYLE, windowed_ex_style_ & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
-                                                                           WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+            SetWindowLongPtrW(window_, GWL_STYLE, (windowed_style_ & ~(WS_OVERLAPPEDWINDOW)) | WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN);
+            SetWindowLongPtrW(window_, GWL_EXSTYLE, windowed_ex_style_ & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
             SetWindowPos(window_, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
                          mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
                          SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW);
@@ -466,27 +445,25 @@ namespace tenhou {
             SetWindowLongPtrW(window_, GWL_STYLE, windowed_style_ ? windowed_style_ : (kWindowStyle | WS_CLIPCHILDREN));
             SetWindowLongPtrW(window_, GWL_EXSTYLE, windowed_ex_style_);
             SetWindowPlacement(window_, &windowed_placement_);
-            SetWindowPos(window_, nullptr, 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            SetWindowPos(window_, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
             fullscreen_ = false;
         }
         SyncSystemMenu();
         Layout();
     }
 
-    int Application::ResolveTableWidth(int client_width, int client_height) const {
+    int Application::ResolveTableWidth(const int client_width, const int client_height) const {
         if (IsSupportedTableWidth(configured_screen_width_)) return configured_screen_width_;
         return SelectAutoTableWidth(client_width, client_height);
     }
 
-    void Application::ApplyScreenWidth(int next_width) {
+    void Application::ApplyScreenWidth(const int next_width) {
         if (!IsSupportedTableWidth(next_width) || next_width == screen_width_) return;
         screen_width_ = next_width;
         if (table_) table_->ConfigureArtwork(resource_directory_, screen_width_);
         if (lobby_) lobby_->ConfigureArtwork(resource_directory_, screen_width_);
         if (offline_lobby_) offline_lobby_->ConfigureArtwork(resource_directory_, screen_width_);
-        if (view_ == "welcome" && welcome_)
-            welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
+        if (view_ == "welcome" && welcome_) welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
         const auto preferences = ClientPreferences::Load(config_path_);
         if (table_) table_->ApplyPreferences(preferences, PreferenceChange::Artwork);
         if (lobby_) lobby_->ApplyPreferences(preferences, PreferenceChange::Artwork);
@@ -495,10 +472,9 @@ namespace tenhou {
             " setting=" + std::string(FormatScreenSizeSetting(configured_screen_width_)));
     }
 
-    void Application::SyncAutoScreenWidth(int client_width, int client_height) {
+    void Application::SyncAutoScreenWidth(const int client_width, const int client_height) {
         if (configured_screen_width_ != 0) return;
-        const int target = SelectAutoTableWidth(client_width, client_height);
-        if (target != screen_width_) ApplyScreenWidth(target);
+        if (const int target = SelectAutoTableWidth(client_width, client_height); target != screen_width_) ApplyScreenWidth(target);
     }
 
     void Application::Layout() {
@@ -533,15 +509,15 @@ namespace tenhou {
             next[channel] = static_cast<int>(std::min(1.f, music[channel] / music_meter_range_) * kMeterInterior);
         const auto now = MonotonicMs();
         const auto elapsed = last_effect && now >= last_effect ? now - last_effect : 0;
-        next[2] = last_effect ? static_cast<int>(kMeterInterior * std::pow(.8, double(elapsed / kMeterPeriodMs))) : 0;
+        next[2] = last_effect ? static_cast<int>(kMeterInterior * std::pow(.8, static_cast<double>(elapsed) / kMeterPeriodMs)) : 0;
         if (next == audio_bars_) return;
         audio_bars_ = next;
         InvalidateRect(audio_meter_, nullptr, FALSE);
     }
 
-    void Application::PaintAudioMeter(const DRAWITEMSTRUCT &item) {
+    void Application::PaintAudioMeter(const DRAWITEMSTRUCT &item) const {
         const auto &bounds = item.rcItem;
-        const auto brush = reinterpret_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+        const auto brush = static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
         SetDCBrushColor(item.hDC, item.itemState & (ODS_SELECTED | ODS_FOCUS) ? RGB(51, 153, 255) : RGB(51, 51, 51));
         FrameRect(item.hDC, &bounds, brush);
         for (int channel = 0; channel < 3; ++channel)
@@ -578,7 +554,7 @@ namespace tenhou {
         UpdateAudioMeter();
     }
 
-    void Application::LoadResources() {
+    void Application::LoadResources() const {
         if (view_ == "welcome") welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
         else if (view_ == "replay") table_->Reload();
         else if (view_ == "offline_lobby") offline_lobby_->ConfigureArtwork(resource_directory_, screen_width_);
@@ -603,7 +579,7 @@ namespace tenhou {
         Log("VIEW " + view_);
     }
 
-    void Application::Login(bool register_account) {
+    void Application::Login(const bool register_account) {
         if (welcome_->Connecting()) {
             lobby_->Disconnect();
             welcome_->SetLoginState(false, L"已取消连接");
@@ -616,7 +592,7 @@ namespace tenhou {
         ConnectionOptions connection;
         connection.official = welcome_->OfficialServer();
         if (connection.official && !welcome_->HasOfficialId()) {
-            welcome_->SetLoginState(false, L"请输入 19 位天凤官方 ID（IDxxxxxxxx-xxxxxxxx）或 NoName");
+            welcome_->SetLoginState(false, L"请输入 19 位天凤官方 ID 或 NoName");
             return;
         }
         connection.host = connection.official ? "b.tenhou.net" : WideToUtf8(welcome_->Host());
@@ -666,10 +642,11 @@ namespace tenhou {
         } else if (CommDlgExtendedError()) throw std::runtime_error("无法打开牌谱文件选择窗口");
     }
 
-    void Application::Paint(HDC dc) {
+    void Application::Paint(const HDC dc) const
+    {
         RECT bounds{};
         GetClientRect(window_, &bounds);
-        FillRect(dc, &bounds, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        FillRect(dc, &bounds, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
         if (view_ == "welcome" && welcome_) welcome_->Capture(dc);
         else if (view_ == "replay" && table_) table_->Capture(dc);
         else if (view_ == "offline_lobby" && offline_lobby_) offline_lobby_->Capture(dc);
@@ -691,7 +668,7 @@ namespace tenhou {
         Log("CONFIG saved");
     }
 
-    void Application::ApplyPreferences(PreferenceChange change) {
+    void Application::ApplyPreferences(const PreferenceChange change) {
         if (change == PreferenceChange::ScreenSize) {
             configured_screen_width_ = ParseScreenSizeSetting(PreferenceString(config_path_, "STATUS", "SCREENSIZE"));
             if (configured_screen_width_ != 0) {
@@ -719,7 +696,7 @@ namespace tenhou {
     }
 
 
-    LRESULT CALLBACK Application::WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK Application::WindowProc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *application = reinterpret_cast<Application *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             application = static_cast<Application *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -738,7 +715,7 @@ namespace tenhou {
         }
     }
 
-    LRESULT Application::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT Application::HandleMessage(const UINT message, const WPARAM wparam, const LPARAM lparam) {
         if (message == WM_APP + 25) {
             SetView("welcome");
             return 0;
@@ -759,7 +736,7 @@ namespace tenhou {
         if (message == WM_DROPFILES) {
             const auto drop = reinterpret_cast<HDROP>(wparam);
             wchar_t file[32768]{};
-            if (DragQueryFileW(drop, 0, file, static_cast<UINT>(std::size(file))) && view_ != "lobby") {
+            if (DragQueryFileW(drop, 0, file, std::size(file)) && view_ != "lobby") {
                 table_->Load(file);
                 SetView("replay");
             }
@@ -801,17 +778,15 @@ namespace tenhou {
                     auto *bounds = reinterpret_cast<MINMAXINFO *>(lparam);
                     RECT minimum{0, 0, kMinClientWidth, kMinClientHeight};
                     const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
-                    const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
-                    if (AdjustWindowRectExForDpi(&minimum, style, GetMenu(window_) != nullptr, ex_style,
-                                                 GetDpiForWindow(window_))) {
+                    if (const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
+                        AdjustWindowRectExForDpi(&minimum, style, GetMenu(window_) != nullptr, ex_style, GetDpiForWindow(window_))) {
                         bounds->ptMinTrackSize = {minimum.right - minimum.left, minimum.bottom - minimum.top};
                     }
                 }
                 return 0;
             }
             case WM_SYSCOMMAND: {
-                const UINT cmd = static_cast<UINT>(wparam & 0xfff0u);
-                switch (cmd) {
+                switch (static_cast<UINT>(wparam & 0xfff0u)) {
                     case kSysSize1024: ApplyClientSizePreset(1024, 768); return 0;
                     case kSysSize1280: ApplyClientSizePreset(1280, 960); return 0;
                     case kSysSize1440: ApplyClientSizePreset(1440, 1080); return 0;

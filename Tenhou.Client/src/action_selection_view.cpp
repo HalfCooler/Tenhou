@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 namespace tenhou {
-    ActionSelectionView::ActionSelectionView(HWND parent, std::function<void(std::uint64_t, std::size_t)> submit,
+    ActionSelectionView::ActionSelectionView(const HWND parent, std::function<void(std::uint64_t, std::size_t)> submit,
                                              std::function<void()> cancel)
         : submit_(std::move(submit)), cancel_(std::move(cancel)) {
         WNDCLASSEXW wc{sizeof(wc)};
@@ -39,7 +39,7 @@ namespace tenhou {
         if (font_) DeleteObject(font_);
     }
 
-    void ActionSelectionView::Configure(const std::filesystem::path &directory, int width) {
+    void ActionSelectionView::Configure(const std::filesystem::path &directory, const int width) {
         directory_ = directory;
         width_ = width;
         artwork_ = {};
@@ -47,14 +47,13 @@ namespace tenhou {
     }
 
     void ActionSelectionView::Set(const ActionSelection &s, const ActionSnapshot &a, const OnlineState &game,
-                                  bool visible) {
+                                  const bool visible) {
         if (!visible || s.revision != selection_.revision || s.group != selection_.group) {
-            const auto capture = GetCapture();
-            if (capture && (capture == window_ || IsChild(window_, capture))) {
+            if (const auto capture = GetCapture(); capture && (capture == window_ || IsChild(window_, capture))) {
                 SendMessageW(capture, WM_CANCELMODE, 0, 0);
                 ReleaseCapture();
             }
-            for (auto button: buttons_) SendMessageW(button, BM_SETSTATE, FALSE, 0);
+            for (const auto button: buttons_) SendMessageW(button, BM_SETSTATE, FALSE, 0);
             if (s.revision != selection_.revision || s.group != selection_.group) page_ = 0;
         }
         selection_ = s;
@@ -68,15 +67,16 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void ActionSelectionView::Move(RECT r) {
-        const int w = std::min(720L, std::max(1L, r.right - r.left - 16));
-        const int h = std::min(270L, std::max(1L, r.bottom - r.top - 16));
-        MoveWindow(window_, r.left + (r.right - r.left - w) / 2, r.top + (r.bottom - r.top - h) / 2, w, h, TRUE);
+    void ActionSelectionView::Move(const RECT bounds) const
+    {
+        const int w = std::min(720L, std::max(1L, bounds.right - bounds.left - 16));
+        const int h = std::min(270L, std::max(1L, bounds.bottom - bounds.top - 16));
+        MoveWindow(window_, bounds.left + (bounds.right - bounds.left - w) / 2, bounds.top + (bounds.bottom - bounds.top - h) / 2, w, h, TRUE);
     }
 
-    void ActionSelectionView::Focus() { if (IsWindowVisible(window_)) SetFocus(buttons_[0]); }
+    void ActionSelectionView::Focus() const { if (IsWindowVisible(window_)) SetFocus(buttons_[0]); }
 
-    void ActionSelectionView::Arrange() {
+    void ActionSelectionView::Arrange() const {
         if (!buttons_[0]) return;
         RECT r{};
         GetClientRect(window_, &r);
@@ -87,8 +87,7 @@ namespace tenhou {
             ShowWindow(buttons_[i], valid ? SW_SHOW : SW_HIDE);
             EnableWindow(buttons_[i], valid);
             MoveWindow(buttons_[i], 8 + (i % 3) * w, 30 + (i / 3) * h, w - 4, h - 4, TRUE);
-            if (valid) SetWindowTextW(buttons_[i],
-                                      Utf8ToWide(actions_.choices.at(selection_.indices[n]).label).c_str());
+            if (valid) SetWindowTextW(buttons_[i], Utf8ToWide(actions_.choices.at(selection_.indices[n]).label).c_str());
         }
         MoveWindow(buttons_[6], 8, r.bottom - 32, 60, 26, TRUE);
         MoveWindow(buttons_[7], 74, r.bottom - 32, 60, 26, TRUE);
@@ -97,7 +96,7 @@ namespace tenhou {
         EnableWindow(buttons_[7], (page_ + 1) * 6 < selection_.indices.size());
     }
 
-    void ActionSelectionView::Command(int id) {
+    void ActionSelectionView::Command(const int id) {
         if (id == 5609) {
             cancel_();
             return;
@@ -105,8 +104,7 @@ namespace tenhou {
         if (id == 5607 && page_) --page_;
         else if (id == 5608 && (page_ + 1) * 6 < selection_.indices.size()) ++page_;
         else if (id >= 5601 && id <= 5606) {
-            const auto n = page_ * 6 + id - 5601;
-            if (n < selection_.indices.size()) submit_(selection_.revision, selection_.indices[n]);
+            if (const auto n = page_ * 6 + id - 5601; n < selection_.indices.size()) submit_(selection_.revision, selection_.indices[n]);
             return;
         }
         Arrange();
@@ -114,7 +112,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void ActionSelectionView::Paint(HDC dc) {
+    void ActionSelectionView::Paint(const HDC dc) const {
         RECT r{};
         GetClientRect(window_, &r);
         const auto brush = CreateSolidBrush(RGB(20, 40, 40));
@@ -152,8 +150,7 @@ namespace tenhou {
                     std::min(54L, r.bottom - 28);
             for (std::size_t i = 0; i < tiles.size(); ++i) {
                 const auto &im = artwork_.Get({'k', 0, tiles[i].tile, 0}, red_).image;
-                Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
-                                       const_cast<BYTE *>(im.bgra.data()));
+                Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB, const_cast<BYTE *>(im.bgra.data()));
                 graphics.DrawImage(&bitmap, 8 + static_cast<int>(i) * w, 3, w, h);
                 if (tiles[i].context) {
                     Gdiplus::Pen gold(Gdiplus::Color(255, 255, 210, 100), 2);
@@ -175,7 +172,7 @@ namespace tenhou {
         }
     }
 
-    void ActionSelectionView::Capture(HDC dc) {
+    void ActionSelectionView::Capture(HDC dc) const {
         if (!IsWindowVisible(window_)) return;
         POINT point{};
         MapWindowPoints(window_, GetParent(window_), &point, 1);
@@ -185,7 +182,7 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-LRESULT CALLBACK ActionSelectionView::Procedure(HWND w, UINT m, WPARAM wp, LPARAM lp) {
+    LRESULT CALLBACK ActionSelectionView::Procedure(const HWND w, const UINT m, const WPARAM wp, const LPARAM lp) {
         auto *self = reinterpret_cast<ActionSelectionView *>(GetWindowLongPtrW(w, GWLP_USERDATA));
         if (m == WM_NCCREATE) {
             self = static_cast<ActionSelectionView *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
@@ -193,26 +190,15 @@ LRESULT CALLBACK ActionSelectionView::Procedure(HWND w, UINT m, WPARAM wp, LPARA
             SetWindowLongPtrW(w, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
         }
         if (self) {
-            if (m == WM_ERASEBKGND) return 1;
-            if (m == WM_SIZE) {
-                self->Arrange();
-                return 0;
-            }
-            if (m == WM_COMMAND) {
-                self->Command(LOWORD(wp));
-                return 0;
-            }
-            if (m == WM_DRAWITEM) {
-                self->PaintChoice(*reinterpret_cast<DRAWITEMSTRUCT *>(lp));
-                return TRUE;
-            }
-            if (m == WM_PAINT) {
-                self->buffer_.Paint(w, [&](HDC dc) { self->Paint(dc); });
-                return 0;
-            }
-            if (m == WM_PRINTCLIENT) {
-                self->Paint(reinterpret_cast<HDC>(wp));
-                return 0;
+            switch (m)
+            {
+            case WM_ERASEBKGND:  return 1;
+            case WM_SIZE:        self->Arrange(); return 0;
+            case WM_COMMAND:     self->Command(LOWORD(wp)); return 0;
+            case WM_DRAWITEM:    self->PaintChoice(*reinterpret_cast<DRAWITEMSTRUCT*>(lp)); return TRUE;
+            case WM_PAINT:       self->buffer_.Paint(w, [&](const HDC dc) { self->Paint(dc); }); return 0;
+            case WM_PRINTCLIENT: self->Paint(reinterpret_cast<HDC>(wp)); return 0;
+            default: break;
             }
         }
         return DefWindowProcW(w, m, wp, lp);

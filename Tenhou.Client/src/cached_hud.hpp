@@ -47,7 +47,8 @@ namespace tenhou {
                 return;
             }
             const int height = width * 3 / 4;
-            RECT canvas{0, 0, width, height}, clipped{};
+            const RECT canvas{ 0, 0, width, height };
+            RECT clipped{};
             if (!IntersectRect(&clipped, &region, &canvas)) return;
             region = clipped;
             const int rw = region.right - region.left, rh = region.bottom - region.top;
@@ -57,14 +58,14 @@ namespace tenhou {
             GdiFlush();
             const bool layout = width_ == width && Equal(region_, region);
             if (!layout) Invalidate();
-            auto mask = masks_.find(key);
+            const auto mask = masks_.find(key);
             bool reusable = layout && key_ == key && output_.size() == count && mask != masks_.end();
             if (reusable) {
                 ++hits_;
                 for (int y = 0; y < rh && reusable; ++y)
                     for (int x = 0; x < rw; ++x) {
-                        const auto i = static_cast<std::size_t>(y) * rw + x;
-                        if (mask->second[i] == 1 && pixels[(y + region.top) * stride + x + region.left] != input_[i]) {
+                        if (const auto i = static_cast<std::size_t>(y) * rw + x;
+                            mask->second[i] == 1 && pixels[(y + region.top) * stride + x + region.left] != input_[i]) {
                             reusable = false;
                             break;
                         }
@@ -73,8 +74,8 @@ namespace tenhou {
             if (reusable) {
                 for (int y = 0; y < rh; ++y)
                     for (int x = 0; x < rw; ++x) {
-                        const auto i = static_cast<std::size_t>(y) * rw + x;
-                        if (mask->second[i]) pixels[(y + region.top) * stride + x + region.left] = output_[i];
+                        if (const auto i = static_cast<std::size_t>(y) * rw + x; mask->second[i])
+                            pixels[(y + region.top) * stride + x + region.left] = output_[i];
                     }
                 return;
             }
@@ -91,7 +92,7 @@ namespace tenhou {
                                                      output_.data() + static_cast<std::size_t>(y) * rw);
             if (mask == masks_.end()) {
                 std::vector<std::uint32_t> black(count), white(count);
-                const auto render = [&](bool bright, std::vector<std::uint32_t> &result) {
+                const auto render = [&](const bool bright, std::vector<std::uint32_t> &result) {
                     scratch_.Store(target, width, height, [&](HDC dc) {
                         const RECT all{0, 0, width, height};
                         FillRect(dc, &all, static_cast<HBRUSH>(GetStockObject(bright ? WHITE_BRUSH : BLACK_BRUSH)));
@@ -120,7 +121,7 @@ namespace tenhou {
         }
 
     private:
-        static bool Equal(RECT a, RECT b) {
+        static bool Equal(const RECT a, const RECT b) {
             return a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
         }
 

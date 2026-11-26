@@ -4,10 +4,10 @@
 #include <stdexcept>
 
 namespace tenhou {
-    bool ClientPreferences::Checked(int control) const {
+    bool ClientPreferences::Checked(const int control) const {
         for (const auto &item: kPreferenceFlags)
             if (item.control == control)
-                return bool(flags & item.mask) != item.inverted;
+                return static_cast<bool>(flags & item.mask) != item.inverted;
         throw std::runtime_error("Unknown original preference control");
     }
 
@@ -56,8 +56,8 @@ namespace tenhou {
     std::array<float, 3> ClientPreferences::TileColor() const {
         // ASM 00417959/83/ab: float(1/255), stored after integer multiplication.
         return {
-            float(tile_rgb[0] * double(1.0f / 255.0f)), float(tile_rgb[1] * double(1.0f / 255.0f)),
-            float(tile_rgb[2] * double(1.0f / 255.0f))
+            static_cast<float>(tile_rgb[0] * static_cast<double>(1.0f / 255.0f)), static_cast<float>(tile_rgb[1] * static_cast<double>(1.0f / 255.0f)),
+            static_cast<float>(tile_rgb[2] * static_cast<double>(1.0f / 255.0f))
         };
     }
 

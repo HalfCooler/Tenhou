@@ -23,7 +23,7 @@ int main() {
         std::size_t info_count = 0;
         for (const auto &text : kTextDefinitions) {
             Check(ids.insert(text.origin_id).second, "duplicate text OriginId");
-            Check(!text.label.empty() && FindText(text.key) == &text, "semantic key lookup");
+            Check(!text.label.empty() && FindText(text.key) == &text, "semantic Key lookup");
             Check(FindTextByOrigin(text.origin_id) == &text, "legacy adapter lookup");
             const auto *style = FindTextStyle(text.style);
             Check(style && style->font == "HGSeikaishotaiPRO" && style->size_pt > 0, "font/style reference");
@@ -130,10 +130,10 @@ int main() {
         Check(dragon && FindText(dragon->text)->label == "竜七対", "rule name is distinct from display label");
         Check(!FindTextRulePattern("sichuan", "竜七対") && !FindTextRulePattern("guobiao", "unknown"),
             "unknown names remain available for caller fallback");
-        std::cout << "Text catalog: 296 Text, 7 Image, 101 rule mappings checked\n";
+        std::cout << "text catalog: 296 text, 7 Image, 101 rule mappings checked\n";
         return 0;
     } catch (const std::exception &error) {
-        std::cerr << "Text catalog check: " << error.what() << '\n';
+        std::cerr << "text catalog check: " << error.what() << '\n';
         return 1;
     }
 }

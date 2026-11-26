@@ -114,7 +114,7 @@ namespace {
 
             // 30 frames to reveal yaku[0] (id 1), then 54 frames to hit ura pause before id 53!
             // Wait: display yaku has {1, 52, 53} (3 items):
-            // Tick 30 -> reveals yaku[0] (1), next is yaku[1] (52) -> presentation_frames = 55.
+            // tick 30 -> reveals yaku[0] (1), next is yaku[1] (52) -> presentation_frames = 55.
             for (int i = 0; i < 29; ++i) Check(seq.PresentationTick(1010).sounds.empty(), "Early yaku 0 sound");
             auto y0 = seq.PresentationTick(1300);
             Check(seq.shown_yaku() == 1 && y0.sounds == std::vector<unsigned>{109}, "First yaku sound mismatch");

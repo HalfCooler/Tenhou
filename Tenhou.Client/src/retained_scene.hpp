@@ -74,7 +74,7 @@ namespace tenhou {
         }
     }
 
-    // Original 00485b40 bounds overlay unions at 400 pixels. Scale that native
+    // Original 00485b40 bounds overlay unions at 400 pixels. scale that native
     // bound with the selected canvas; fall back to a full frame for complex damage.
     class DirtyRegions {
     public:

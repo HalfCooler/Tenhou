@@ -9,7 +9,7 @@
 namespace tenhou {
     inline std::optional<TextKey> ActionCaptionText(const ReplayEvent &event) {
         if (event.kind == ReplayEventKind::Reach)
-            return event.attributes.at("step") == "1" ? std::optional<TextKey>(TextKey::caption_riichi) : std::nullopt;
+            return event.attributes.at("step") == "1" ? std::optional(TextKey::caption_riichi) : std::nullopt;
         if (event.kind == ReplayEventKind::Win)
             return event.attributes.at("who") == event.attributes.at("fromWho")
                        ? TextKey::caption_tsumo
@@ -42,7 +42,7 @@ namespace tenhou {
     // Pure C++ caption animation state (zero HWND, HDC, or GDI+ dependencies).
     class ActionCaptions {
     public:
-        bool AcceptText(TextKey key, int who) {
+        bool AcceptText(TextKey key, const int who) {
             const auto *definition = FindText(key);
             if (!definition || definition->category != TextCategory::Caption || who < 0 || who > 3) return false;
             ActionCaptionFrame frame;
@@ -54,7 +54,7 @@ namespace tenhou {
             return true;
         }
 
-        bool AcceptResource(unsigned id, int who, const std::string &text = "") {
+        bool AcceptResource(const unsigned id, const int who, const std::string &text = "") {
             if (const auto *definition = FindTextByOrigin(id)) return AcceptText(definition->key, who);
             if (id || text.empty() || who < 0 || who > 3) return false;
             ActionCaptionFrame frame;
@@ -72,7 +72,7 @@ namespace tenhou {
         }
 
         void Clear() { items_.clear(); }
-        bool Active() const { return !items_.empty(); }
+        [[nodiscard]] bool Active() const { return !items_.empty(); }
 
         // LAB_00491ac0 increments on the effect update, never on a repaint.
         void Tick() {
@@ -82,11 +82,11 @@ namespace tenhou {
             }), items_.end());
         }
 
-        std::vector<ActionCaptionFrame> Frames() const {
+        [[nodiscard]] std::vector<ActionCaptionFrame> Frames() const {
             auto result = items_;
             for (auto &item: result) {
-                item.scale = item.tick < 20 ? 2.5f - item.tick * .075f : 1.f;
-                item.alpha = item.tick < 20 ? item.tick * .05f : item.tick >= 60 ? (100 - item.tick) * .025f : 1.f;
+                item.scale = item.tick < 20 ? 2.5f - static_cast<float>(item.tick) * .075f : 1.f;
+                item.alpha = item.tick < 20 ? static_cast<float>(item.tick) * .05f : item.tick >= 60 ? static_cast<float>(100 - item.tick) * .025f : 1.f;
             }
             return result;
         }

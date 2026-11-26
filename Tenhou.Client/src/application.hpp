@@ -1,6 +1,5 @@
 #pragma once
 #include "resource_pack.hpp"
-#include "object_pack.hpp"
 #include <windows.h>
 #include <array>
 #include <cstdint>
@@ -29,6 +28,12 @@ namespace tenhou {
         int initial_width = 0, initial_height = 0;
     };
 
+    struct FreeDeleter {
+        void operator()(void* ptr) const noexcept {
+            if (ptr != nullptr) LocalFree(ptr);
+        }
+    };
+
     Options ParseOptions(int argc, char **argv);
 
     class Application {
@@ -46,24 +51,24 @@ namespace tenhou {
 
         void Layout();
 
-        void LoadResources();
+        void LoadResources() const;
 
         void SetView(const std::string &view);
 
         void Login(bool register_account);
         void OpenReplay();
 
-        void Paint(HDC dc);
+        void Paint(HDC dc) const;
 
         void SaveConfig();
 
         void ApplyPreferences(PreferenceChange change);
         void UpdateAudioMeter();
-        void PaintAudioMeter(const DRAWITEMSTRUCT &item);
+        void PaintAudioMeter(const DRAWITEMSTRUCT &item) const;
         void ShowAudioMenu();
         void SetupSystemMenu();
-        void SyncSystemMenu();
-        void UpdateWindowTitle();
+        void SyncSystemMenu() const;
+        void UpdateWindowTitle() const;
         void ApplyClientSizePreset(int client_width, int client_height);
         void SetFullscreen(bool enabled);
         int ResolveTableWidth(int client_width, int client_height) const;
@@ -74,7 +79,7 @@ namespace tenhou {
         void RotateLogIfNeeded();
         void Log(const std::string &message);
 
-        void Check(bool success, const char *action) const;
+        static void Check(bool success, const char *action);
 
         Options options_;
         std::filesystem::path executable_directory_, config_path_, resource_directory_, log_path_;
