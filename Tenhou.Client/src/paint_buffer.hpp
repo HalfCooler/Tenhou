@@ -197,7 +197,9 @@ namespace tenhou {
                     throw std::runtime_error("Cannot present scaled frame");
                 return;
             }
-            auto current = scene ? scene->Snapshot(width, height, dw, dh) : std::vector<FinalSceneStamp>{};
+            const int ui_w = width > 1440 ? 1440 : width;
+            const int ui_h = width > 1440 ? ui_w * 3 / 4 : height;
+            auto current = scene ? scene->Snapshot(ui_w, ui_h, dw, dh) : std::vector<FinalSceneStamp>{};
             RECT dirty{};
             const auto add = [&](RECT r) {
                 if (IsRectEmpty(&r)) return;
@@ -228,7 +230,7 @@ namespace tenhou {
                 if (!IsRectEmpty(&dirty)) final_composite_->Compose(target, dw, dh, [&](HDC dc) {
                     IntersectClipRect(dc, dirty.left, dirty.top, dirty.right, dirty.bottom);
                     scaled_->CopyTo(dc, dirty);
-                    if (scene) scene->Paint(dc, width, height, dw, dh, dirty);
+                    if (scene) scene->Paint(dc, ui_w, ui_h, dw, dh, dirty);
                 });
                 final_stamps_ = std::move(current);
                 if (!BitBlt(target, destination.left, destination.top, dw, dh, final_composite_->memory_, 0, 0, SRCCOPY))

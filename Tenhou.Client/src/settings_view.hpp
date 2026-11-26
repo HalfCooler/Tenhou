@@ -7,7 +7,7 @@
 #include <functional>
 
 namespace tenhou {
-    enum class PreferenceChange { Other, Sound, Artwork, Initial, MusicPreviewBegin, MusicPreviewEnd };
+    enum class PreferenceChange { Other, Sound, Artwork, ScreenSize, Initial, MusicPreviewBegin, MusicPreviewEnd };
 
     class SettingsView {
     public:
@@ -65,6 +65,10 @@ namespace tenhou {
 
         void SaveReplaySettings(HWND page);
 
+        void InitScreen(HWND page);
+
+        void ScreenCommand(HWND page, int control);
+
         void InitAppearance(HWND page, int id);
 
         void Appearance(HWND page, int id, int command);
@@ -77,7 +81,7 @@ namespace tenhou {
         std::filesystem::path config_, resources_;
         std::function<void(PreferenceChange)> changed_;
         std::function<void(const std::string &)> log_;
-        std::array<Page, 6> pages_{};
+        std::array<Page, 7> pages_{};
         ReplayAudio audio_;
         ReplaySoundBank sounds_;
         bool initializing_ = false;

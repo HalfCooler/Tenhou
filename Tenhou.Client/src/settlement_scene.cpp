@@ -46,8 +46,9 @@ namespace tenhou {
         int WinHeight(const SettlementReceipt &r, double scale) {
             // The native AGARI window adds one resource-height per yaku row and
             // reserves separate room for the visible and hidden indicators.
+            const int row_h = scale == 1.0 ? 24 : static_cast<int>(std::lround(34.0 * scale / 1.4));
             return static_cast<int>((370 + (r.dora.empty() ? 0 : 70) + (r.ura.empty() ? 0 : 80)) * scale) +
-                   (scale == 1 ? 24 : 34) * WinRows(r);
+                   row_h * WinRows(r);
         }
 
         SettlementScene BuildRoundSettlement(const SettlementReceipt &r, const std::array<std::string, 4> &names,
@@ -56,7 +57,7 @@ namespace tenhou {
             SettlementScene scene;
             scene.width = layout.width;
             scene.height = layout.width * 3 / 4;
-            const double scale = layout.width == 1440 ? 1.4 : 1.0;
+            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (double(layout.width) / 1440.0);
             const auto px = [&](double n) { return static_cast<int>(n * scale); };
             const bool riichi_win = r.who >= 0 && !r.generic;
             const int height = riichi_win ? WinHeight(r, scale) : px(640);
@@ -415,7 +416,7 @@ namespace tenhou {
     }
 
     RECT SettlementConfirmRect(const SettlementState &s, std::size_t selected, int width) {
-        const double scale = width == 1440 ? 1.4 : 1;
+        const double scale = width == 1024 ? 1.0 : 1.4 * (double(width) / 1440.0);
         const auto px = [&](int n) { return static_cast<int>(n * scale); };
         const bool round = selected < s.receipts.size();
         const int height = !round ? px(480) : s.receipts[selected].who < 0 ? px(300) :
@@ -446,7 +447,7 @@ namespace tenhou {
         const auto name = [&](int seat) { return names[seat].empty() ? "Seat " + std::to_string(seat) : names[seat]; };
         if (selected == s.receipts.size() && s.has_final) {
             // FUN_004aad30 OWARI @004ac129..004ac168: 450 x 480, centered.
-            const double scale = layout.width == 1440 ? 1.4 : 1.0;
+            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (double(layout.width) / 1440.0);
             const auto px = [&](double v) { return static_cast<int>(v * scale); };
             const int left = (scene.width - px(450)) / 2, top = (scene.height - px(480)) / 2, center = scene.width / 2;
             scene.panel = {left, top, left + px(450), top + px(480)};

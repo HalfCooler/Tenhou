@@ -250,7 +250,8 @@ namespace tenhou {
         MoveWindow(choices_, 8, 4, std::max(50L, r.right - 160), 220, TRUE);
         ShowWindow(choices_, multiple || details ? SW_SHOW : SW_HIDE);
         const auto target = Target();
-        const double unit = canvas_ == 1440 ? 1.4 : 1.0, fit = double(target.right - target.left) / canvas_;
+        const double unit = canvas_ == 1024 ? 1.0 : 1.4 * (double(canvas_) / 1440.0);
+        const double fit = double(target.right - target.left) / canvas_;
         const int center = target.left + (target.right - target.left) / 2;
         const auto confirm = SettlementConfirmRect(sequencer_.state(), sequencer_.selected(), canvas_);
         const int x = target.left + static_cast<int>(confirm.left * fit),
@@ -484,16 +485,26 @@ namespace tenhou {
             graphics.ResetTransform();
             graphics.SetPageUnit(Gdiplus::UnitPixel);
             const bool sd = scene.width == 1024;
+            const int ui_w = sd ? 1024 : 1440;
+            const int ui_h = ui_w * 3 / 4;
             const auto context = TextRenderContext::Viewport(
-                scene.width, scene.height,
+                ui_w, ui_h,
                 Gdiplus::RectF(static_cast<float>(target.left), static_cast<float>(target.top),
                                static_cast<float>(target.right - target.left),
                                static_cast<float>(target.bottom - target.top)),
                 sd, GetDpiForWindow(window_));
+            const double to_ui = scene.width > 1440 ? 1440.0 / double(scene.width) : 1.0;
             for (const auto &item: scene.text) {
                 if (!item.visible || item.spans.empty()) continue;
+                auto scaled_item = item;
+                if (to_ui != 1.0) {
+                    scaled_item.rect.left = static_cast<LONG>(std::lround(item.rect.left * to_ui));
+                    scaled_item.rect.top = static_cast<LONG>(std::lround(item.rect.top * to_ui));
+                    scaled_item.rect.right = static_cast<LONG>(std::lround(item.rect.right * to_ui));
+                    scaled_item.rect.bottom = static_cast<LONG>(std::lround(item.rect.bottom * to_ui));
+                }
                 auto &renderer = display_artwork_.Text();
-                for (const auto &run: LayoutSettlementText(renderer, item, sd)) renderer.Draw(graphics, context, run);
+                for (const auto &run: LayoutSettlementText(renderer, scaled_item, sd)) renderer.Draw(graphics, context, run);
             }
             if (sequencer_.confirm_deadline() && sequencer_.confirm_seconds() > 0) {
                 RECT button{};

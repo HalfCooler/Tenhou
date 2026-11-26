@@ -272,7 +272,7 @@ namespace tenhou {
     }
 
     void OfflineLobbyView::ConfigureArtwork(const std::filesystem::path &resources, int canvas_width) {
-        certificate_scale_ = canvas_width == 1440 ? 1.4f : 1.f;
+        certificate_scale_ = canvas_width == 1024 ? 1.f : 1.4f;
         certificate_width_ = static_cast<int>(580 * certificate_scale_);
         certificate_height_ = static_cast<int>(470 * certificate_scale_);
         certificate_image_.reset();
@@ -908,18 +908,8 @@ namespace tenhou {
     void OfflineLobbyView::PaintPanel(HDC dc) {
         const RECT panel{0, 0, kPanelWidth, kPanelHeight};
         FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
-        const bool use_hd = ClientPreferences::Load(config_).hd_artwork;
-        const auto &frame = use_hd ? artwork_.GetHd(592) : artwork_.Get(592);
-        if (frame.width != kPanelWidth || frame.height != kPanelHeight) {
-            Gdiplus::Bitmap bmp(frame.width, frame.height, frame.width * 4, PixelFormat32bppARGB,
-                                const_cast<BYTE *>(frame.bgra.data()));
-            Gdiplus::Graphics g(dc);
-            g.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-            g.DrawImage(&bmp, Gdiplus::Rect(0, 0, kPanelWidth, kPanelHeight),
-                        0, 0, frame.width, frame.height, Gdiplus::UnitPixel);
-        } else {
-            ImageAt(dc, frame, 0, 0);
-        }
+        const auto &frame = artwork_.Get(592);
+        ImageAt(dc, frame, 0, 0);
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, font_);
         std::wstring title = Text(Label::lobby_title);

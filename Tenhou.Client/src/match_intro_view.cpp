@@ -175,6 +175,9 @@ namespace tenhou {
         try {
             const int h = width_ * 3 / 4;
             if (background_.bgra.empty()) background_ = BuildBackground(ResourceManager(directory_).Path(AssetId::Background), width_, h);
+            const int ui_w = width_ == 1024 ? 1024 : 1440;
+            const int ui_h = ui_w * 3 / 4;
+            const float hud_scale = static_cast<float>(width_) / static_cast<float>(ui_w);
             FinalScene scene(artwork_.Text(), width_ == 1024, GetDpiForWindow(window_));
             const float hd = width_ == 1024 ? 1.4f : 1.f;
             const auto image = [&](std::string key, Gdiplus::RectF bounds, std::function<void(Gdiplus::Graphics &)> draw) {
@@ -188,8 +191,9 @@ namespace tenhou {
                 g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
                 Gdiplus::Bitmap bg(width_, h, width_ * 4, PixelFormat32bppARGB, background_.bgra.data());
                 g.DrawImage(&bg, 0, 0);
+                g.ScaleTransform(hud_scale, hud_scale);
                 if (state_.initialized) {
-                    const auto hud = BuildOriginalHud(state_, width_);
+                    const auto hud = BuildOriginalHud(state_, ui_w);
                     artwork_.Sprite(g, 589, hud.panel[0], hud.panel[1]);
                     const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
                     const float u = hud.scale;
@@ -211,8 +215,8 @@ namespace tenhou {
             }
             artwork_.AppendChrome(scene, type_, {true, false, false, false}, state_.variant);
             artwork_.AppendStatus(scene, state_);
-            const float u = width_ == 1440 ? 1.4f : 1.0f;
-            const float left = width_ / 2.0f - 270 * u, top = h / 2.0f - 200 * u;
+            const float u = ui_w == 1440 ? 1.4f : 1.0f;
+            const float left = ui_w / 2.0f - 270 * u, top = ui_h / 2.0f - 200 * u;
             image("intro-panel", {left, top, 540 * u, 400 * u}, [=](Gdiplus::Graphics &g) {
                 Gdiplus::SolidBrush shade(Gdiplus::Color(220, 0, 0, 0));
                 g.FillRectangle(&shade, left, top, 540 * u, 400 * u);
@@ -243,7 +247,7 @@ namespace tenhou {
                 {left + 304 * u, top + 350 * u, 16 * u, 10 * u}, [=](Gdiplus::Graphics &g) {
                     Text(g, std::to_wstring(seconds_), left + 304 * u, top + 350 * u, 16 * u, 10 * u, 8 * u, L"System");
                 });
-            scene.Paint(dc, width_, h, r.right, r.bottom, r);
+            scene.Paint(dc, ui_w, ui_h, r.right, r.bottom, r);
         } catch (const std::exception &e) {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, RGB(255, 190, 160));

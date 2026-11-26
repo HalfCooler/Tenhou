@@ -2,8 +2,7 @@
 #include "action_captions.hpp"
 #include "background.hpp"
 #include "gdi_table_renderer.hpp"
-#include "hd_tile_atlas.hpp"
-#include "hd_tile_pipeline.hpp"
+#include "window_layout.hpp"
 #include "win32_utf.hpp"
 #include <d2d1_1.h>
 #include <d2d1_1helper.h>
@@ -163,8 +162,6 @@ namespace tenhou {
         }
 
         bool warp_only, reset_requested = false, reference = false, using_hardware = false;
-        bool hd_active = false;
-        int render_w = 1440, render_h = 1080;
         unsigned sync_interval = 1;
         BenchStats bench_stats{};
         std::filesystem::path directory, config;
@@ -174,7 +171,6 @@ namespace tenhou {
         DisplayArtwork art;
         TileShadowLayer shadows;
         Image background;
-        HdTilePipeline hd_pipeline;
         std::unique_ptr<GdiTableRenderer> fallback;
         std::size_t hud_hits = 0, presented_frames = 0, device_generation = 0;
 
@@ -190,9 +186,7 @@ namespace tenhou {
 
         std::list<TileTexture> tile_lru;
         std::unordered_map<TileKey, std::list<TileTexture>::iterator, TileKeyHash> tile_index;
-        std::unordered_map<std::uint32_t, Bitmap> body_textures;
         std::unordered_map<unsigned, Bitmap> sprites;
-        std::unordered_map<unsigned, Bitmap> hd_sprites;
         std::unordered_map<const TextRasterPixels *, std::pair<Glyph, Bitmap>> glyphs;
         std::map<std::tuple<int, int, int, bool, bool, bool, bool, unsigned, std::string>, Bitmap> legacy_buttons;
         std::size_t tile_bytes = 0, frame_number = 0;
@@ -264,9 +258,7 @@ namespace tenhou {
             auto_gradients = {};
             auto_gradient_w = auto_gradient_h = 0;
             tile_index.clear(); tile_lru.clear(); tile_bytes = 0;
-            body_textures.clear();
             sprites.clear();
-            hd_sprites.clear();
             glyphs.clear();
             legacy_buttons.clear();
             backdrop.Reset(); shadow_texture.Reset(); shadow_revision = 0;
@@ -281,8 +273,6 @@ namespace tenhou {
 
         void ResetDevice() {
             if (dc) dc->SetTarget(nullptr);
-            hd_pipeline.Reset();
-            hd_active = false;
             ResetTextures();
             offscreen_target.Reset(); offscreen.Reset(); staging.Reset(); read_width = read_height = 0;
             CloseFrameWaitable();
@@ -533,22 +523,6 @@ namespace tenhou {
             return texture.Get();
         }
 
-        ID2D1Bitmap1 *SpriteHd(unsigned id) {
-            auto &texture = hd_sprites[id];
-            if (!texture) texture = Upload(art.GetHd(id));
-            return texture.Get();
-        }
-
-        ID2D1Bitmap1 *TileBodyBitmap(const TableTile &tile) {
-            const auto raw_key = tiles.geometry().ImageKey(tile, false);
-            const unsigned variant = (raw_key >> 16) & 0xff;
-            const unsigned body_variant = (variant == 37) ? 37u : 34u;
-            const std::uint32_t body_key = (raw_key & 0xff00ffffu) | (body_variant << 16);
-            auto &bmp = body_textures[body_key];
-            if (!bmp) bmp = Upload(tiles.GetBody(tile).image);
-            return bmp.Get();
-        }
-
         ID2D1Bitmap1 *Tile(const TableTile &tile, bool red, const ShadowMask *received = nullptr,
                            int shadow_x = 0, int shadow_y = 0) {
             const TileKey key{tiles.geometry().ImageKey(tile, red),
@@ -563,105 +537,6 @@ namespace tenhou {
                                      : Upload(image);
             const std::size_t bytes = image.bgra.size();
             tile_lru.push_front({key, std::move(bitmap), bytes, frame_number});
-            tile_index.emplace(key, tile_lru.begin());
-            tile_bytes += bytes;
-            return tile_lru.front().bitmap.Get();
-        }
-
-        // Composes a target-resolution HD tile texture (blank body + D3D11 4-point
-        // projective homography SVG face + optional received shadow modulation).
-        // Must be called OUTSIDE any active dc->BeginDraw() block.
-        ID2D1Bitmap1 *TileHd(const TableTile &tile, bool red, float sx, float sy,
-                             const ShadowMask *received = nullptr, int shadow_x = 0, int shadow_y = 0) {
-            const std::uint32_t img_key = tiles.geometry().ImageKey(tile, red);
-            const TileKey key{img_key, reinterpret_cast<std::uintptr_t>(received), shadow_x, shadow_y};
-            if (const auto it = tile_index.find(key); it != tile_index.end()) {
-                it->second->used = frame_number;
-                tile_lru.splice(tile_lru.begin(), tile_lru, it->second);
-                return it->second->bitmap.Get();
-            }
-
-            const unsigned variant = (img_key >> 16) & 0xff;
-            const int slice = HdTileFaceSlice(variant);
-            const HdTileFaceQuad *quad = (slice >= 0) ? FindHdTileFaceQuad(tile.family, tile.slot, tile.direction)
-                                                      : nullptr;
-            const auto &body_img = tiles.GetBody(tile).image;
-            const int tw = std::max(1, static_cast<int>(std::ceil(body_img.width * sx)));
-            const int th = std::max(1, static_cast<int>(std::ceil(body_img.height * sy)));
-
-            D3D11_TEXTURE2D_DESC desc{};
-            desc.Width = static_cast<UINT>(tw);
-            desc.Height = static_cast<UINT>(th);
-            desc.MipLevels = 1;
-            desc.ArraySize = 1;
-            desc.Format = format;
-            desc.SampleDesc.Count = 1;
-            desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-
-            ComPtr<ID3D11Texture2D> tex;
-            Check(d3d->CreateTexture2D(&desc, nullptr, &tex), "Cannot allocate HD tile texture");
-            ComPtr<IDXGISurface> dxgi_surface;
-            Check(tex.As(&dxgi_surface), "Cannot query HD tile DXGI surface");
-            Bitmap tile_bmp;
-            Check(dc->CreateBitmapFromDxgiSurface(
-                      dxgi_surface.Get(), Properties(D2D1_BITMAP_OPTIONS_TARGET), &tile_bmp),
-                  "Cannot bind HD tile bitmap");
-
-            ID2D1Bitmap1 *body_bmp = TileBodyBitmap(tile);
-            DrawOn(tile_bmp.Get(), [&] {
-                dc->Clear(D2D1::ColorF(0, 0, 0, 0));
-                dc->DrawBitmap(body_bmp, Box(0.0f, 0.0f, body_img.width * sx, body_img.height * sy),
-                               1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-            });
-
-            if (quad) {
-                ComPtr<ID3D11RenderTargetView> rtv;
-                Check(d3d->CreateRenderTargetView(tex.Get(), nullptr, &rtv), "Cannot create HD tile RTV");
-                hd_pipeline.DrawPerspectiveFace(immediate.Get(), rtv.Get(), tw, th, slice, *quad, sx, sy);
-            } else if (variant != 34 && variant != 37) {
-                // Unexpected slot without quad entry: fall back to classic sprite upscaled.
-                auto classic_bmp = Upload(tiles.Get(tile, red).image);
-                DrawOn(tile_bmp.Get(), [&] {
-                    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
-                    dc->DrawBitmap(classic_bmp.Get(), Box(0.0f, 0.0f, body_img.width * sx, body_img.height * sy),
-                                   1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                });
-            }
-
-            if (received && preferences.tile_shadow > 0) {
-                const auto palette = OriginalShadowPalette(preferences.tile_shadow);
-                Bytes shadow_bgra(static_cast<std::size_t>(body_img.width) * body_img.height * 4, 0);
-                bool any_shadow = false;
-                for (int row = std::max(0, received->y - shadow_y);
-                     row < std::min(body_img.height, received->y + received->height - shadow_y); ++row) {
-                    for (int col = std::max(0, received->x - shadow_x);
-                         col < std::min(body_img.width, received->x + received->width - shadow_x); ++col) {
-                        const unsigned alpha =
-                            palette[received->pixels[static_cast<std::size_t>(row + shadow_y - received->y) *
-                                                         received->stride +
-                                                     col + shadow_x - received->x] +
-                                    2] >>
-                            24;
-                        if (alpha) {
-                            shadow_bgra[(static_cast<std::size_t>(row) * body_img.width + col) * 4 + 3] =
-                                static_cast<std::uint8_t>(alpha);
-                            any_shadow = true;
-                        }
-                    }
-                }
-                if (any_shadow) {
-                    auto shadow_bmp = Upload(shadow_bgra.data(), body_img.width, body_img.height);
-                    DrawOn(tile_bmp.Get(), [&] {
-                        dc->SetTransform(D2D1::Matrix3x2F::Scale(sx, sy));
-                        dc->DrawImage(static_cast<ID2D1Image *>(shadow_bmp.Get()), nullptr, nullptr,
-                                      D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-                                      D2D1_COMPOSITE_MODE_SOURCE_ATOP);
-                    });
-                }
-            }
-
-            const std::size_t bytes = static_cast<std::size_t>(tw) * static_cast<std::size_t>(th) * 4;
-            tile_lru.push_front({key, std::move(tile_bmp), bytes, frame_number});
             tile_index.emplace(key, tile_lru.begin());
             tile_bytes += bytes;
             return tile_lru.front().bitmap.Get();
@@ -701,7 +576,7 @@ namespace tenhou {
             DrawBitmap(entry.second.Get(), raster.bounds.X, raster.bounds.Y, float(std::clamp(run.opacity, 0.0, 1.0)));
         }
 
-        void PreResolveTiles(const TableRenderFrame &frame, std::size_t begin, std::size_t end, float sx, float sy) {
+        void PreResolveTiles(const TableRenderFrame &frame, std::size_t begin, std::size_t end) {
             if (resolved_tiles.size() < frame.tiles.size()) resolved_tiles.resize(frame.tiles.size(), nullptr);
             for (std::size_t i = begin; i < end; ++i) {
                 const auto &placed = frame.tiles[i];
@@ -712,25 +587,22 @@ namespace tenhou {
                 const ShadowMask *received = shadow ? shadow->received : nullptr;
                 const int shx = shadow ? placed.x - shadow->dx : 0;
                 const int shy = shadow ? placed.y - shadow->dy : 0;
-                resolved_tiles[i] = hd_active ? TileHd(placed.tile, red, sx, sy, received, shx, shy)
-                                              : Tile(placed.tile, red, received, shx, shy);
+                resolved_tiles[i] = Tile(placed.tile, red, received, shx, shy);
             }
         }
 
-        void PreResolveFlightsAndDora(const TableRenderFrame &frame, float sx, float sy) {
+        void PreResolveFlightsAndDora(const TableRenderFrame &frame) {
             if (resolved_tiles.size() < frame.tiles.size()) resolved_tiles.resize(frame.tiles.size(), nullptr);
             for (const auto index: TableFlightOrder(frame.tiles)) {
                 const auto &placed = frame.tiles[index];
                 const auto &flight = *placed.flight;
-                resolved_tiles[index] = hd_active ? TileHd(flight.sprite, frame.red_tiles, sx, sy)
-                                                  : Tile(flight.sprite, frame.red_tiles);
+                resolved_tiles[index] = Tile(flight.sprite, frame.red_tiles);
                 if (!flight.cover_landing) continue;
                 for (std::size_t i = index + 1; i < frame.tiles.size(); ++i) {
                     const auto &cover = frame.tiles[i];
                     if (cover.flight) continue;
                     // Ensure unshaded face texture exists in cache for landing cover pass.
-                    if (hd_active) (void) TileHd(cover.tile, frame.red_tiles, sx, sy);
-                    else (void) Tile(cover.tile, frame.red_tiles);
+                    (void) Tile(cover.tile, frame.red_tiles);
                 }
             }
             resolved_dora.clear();
@@ -738,13 +610,12 @@ namespace tenhou {
                 resolved_dora.reserve(frame.state.dora_indicators.size());
                 for (const int dora: frame.state.dora_indicators) {
                     const TableTile t{'k', 0, dora, 0};
-                    resolved_dora.push_back(hd_active ? TileHd(t, frame.red_tiles, sx, sy)
-                                                      : Tile(t, frame.red_tiles));
+                    resolved_dora.push_back(Tile(t, frame.red_tiles));
                 }
             }
         }
 
-        void DrawFlights(const TableRenderFrame &frame, float sx, float sy) {
+        void DrawFlights(const TableRenderFrame &frame) {
             for (const auto index: TableFlightOrder(frame.tiles)) {
                 const auto &placed = frame.tiles[index];
                 const auto &flight = *placed.flight;
@@ -752,38 +623,37 @@ namespace tenhou {
                 const auto bsz = bitmap->GetPixelSize();
                 for (unsigned i = 0; i < flight.count; ++i)
                     DrawBitmap(bitmap,
-                               Box((placed.x + flight.offsets[i].x) * sx,
-                                   (placed.y + flight.offsets[i].y) * sy,
+                               Box(float(placed.x + flight.offsets[i].x),
+                                   float(placed.y + flight.offsets[i].y),
                                    float(bsz.width), float(bsz.height)),
                                flight.opacity);
                 if (!flight.cover_landing) continue;
-                const auto &native_img = tiles.GetBody(flight.sprite).image;
+                const auto &native_img = tiles.Get(flight.sprite, frame.red_tiles).image;
                 const auto bounds = TileBounds(placed, native_img.width, native_img.height);
                 const auto landing = TileBounds({placed.tile, flight.landing_x, flight.landing_y, flight},
                                                 native_img.width, native_img.height);
                 RECT patch{};
                 if (!IntersectRect(&patch, &landing, &bounds)) continue;
                 AxisClip clip(*dc.Get(),
-                              Box(patch.left * sx, patch.top * sy,
-                                  (patch.right - patch.left) * sx, (patch.bottom - patch.top) * sy));
+                              Box(float(patch.left), float(patch.top),
+                                  float(patch.right - patch.left), float(patch.bottom - patch.top)));
                 for (std::size_t i = index + 1; i < frame.tiles.size(); ++i) {
                     const auto &cover = frame.tiles[i];
                     if (cover.flight) continue;
-                    // Look up pre-resolved unshaded tile (guaranteed cached by PreResolveFlightsAndDora).
                     const TileKey ckey{tiles.geometry().ImageKey(cover.tile, frame.red_tiles), 0, 0, 0};
                     const auto cit = tile_index.find(ckey);
                     if (cit == tile_index.end()) continue;
                     auto *face = cit->second->bitmap.Get();
-                    const auto &c_native = tiles.GetBody(cover.tile).image;
+                    const auto &c_native = tiles.Get(cover.tile, frame.red_tiles).image;
                     if (Overlaps(patch, TileBounds(cover, c_native.width, c_native.height))) {
                         const auto fsz = face->GetPixelSize();
-                        DrawBitmap(face, Box(cover.x * sx, cover.y * sy, float(fsz.width), float(fsz.height)));
+                        DrawBitmap(face, Box(float(cover.x), float(cover.y), float(fsz.width), float(fsz.height)));
                     }
                 }
             }
         }
 
-        void EnsureAutoGradients(int rw, int rh, float sx, float sy) {
+        void EnsureAutoGradients(int rw, int rh) {
             if (auto_gradients[0] && auto_gradient_w == rw && auto_gradient_h == rh) return;
             const D2D1_GRADIENT_STOP stops[]{
                 {0.0f, D2D1::ColorF(0u, 0.0f)},
@@ -795,8 +665,8 @@ namespace tenhou {
                 const RECT r = OriginalAutoButtonRect(width, i);
                 auto_gradients[i].Reset();
                 Check(dc->CreateLinearGradientBrush(
-                          D2D1::LinearGradientBrushProperties(D2D1::Point2F(r.left * sx, r.top * sy),
-                                                              D2D1::Point2F(r.left * sx, r.bottom * sy)),
+                          D2D1::LinearGradientBrushProperties(D2D1::Point2F(float(r.left), float(r.top)),
+                                                              D2D1::Point2F(float(r.left), float(r.bottom))),
                           collection.Get(), &auto_gradients[i]),
                       "Cannot create auto button gradient brush");
             }
@@ -804,12 +674,12 @@ namespace tenhou {
             auto_gradient_h = rh;
         }
 
-        void DrawAutoChrome(int hovered, int rw, int rh, float sx, float sy) {
-            EnsureAutoGradients(rw, rh, sx, sy);
-            const float stroke = hd_active ? std::max(1.0f, std::min(sx, sy)) : 1.0f;
+        void DrawAutoChrome(int hovered, int rw, int rh) {
+            EnsureAutoGradients(rw, rh);
+            const float stroke = width > 1440 ? float(width) / 1440.0f : 1.0f;
             for (int i = 0; i < 4; ++i) {
                 const RECT r = OriginalAutoButtonRect(width, i);
-                const float x0 = r.left * sx, y0 = r.top * sy, x1 = r.right * sx, y1 = r.bottom * sy;
+                const float x0 = float(r.left), y0 = float(r.top), x1 = float(r.right), y1 = float(r.bottom);
                 dc->FillRectangle(D2D1::RectF(x0, y0, x1, y1), auto_gradients[i].Get());
                 brush->SetColor(hovered == i ? D2D1::ColorF(0xff9933u, 1.0f)
                                              : D2D1::ColorF(0u, float(0x11) / 255.0f));
@@ -819,7 +689,7 @@ namespace tenhou {
             }
         }
 
-        void PrepareHud(const TableRenderFrame &frame, int rw, int rh, float sx, float sy, const std::string &metadata) {
+        void PrepareHud(const TableRenderFrame &frame, int rw, int rh, float hud_scale, const std::string &metadata) {
             if (hud_text && metadata == hud_stamp) { ++hud_hits; return; }
             ++bench_stats.hud_rebuilds;
 
@@ -827,13 +697,11 @@ namespace tenhou {
             Gdiplus::Bitmap bitmap(rw, rh, rw * 4, PixelFormat32bppPARGB, pixels.data());
             Gdiplus::Graphics g(&bitmap);
             g.SetPageUnit(Gdiplus::UnitPixel);
-            const float hsx = hd_active ? sx : 1.0f;
-            const float hsy = hd_active ? sy : 1.0f;
             std::vector<HudSprite> commands;
             art.PaintHudImages(g, frame.state, [&](unsigned id, const Image &im, int x, int y, const auto &t) {
                 commands.push_back({id, x, y, im.width, im.height, t});
-            }, hsx, hsy);
-            art.PaintNukiCounts(g, frame.state, tiles, hsx, hsy);
+            }, hud_scale, hud_scale);
+            art.PaintNukiCounts(g, frame.state, tiles, hud_scale, hud_scale);
             g.Flush(Gdiplus::FlushIntentionSync);
             hud_text = Upload(pixels.data(), rw, rh);
             hud_sprites = std::move(commands);
@@ -944,14 +812,16 @@ namespace tenhou {
             }
         }
 
-        void UpdateShadows(const TableRenderFrame &frame) {
-            if (!preferences.tile_shadow) {
+        void UpdateShadows(const TableRenderFrame &frame, int h) {
+            const auto *pack = preferences.tile_shadow ? ResolveShadowPack(directory, width) : nullptr;
+            if (!preferences.tile_shadow || !pack) {
                 if (shadow_valid) {
                     cached_shadows.clear();
                     shadow_tile_keys.clear();
                     shadow_valid = false;
                     ++shadow_generation;
                 }
+                shadow_texture.Reset();
                 tile_shadow_ptrs.assign(frame.tiles.size(), nullptr);
                 return;
             }
@@ -966,12 +836,12 @@ namespace tenhou {
             if (!shadow_valid || cached_shadow_strength != preferences.tile_shadow ||
                 scratch_shadow_keys != shadow_tile_keys) {
                 ++bench_stats.shadow_rebuilds;
-                cached_shadows = BuildTileShadows(frame.tiles, tiles, ShadowPack::Embedded());
+                cached_shadows = BuildTileShadows(frame.tiles, tiles, *pack);
                 shadow_tile_keys = scratch_shadow_keys;
                 cached_shadow_strength = preferences.tile_shadow;
                 shadow_valid = true;
                 ++shadow_generation;
-                if (const auto *image = shadows.Raster(cached_shadows, preferences.tile_shadow)) {
+                if (const auto *image = shadows.Raster(cached_shadows, preferences.tile_shadow, width, h)) {
                     if (!shadow_texture || shadow_revision != shadows.revision()) {
                         const auto dirty = shadows.last_dirty();
                         if (shadow_texture && shadow_revision + 1 == shadows.revision() &&
@@ -998,7 +868,7 @@ namespace tenhou {
                     shadow_texture.Reset();
                 }
             } else if (!shadow_texture) {
-                if (const auto *image = shadows.Raster(cached_shadows, preferences.tile_shadow)) {
+                if (const auto *image = shadows.Raster(cached_shadows, preferences.tile_shadow, width, h)) {
                     shadow_texture = Upload(image->bgra.data(), image->width, image->height);
                     shadow_revision = shadows.revision();
                 }
@@ -1018,15 +888,14 @@ namespace tenhou {
             }
         }
 
-        void DrawStationaryRange(const TableRenderFrame &frame, std::size_t begin, std::size_t end,
-                                 float sx, float sy) {
+        void DrawStationaryRange(const TableRenderFrame &frame, std::size_t begin, std::size_t end) {
             for (std::size_t i = begin; i < end; ++i) {
                 const auto &placed = frame.tiles[i];
                 if (placed.flight) continue;
                 const bool missing = frame.online_mode && std::string_view(placed.tile.role) == "missing_suit";
                 const auto color = i < frame.tile_colors.size() ? frame.tile_colors[i] : HandColor::Normal;
                 auto *bitmap = resolved_tiles[i];
-                const float x = placed.x * sx, y = placed.y * sy;
+                const float x = float(placed.x), y = float(placed.y);
                 DrawTile(bitmap, x, y, color);
                 if (missing) {
                     const auto size = bitmap->GetPixelSize();
@@ -1038,11 +907,11 @@ namespace tenhou {
 
         void EnsureBase(const TableRenderFrame &frame, int h) {
             if (!backdrop) backdrop = Upload(background);
-            UpdateShadows(frame);
+            UpdateShadows(frame, h);
 
-            const int rw = render_w, rh = render_h;
-            const float sx = float(rw) / float(width);
-            const float sy = float(rh) / float(h);
+            const int rw = width, rh = h;
+            const int ui_w = UiDesignWidth(width);
+            const float hud_scale = float(rw) / float(ui_w);
 
             bool has_flights = false;
             std::size_t split_idx = frame.tiles.size();
@@ -1084,7 +953,7 @@ namespace tenhou {
             const int hovered = frame.interaction ? frame.interaction->hovered_button : -1;
             std::string active_hint, active_countdown;
             PrepareInteraction(frame, h, active_hint, active_countdown);
-            PrepareHud(frame, rw, rh, sx, sy, metadata);
+            PrepareHud(frame, rw, rh, hud_scale, metadata);
 
             const bool static_hit = static_board && static_board_valid &&
                                     static_board_shadow_gen == shadow_generation &&
@@ -1111,24 +980,16 @@ namespace tenhou {
             }
 
             if (!static_hit) {
-                PreResolveTiles(frame, 0, split_idx, sx, sy);
+                PreResolveTiles(frame, 0, split_idx);
                 if (!static_board)
                     Check(dc->CreateBitmap(D2D1::SizeU(rw, rh), nullptr, 0,
                                            Properties(D2D1_BITMAP_OPTIONS_TARGET), &static_board),
                           "Cannot create static board Direct2D target");
                 ++bench_stats.static_base_rebuilds;
                 DrawOn(static_board.Get(), [&] {
-                    if (hd_active && (rw != width || rh != h)) {
-                        DrawBitmap(backdrop.Get(), Box(0, 0, float(rw), float(rh)), 1.0f,
-                                   D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                        if (has_shadow)
-                            DrawBitmap(shadow_texture.Get(), Box(0, 0, float(rw), float(rh)), 1.0f,
-                                       D2D1_INTERPOLATION_MODE_LINEAR);
-                    } else {
-                        DrawBitmap(backdrop.Get(), 0, 0);
-                        if (has_shadow) DrawBitmap(shadow_texture.Get(), 0, 0);
-                    }
-                    DrawStationaryRange(frame, 0, split_idx, sx, sy);
+                    DrawBitmap(backdrop.Get(), 0, 0);
+                    if (has_shadow) DrawBitmap(shadow_texture.Get(), 0, 0);
+                    DrawStationaryRange(frame, 0, split_idx);
                 });
                 static_board_shadow_gen = shadow_generation;
                 static_board_red = frame.red_tiles;
@@ -1140,8 +1001,8 @@ namespace tenhou {
                 ++bench_stats.static_base_hits;
             }
 
-            PreResolveTiles(frame, split_idx, frame.tiles.size(), sx, sy);
-            PreResolveFlightsAndDora(frame, sx, sy);
+            PreResolveTiles(frame, split_idx, frame.tiles.size());
+            PreResolveFlightsAndDora(frame);
 
             if (!base)
                 Check(dc->CreateBitmap(D2D1::SizeU(rw, rh), nullptr, 0,
@@ -1149,43 +1010,26 @@ namespace tenhou {
                       "Cannot create native Direct2D table target");
             DrawOn(base.Get(), [&] {
                 DrawBitmap(static_board.Get(), 0, 0);
-                DrawStationaryRange(frame, split_idx, frame.tiles.size(), sx, sy);
-                if (has_flights) DrawFlights(frame, sx, sy);
+                DrawStationaryRange(frame, split_idx, frame.tiles.size());
+                if (has_flights) DrawFlights(frame);
                 const double unit = double(width) / 1024;
                 if (!frame.state.wall.known)
                     for (std::size_t i = 0; i < resolved_dora.size(); ++i) {
                         auto *bmp = resolved_dora[i];
                         const auto bsz = bmp->GetPixelSize();
-                        DrawBitmap(bmp, Box(static_cast<float>((28 + i * 40) * unit) * sx,
-                                            static_cast<float>(28 * unit) * sy,
+                        DrawBitmap(bmp, Box(static_cast<float>((28 + i * 40) * unit),
+                                            static_cast<float>(28 * unit),
                                             float(bsz.width), float(bsz.height)));
                     }
-                if (!active_hint.empty() && hint_texture) {
-                    if (hd_active && (rw != width || rh != h)) {
-                        const auto hsz = hint_texture->GetPixelSize();
-                        DrawBitmap(hint_texture.Get(),
-                                   Box(hint_x * sx, hint_y * sy, hsz.width * sx, hsz.height * sy),
-                                   1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                    } else {
-                        DrawBitmap(hint_texture.Get(), hint_x, hint_y);
-                    }
-                }
-                if (!active_countdown.empty() && countdown_texture) {
-                    if (hd_active && (rw != width || rh != h)) {
-                        const auto csz = countdown_texture->GetPixelSize();
-                        DrawBitmap(countdown_texture.Get(),
-                                   Box(countdown_x * sx, countdown_y * sy, csz.width * sx, csz.height * sy),
-                                   1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
-                    } else {
-                        DrawBitmap(countdown_texture.Get(), countdown_x, countdown_y);
-                    }
-                }
+                if (!active_hint.empty() && hint_texture) DrawBitmap(hint_texture.Get(), hint_x, hint_y);
+                if (!active_countdown.empty() && countdown_texture)
+                    DrawBitmap(countdown_texture.Get(), countdown_x, countdown_y);
                 for (const auto &sprite: hud_sprites) {
                     const auto &t = sprite.transform;
-                    if (hd_active) {
+                    if (hud_scale != 1.0f) {
                         dc->SetTransform(D2D1::Matrix3x2F(t[0], t[1], t[2], t[3], t[4], t[5]) *
-                                         D2D1::Matrix3x2F::Scale(sx, sy));
-                        DrawBitmap(SpriteHd(sprite.id),
+                                         D2D1::Matrix3x2F::Scale(hud_scale, hud_scale));
+                        DrawBitmap(Sprite(sprite.id),
                                    Box(float(sprite.x), float(sprite.y), float(sprite.w), float(sprite.h)),
                                    1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                     } else {
@@ -1194,7 +1038,7 @@ namespace tenhou {
                     }
                 }
                 dc->SetTransform(D2D1::Matrix3x2F::Identity());
-                DrawAutoChrome(hovered, rw, rh, sx, sy);
+                DrawAutoChrome(hovered, rw, rh);
                 DrawBitmap(hud_text.Get(), 0, 0);
             });
 
@@ -1241,7 +1085,7 @@ namespace tenhou {
             AxisClip clip(*dc.Get(), Box(r));
             Fill(Box(r), D2D1::ColorF(0u));
             const int offset = button.pressed ? 1 : 0;
-            DrawBitmap(hd_active ? SpriteHd(440) : Sprite(440),
+            DrawBitmap(Sprite(440),
                        Box(float(r.left + offset), float(r.top + offset), float(bw), float(bh)),
                        1, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             auto &renderer = art.Text();
@@ -1252,7 +1096,7 @@ namespace tenhou {
             run.transform[5] = -ink.Y - ink.Height / 2;
             TextRenderContext context;
             context.native_layout_scale = width == 1024 ? 1.0 / 1.4 : 1;
-            context.viewport_scale_x = context.viewport_scale_y = double(bw) / (width == 1440 ? 140 : 100);
+            context.viewport_scale_x = context.viewport_scale_y = double(bw) / (width == 1024 ? 100 : 140);
             context.origin_x = (r.left + r.right) / 2.0 + offset;
             context.origin_y = (r.top + r.bottom) / 2.0 + offset;
             context.dpi = dpi ? dpi : 96;
@@ -1293,7 +1137,8 @@ namespace tenhou {
                 }
             }
             if (legacy_buttons.size() > 64) legacy_buttons.clear();
-            const std::size_t budget = hd_active ? (128u * 1024 * 1024) : (48u * 1024 * 1024);
+            const std::size_t budget = width >= 2640 ? (128u * 1024 * 1024)
+                                                     : width >= 1920 ? (96u * 1024 * 1024) : (48u * 1024 * 1024);
             while (tile_bytes > budget && !tile_lru.empty()) {
                 const auto &oldest = tile_lru.back();
                 if (oldest.used == frame_number) break;
@@ -1305,33 +1150,14 @@ namespace tenhou {
 
         void Render(ID2D1Bitmap1 *target, const TableRenderFrame &frame, CanvasRect area, bool window) {
             const int h = width * 3 / 4;
+            const int ui_w = UiDesignWidth(width);
+            const int ui_h = ui_w * 3 / 4;
             const auto &dest = frame.destination;
             const int aw = area.right - area.left, ah = area.bottom - area.top;
             const int dl = dest.left - area.left, dt = dest.top - area.top;
             const int dw = dest.right - dest.left, dh = dest.bottom - dest.top;
             ++frame_number;
             tiles.BeginFrame();
-
-            const bool want_hd = preferences.hd_artwork && width == 1440 && dw > 0 && dh > 0 &&
-                                 hd_pipeline.EnsureReady(d3d.Get(), immediate.Get(), directory);
-            const int next_rw = want_hd ? std::clamp(dw, 1, 4096) : width;
-            const int next_rh = want_hd ? std::clamp(dh, 1, 3072) : h;
-            if (want_hd != hd_active || next_rw != render_w || next_rh != render_h) {
-                hd_active = want_hd;
-                render_w = next_rw;
-                render_h = next_rh;
-                static_board.Reset();
-                base.Reset();
-                hud_text.Reset();
-                hud_stamp.clear();
-                tile_index.clear();
-                tile_lru.clear();
-                tile_bytes = 0;
-                auto_gradients = {};
-                auto_gradient_w = auto_gradient_h = 0;
-                static_board_valid = false;
-                base_valid = false;
-            }
 
             EnsureBase(frame, h);
             DrawOn(target, [&] {
@@ -1344,10 +1170,10 @@ namespace tenhou {
                 }
                 dc->SetTransform(D2D1::Matrix3x2F::Translation(float(dl), float(dt)));
                 if (dw > 0 && dh > 0) {
-                    const auto interpolation = dw == render_w && dh == render_h ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR :
-                        dw < render_w || dh < render_h ? D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR :
-                                                        (using_hardware ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
-                                                                        : D2D1_INTERPOLATION_MODE_LINEAR);
+                    const auto interpolation = dw == width && dh == h ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR :
+                        dw < width || dh < h ? D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR :
+                                               (using_hardware ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
+                                                               : D2D1_INTERPOLATION_MODE_LINEAR);
                     DrawBitmap(base.Get(), Box(0, 0, float(dw), float(dh)), 1, interpolation);
                     FinalScene text(art.Text(), width == 1024, frame.dpi ? frame.dpi : 96);
                     art.AppendHud(text, frame.state);
@@ -1355,7 +1181,7 @@ namespace tenhou {
                                      std::array<bool, 4>{true, false, false, false}, frame.state.variant);
                     art.AppendStatus(text, frame.state);
                     if (frame.captions) AppendActionCaptions(text, *frame.captions, width, art.Text());
-                    text.VisitText(width, h, dw, dh, [&](auto &renderer, const auto &context, const auto &run) {
+                    text.VisitText(ui_w, ui_h, dw, dh, [&](auto &renderer, const auto &context, const auto &run) {
                         DrawText(renderer, context, run);
                     });
                 }
@@ -1376,8 +1202,6 @@ namespace tenhou {
         impl_->art.Configure(directory, canvas_width);
         impl_->shadows = {};
         impl_->background = {};
-        impl_->hd_pipeline.Reset();
-        impl_->hd_active = false;
         impl_->fallback.reset();
         impl_->ResetTextures();
     }
@@ -1498,7 +1322,6 @@ namespace tenhou {
     std::size_t D2DTableRenderer::PresentedFrames() const { return impl_->presented_frames; }
     std::size_t D2DTableRenderer::DeviceGeneration() const { return impl_->device_generation; }
     bool D2DTableRenderer::UsingHardware() const { return impl_->using_hardware; }
-    bool D2DTableRenderer::UsingHdArtwork() const { return impl_->hd_active; }
     void D2DTableRenderer::SetSyncInterval(unsigned interval) { impl_->sync_interval = interval; }
     D2DTableRenderer::BenchStats D2DTableRenderer::Stats() const { return impl_->bench_stats; }
     void D2DTableRenderer::ResetStats() { impl_->bench_stats = {}; }

@@ -139,7 +139,7 @@ namespace tenhou {
         }
         auto pack = std::make_shared<ResourcePack>(LoadResourcePack(norm,
             [](unsigned id, unsigned metadata) { return metadata && FindTextImageByOrigin(id); }));
-        if (pack->signature != (width == 1440 ? "res2" : "res0"))
+        if (pack->signature != "res2" && !(width == 1024 && pack->signature == "res0"))
             throw std::runtime_error("Original display pack has the wrong canvas signature");
         std::lock_guard lock(impl_->mutex);
         ++impl_->stats.display_pack_loads;

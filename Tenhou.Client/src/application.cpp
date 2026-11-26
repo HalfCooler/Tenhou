@@ -35,7 +35,6 @@ namespace tenhou {
         constexpr UINT kSysSize1920 = 0x1040;
         constexpr UINT kSysSize2560 = 0x1050;
         constexpr UINT kSysFullscreen = 0x1060;
-        constexpr UINT kSysToggleHd = 0x1070;
         constexpr UINT_PTR kAudioTimer = 1;
         constexpr int kMeterWidth = 14, kMeterHeight = 16, kMeterInterior = 14;
         constexpr unsigned kMeterPeriodMs = 50;
@@ -69,14 +68,6 @@ namespace tenhou {
                     options.service_lobby = true;
                     continue;
                 }
-                if (name == L"--hd") {
-                    options.hd_artwork = true;
-                    continue;
-                }
-                if (name == L"--classic") {
-                    options.hd_artwork = false;
-                    continue;
-                }
                 if (name == L"--width" || name == L"--height") {
                     if (++i >= count) throw std::runtime_error("启动参数缺少数值");
                     const int v = std::stoi(arguments[i]);
@@ -105,19 +96,20 @@ namespace tenhou {
         if (options_.config_directory.empty()) options_.config_directory = executable_directory_;
         std::filesystem::create_directories(options_.config_directory);
         config_path_ = options_.config_directory / L"config.ini";
-        const int saved_w = PreferenceInt(config_path_, "REBUILD", "Width", kDefaultClientWidth);
-        const int saved_h = PreferenceInt(config_path_, "REBUILD", "Height", kDefaultClientHeight);
+        const auto raw_screen_size = PreferenceString(config_path_, "STATUS", "SCREENSIZE");
+        if (raw_screen_size.empty()) WritePreference(config_path_, "STATUS", "SCREENSIZE", "default");
+        configured_screen_width_ = ParseScreenSizeSetting(raw_screen_size);
+        const int default_w = configured_screen_width_ ? configured_screen_width_ : kDefaultClientWidth;
+        const int default_h = default_w * 3 / 4;
+        const int saved_w = PreferenceInt(config_path_, "REBUILD", "Width", default_w);
+        const int saved_h = PreferenceInt(config_path_, "REBUILD", "Height", default_h);
         width_ = std::clamp(options_.initial_width > 0 ? options_.initial_width : saved_w, kMinClientWidth, 7680);
         height_ = std::clamp(options_.initial_height > 0 ? options_.initial_height : saved_h, kMinClientHeight, 4320);
         start_maximized_ = options_.initial_width <= 0 && options_.initial_height <= 0 &&
                            PreferenceInt(config_path_, "REBUILD", "Maximized", 0) != 0;
         start_fullscreen_ = options_.initial_width <= 0 && options_.initial_height <= 0 &&
                             PreferenceInt(config_path_, "REBUILD", "Fullscreen", 0) != 0;
-        if (options_.hd_artwork.has_value()) {
-            WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", *options_.hd_artwork ? 1 : 0);
-        }
-        hd_artwork_ = PreferenceInt(config_path_, "REBUILD", "HdArtwork", 0) != 0;
-        screen_width_ = 1440;
+        screen_width_ = ResolveTableWidth(width_, height_);
         view_ = options_.replay.empty() ? "welcome" : "replay";
         sound_effects_only_ = PreferenceInt(config_path_, "REBUILD", "SoundEffectsOnly", 0) != 0;
         resource_directory_ = options_.resource_directory.empty()
@@ -274,6 +266,9 @@ namespace tenhou {
             }
         }
         SetWindowPos(window_, nullptr, 0, 0, outer_w, outer_h, SWP_NOMOVE | SWP_NOZORDER);
+        screen_width_ = ResolveTableWidth(width_, height_);
+        Log("SCREENSIZE setting=" + std::string(FormatScreenSizeSetting(configured_screen_width_)) +
+            " canvas=" + std::to_string(screen_width_) + "x" + std::to_string(screen_width_ * 3 / 4));
         SetupSystemMenu();
         UpdateWindowTitle();
         welcome_ = std::make_unique<WelcomeView>(window_, [this](WelcomeView::Action action) {
@@ -368,10 +363,6 @@ namespace tenhou {
                 SetFullscreen(!fullscreen_);
                 continue;
             }
-            if (message.message == WM_KEYDOWN && message.wParam == VK_F6) {
-                ToggleHdArtwork();
-                continue;
-            }
             if (message.message == WM_KEYDOWN && offline_lobby_ &&
                 offline_lobby_->HandleKey(static_cast<UINT>(message.wParam))) continue;
             if (lobby_ && lobby_->HandleExitVoteMessage(message)) continue;
@@ -407,7 +398,6 @@ namespace tenhou {
         AppendMenuW(sys, MF_STRING, kSysSize2560, L"窗口尺寸：2560×1440（宽屏）");
         AppendMenuW(sys, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(sys, MF_STRING, kSysFullscreen, L"无边框全屏\tAlt+Enter / F11");
-        AppendMenuW(sys, MF_STRING, kSysToggleHd, L"高清矢量牌面与精灵 (HD)\tF6");
         SyncSystemMenu();
     }
 
@@ -415,13 +405,14 @@ namespace tenhou {
         HMENU sys = GetSystemMenu(window_, FALSE);
         if (!sys) return;
         CheckMenuItem(sys, kSysFullscreen, MF_BYCOMMAND | (fullscreen_ ? MF_CHECKED : MF_UNCHECKED));
-        CheckMenuItem(sys, kSysToggleHd, MF_BYCOMMAND | (hd_artwork_ ? MF_CHECKED : MF_UNCHECKED));
     }
 
     void Application::UpdateWindowTitle() {
         if (!window_) return;
-        SetWindowTextW(window_, hd_artwork_ ? L"Tenhou Rebuild / Windows x64 [HD]"
-                                            : L"Tenhou Rebuild / Windows x64");
+        const std::wstring title = L"Tenhou Rebuild / Windows x64 [" +
+                                   std::to_wstring(screen_width_) + L"x" +
+                                   std::to_wstring(screen_width_ * 3 / 4) + L"]";
+        SetWindowTextW(window_, title.c_str());
     }
 
     void Application::ApplyClientSizePreset(int client_width, int client_height) {
@@ -431,10 +422,25 @@ namespace tenhou {
         const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_STYLE));
         const DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(window_, GWL_EXSTYLE));
         if (AdjustWindowRectExForDpi(&frame, style, GetMenu(window_) != nullptr, ex_style, GetDpiForWindow(window_))) {
+            int outer_w = frame.right - frame.left;
+            int outer_h = frame.bottom - frame.top;
+            const int chrome_w = outer_w - client_width;
+            const int chrome_h = outer_h - client_height;
+            MONITORINFO mi{sizeof(MONITORINFO)};
+            if (GetMonitorInfoW(MonitorFromWindow(window_, MONITOR_DEFAULTTONEAREST), &mi)) {
+                const int max_cw = std::max(kMinClientWidth, static_cast<int>(mi.rcWork.right - mi.rcWork.left) - chrome_w);
+                const int max_ch = std::max(kMinClientHeight, static_cast<int>(mi.rcWork.bottom - mi.rcWork.top) - chrome_h);
+                if (client_width > max_cw || client_height > max_ch) {
+                    const double scale = std::min(double(max_cw) / client_width, double(max_ch) / client_height);
+                    client_width = std::max(kMinClientWidth, static_cast<int>(client_width * scale));
+                    client_height = std::max(kMinClientHeight, static_cast<int>(client_height * scale));
+                    outer_w = client_width + chrome_w;
+                    outer_h = client_height + chrome_h;
+                }
+            }
             width_ = client_width;
             height_ = client_height;
-            SetWindowPos(window_, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(window_, nullptr, 0, 0, outer_w, outer_h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             Layout();
         }
     }
@@ -468,15 +474,31 @@ namespace tenhou {
         Layout();
     }
 
-    void Application::ToggleHdArtwork() {
-        hd_artwork_ = !hd_artwork_;
-        WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", hd_artwork_ ? 1 : 0);
-        SyncSystemMenu();
-        UpdateWindowTitle();
-        ApplyPreferences(PreferenceChange::Artwork);
+    int Application::ResolveTableWidth(int client_width, int client_height) const {
+        if (IsSupportedTableWidth(configured_screen_width_)) return configured_screen_width_;
+        return SelectAutoTableWidth(client_width, client_height);
+    }
+
+    void Application::ApplyScreenWidth(int next_width) {
+        if (!IsSupportedTableWidth(next_width) || next_width == screen_width_) return;
+        screen_width_ = next_width;
+        if (table_) table_->ConfigureArtwork(resource_directory_, screen_width_);
+        if (lobby_) lobby_->ConfigureArtwork(resource_directory_, screen_width_);
+        if (offline_lobby_) offline_lobby_->ConfigureArtwork(resource_directory_, screen_width_);
         if (view_ == "welcome" && welcome_)
             welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
-        Log(std::string("ARTWORK mode=") + (hd_artwork_ ? "HD" : "Classic"));
+        const auto preferences = ClientPreferences::Load(config_path_);
+        if (table_) table_->ApplyPreferences(preferences, PreferenceChange::Artwork);
+        if (lobby_) lobby_->ApplyPreferences(preferences, PreferenceChange::Artwork);
+        UpdateWindowTitle();
+        Log("SCREENSIZE active=" + std::to_string(screen_width_) + "x" + std::to_string(screen_width_ * 3 / 4) +
+            " setting=" + std::string(FormatScreenSizeSetting(configured_screen_width_)));
+    }
+
+    void Application::SyncAutoScreenWidth(int client_width, int client_height) {
+        if (configured_screen_width_ != 0) return;
+        const int target = SelectAutoTableWidth(client_width, client_height);
+        if (target != screen_width_) ApplyScreenWidth(target);
     }
 
     void Application::Layout() {
@@ -488,6 +510,7 @@ namespace tenhou {
             width_ = cw;
             height_ = ch;
         }
+        if (table_ && lobby_) SyncAutoScreenWidth(cw, ch);
         if (welcome_) welcome_->Resize(cw, ch);
         if (table_) table_->Resize(cw, ch);
         if (lobby_) lobby_->Resize(cw, ch);
@@ -558,7 +581,7 @@ namespace tenhou {
     void Application::LoadResources() {
         if (view_ == "welcome") welcome_->Load(resource_directory_, config_path_, screen_width_, screen_width_ * 3 / 4);
         else if (view_ == "replay") table_->Reload();
-        else if (view_ == "offline_lobby") offline_lobby_->ConfigureArtwork(resource_directory_);
+        else if (view_ == "offline_lobby") offline_lobby_->ConfigureArtwork(resource_directory_, screen_width_);
         else lobby_->ConfigureArtwork(resource_directory_, screen_width_);
     }
 
@@ -664,12 +687,24 @@ namespace tenhou {
         WritePreferenceInt(config_path_, "REBUILD", "Height", std::clamp(height_, kMinClientHeight, 4320));
         WritePreferenceInt(config_path_, "REBUILD", "Maximized", (!fullscreen_ && window_ && IsZoomed(window_)) ? 1 : 0);
         WritePreferenceInt(config_path_, "REBUILD", "Fullscreen", fullscreen_ ? 1 : 0);
-        WritePreferenceInt(config_path_, "REBUILD", "HdArtwork", hd_artwork_ ? 1 : 0);
-        WritePreferenceInt(config_path_, "REBUILD", "ScreenWidth", 1440);
+        WritePreferenceInt(config_path_, "REBUILD", "ScreenWidth", screen_width_);
         Log("CONFIG saved");
     }
 
     void Application::ApplyPreferences(PreferenceChange change) {
+        if (change == PreferenceChange::ScreenSize) {
+            configured_screen_width_ = ParseScreenSizeSetting(PreferenceString(config_path_, "STATUS", "SCREENSIZE"));
+            if (configured_screen_width_ != 0) {
+                ApplyClientSizePreset(configured_screen_width_, configured_screen_width_ * 3 / 4);
+                ApplyScreenWidth(configured_screen_width_);
+            } else {
+                RECT client{};
+                GetClientRect(window_, &client);
+                ApplyScreenWidth(SelectAutoTableWidth(std::max(1, static_cast<int>(client.right)),
+                                                      std::max(1, static_cast<int>(client.bottom))));
+            }
+            return;
+        }
         const auto preferences = ClientPreferences::Load(config_path_);
         if (change == PreferenceChange::Other) welcome_->SetHiddenId(preferences.hidden_id);
         if (change == PreferenceChange::Sound) {
@@ -680,7 +715,7 @@ namespace tenhou {
         table_->ApplyPreferences(preferences, change);
         lobby_->ApplyPreferences(preferences, change);
         if (change == PreferenceChange::Artwork && view_ == "offline_lobby")
-            offline_lobby_->ConfigureArtwork(resource_directory_);
+            offline_lobby_->ConfigureArtwork(resource_directory_, screen_width_);
     }
 
 
@@ -783,7 +818,6 @@ namespace tenhou {
                     case kSysSize1920: ApplyClientSizePreset(1920, 1440); return 0;
                     case kSysSize2560: ApplyClientSizePreset(2560, 1440); return 0;
                     case kSysFullscreen: SetFullscreen(!fullscreen_); return 0;
-                    case kSysToggleHd: ToggleHdArtwork(); return 0;
                     default: return DefWindowProcW(window_, message, wparam, lparam);
                 }
             }

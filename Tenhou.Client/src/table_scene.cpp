@@ -1,6 +1,7 @@
 #include "table_scene.hpp"
 #include "resource_manager.hpp"
 #include "shared_assets.hpp"
+#include "window_layout.hpp"
 #include <algorithm>
 #include <stdexcept>
 #include <objidl.h>
@@ -8,14 +9,19 @@
 
 namespace tenhou {
     void TableArtwork::Load(const std::filesystem::path &directory, int width) {
-        if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported table canvas");
-        const int number = width == 1024 ? 0 : 2;
+        if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
+        const AssetId even_id = width == 1024 ? AssetId::TablePackSd :
+                                width == 1440 ? AssetId::TablePack :
+                                width == 1920 ? AssetId::TablePack1920 : AssetId::TablePack2640;
+        const AssetId odd_id = width == 1024 ? AssetId::TableCompanionPackSd :
+                               width == 1440 ? AssetId::TableCompanionPack :
+                               width == 1920 ? AssetId::TableCompanionPack1920 : AssetId::TableCompanionPack2640;
+        const std::string expected_even = width == 1440 ? "obj2" : "obj0";
+        const std::string expected_odd = width == 1440 ? "obj3" : "obj1";
         ResourceManager manager(directory);
-        auto even = SharedAssets().GetObjectPack(
-            manager.Path(width == 1024 ? AssetId::TablePackSd : AssetId::TablePack));
-        auto odd = SharedAssets().GetObjectPack(
-            manager.Path(width == 1024 ? AssetId::TableCompanionPackSd : AssetId::TableCompanionPack));
-        if (even->signature != "obj" + std::to_string(number) || odd->signature != "obj" + std::to_string(number + 1))
+        auto even = SharedAssets().GetObjectPack(manager.Path(even_id));
+        auto odd = SharedAssets().GetObjectPack(manager.Path(odd_id));
+        if (even->signature != expected_even || odd->signature != expected_odd)
             throw std::runtime_error("Wrong table object pack resolution");
         even_ = std::move(even);
         odd_ = std::move(odd);
@@ -25,6 +31,10 @@ namespace tenhou {
         lru_.clear();
         flight_cache_.clear();
         cached_bytes_ = 0;
+        if (!custom_budget_) {
+            cache_budget_ = width >= 2640 ? 128u * 1024 * 1024 :
+                            width >= 1920 ? 64u * 1024 * 1024 : 32u * 1024 * 1024;
+        }
         frame_ = 1;
         evictions_ = 0;
     }
@@ -89,27 +99,6 @@ namespace tenhou {
             if (graphics.DrawImage(&source, points, 3) != Gdiplus::Ok)
                 throw std::runtime_error("Cannot compose flower face");
         }
-        cached_bytes_ += decoded.image.bgra.size();
-        lru_.push_front(Cached{key, std::move(decoded), frame_});
-        cache_[key] = lru_.begin();
-        return lru_.front().image;
-    }
-
-    const ObjectImage &TableArtwork::GetBody(const TableTile &tile) {
-        const auto raw_key = ImageKey(tile, false);
-        const unsigned variant = (raw_key >> 16) & 0xff;
-        const unsigned body_variant = (variant == 37) ? 37u : 34u;
-        const std::uint32_t key = (raw_key & 0xff00ffffu) | (body_variant << 16);
-        const auto found = cache_.find(key);
-        if (found != cache_.end()) {
-            found->second->used = frame_;
-            lru_.splice(lru_.begin(), lru_, found->second);
-            return found->second->image;
-        }
-        const auto entry = odd_->key_index.find(key);
-        if (entry == odd_->key_index.end())
-            throw std::runtime_error("Missing table body resource key " + std::to_string(key));
-        auto decoded = DecodeObject(*odd_, entry->second, even_.get(), true, &rgb_);
         cached_bytes_ += decoded.image.bgra.size();
         lru_.push_front(Cached{key, std::move(decoded), frame_});
         cache_[key] = lru_.begin();

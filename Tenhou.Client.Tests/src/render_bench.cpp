@@ -6,6 +6,7 @@
 #include "replay.hpp"
 #include "replay_effects.hpp"
 #include "table_render_frame.hpp"
+#include "window_layout.hpp"
 #include <windows.h>
 #include <objidl.h>
 #include <gdiplus.h>
@@ -162,8 +163,8 @@ namespace {
         return "?";
     }
 
-    std::vector<TableActionButton> MakeButtons(int w, int h, int frame_idx, Scenario scenario) {
-        const auto dest = FitNativeCanvasBounds({0, 0, w, h}, 1440);
+    std::vector<TableActionButton> MakeButtons(int w, int h, int canvas_w, int frame_idx, Scenario scenario) {
+        const auto dest = FitNativeCanvasBounds({0, 0, w, h}, canvas_w);
         const int bw = 140, bh = 44;
         const int y = dest.bottom - 140;
         const int x0 = dest.right - 320;
@@ -192,6 +193,7 @@ namespace {
                              HWND host_hwnd,
                              OffscreenDc *gdi_dc,
                              int out_w, int out_h,
+                             int canvas_w,
                              Scenario scenario,
                              const OnlineState &before_discard,
                              const OnlineState &after_discard,
@@ -206,7 +208,7 @@ namespace {
         TablePresentation presentation;
         ActionCaptions captions;
         if (scenario == Scenario::Flight) {
-            presentation.Begin(before_rep, after_rep, discard_event, 240, 1440,
+            presentation.Begin(before_rep, after_rep, discard_event, 240, canvas_w,
                                [&](const TableTile &t) { return geometry.Origin(t, true); },
                                0.0, false, &geometry, true);
             captions.AcceptResource(473, 1);
@@ -229,15 +231,15 @@ namespace {
             }
             const double anim_ms = scenario == Scenario::Flight ? static_cast<double>((idx * 12) % 220) : 0.0;
             if (scenario == Scenario::Flight && idx > 0 && (idx * 12) % 220 < 12) {
-                presentation.Begin(before_rep, after_rep, discard_event, 240, 1440,
+                presentation.Begin(before_rep, after_rep, discard_event, 240, canvas_w,
                                    [&](const TableTile &t) { return geometry.Origin(t, true); },
                                    0.0, false, &geometry, true);
             }
             auto frame = BuildOnlineTableRenderFrame(
-                1440, bounds, after_discard, hand, geometry, presentation,
+                canvas_w, bounds, after_discard, hand, geometry, presentation,
                 nullptr, &inter, scenario == Scenario::Flight ? &captions : nullptr,
                 false, false, true, true, anim_ms, 96);
-            frame.buttons = MakeButtons(out_w, out_h, idx, scenario);
+            frame.buttons = MakeButtons(out_w, out_h, canvas_w, idx, scenario);
 
             const auto t0 = std::chrono::steady_clock::now();
             if (d2d_ptr && host_hwnd) {
@@ -292,11 +294,11 @@ int main(int argc, char **argv) {
     try {
         std::filesystem::path resources = "build/Tenhou.Client.Tests/resources";
         int frames = 120;
-        bool hd_mode = false;
+        int canvas_override = 0;
         int positional = 0;
         for (int i = 1; i < argc; ++i) {
             const std::string arg = argv[i];
-            if (arg == "--hd") { hd_mode = true; continue; }
+            if (arg == "--canvas" && i + 1 < argc) { canvas_override = std::stoi(argv[++i]); continue; }
             if (positional == 0) resources = arg;
             else if (positional == 1) frames = std::max(20, std::stoi(arg));
             ++positional;
@@ -308,28 +310,28 @@ int main(int argc, char **argv) {
         OnlineState before_discard;
         const OnlineState after_discard = BuildFixtureState(discard_event, before_discard);
         ClientPreferences prefs;
-        prefs.hd_artwork = hd_mode;
         const std::filesystem::path empty_config;
 
         const std::pair<int, int> resolutions[] = {{1440, 1080}, {2560, 1440}};
         const Scenario scenarios[] = {Scenario::Static, Scenario::HoverCountdown, Scenario::Flight};
 
-        std::cout << "tenhou_render_bench (frames=" << frames << ", warmup=" << warmup << ", vsync=0, mode="
-                  << (hd_mode ? "HD" : "Classic") << ")\n";
+        std::cout << "tenhou_render_bench (frames=" << frames << ", warmup=" << warmup << ", vsync=0, canvas="
+                  << (canvas_override ? std::to_string(canvas_override) : std::string("auto")) << ")\n";
         std::cout << "---------------------------------------------------------------------------------------------------------------------------------\n";
 
         for (const auto &[w, h] : resolutions) {
+            const int canvas_w = canvas_override ? canvas_override : SelectAutoTableWidth(w, h);
             HostWindow host(w, h);
             OffscreenDc gdi_dc(w, h);
 
-            if (!hd_mode) {
-                // 1. GDI+ reference renderer
+            // 1. GDI+ reference renderer
+            {
                 GdiTableRenderer gdi_renderer;
-                gdi_renderer.Configure(resources, 1440);
+                gdi_renderer.Configure(resources, canvas_w);
                 gdi_renderer.SetPreferences(prefs, empty_config, true);
                 for (Scenario sc : scenarios) {
                     const auto res = RunScenario(gdi_renderer, nullptr, nullptr, &gdi_dc,
-                                                 w, h, sc, before_discard, after_discard, discard_event, warmup, frames);
+                                                 w, h, canvas_w, sc, before_discard, after_discard, discard_event, warmup, frames);
                     PrintRow("GDI+", w, h, sc, res);
                 }
             }
@@ -338,12 +340,12 @@ int main(int argc, char **argv) {
             {
                 D2DTableRenderer warp(true);
                 warp.SetSyncInterval(0);
-                warp.Configure(resources, 1440);
+                warp.Configure(resources, canvas_w);
                 warp.SetPreferences(prefs, empty_config, true);
                 for (Scenario sc : scenarios) {
                     const auto res = RunScenario(warp, &warp, host.hwnd, nullptr,
-                                                 w, h, sc, before_discard, after_discard, discard_event, warmup, frames);
-                    PrintRow(hd_mode ? "D2D-WARP-HD" : "D2D-WARP", w, h, sc, res);
+                                                 w, h, canvas_w, sc, before_discard, after_discard, discard_event, warmup, frames);
+                    PrintRow("D2D-WARP", w, h, sc, res);
                 }
             }
 
@@ -351,14 +353,12 @@ int main(int argc, char **argv) {
             {
                 D2DTableRenderer hw(false);
                 hw.SetSyncInterval(0);
-                hw.Configure(resources, 1440);
+                hw.Configure(resources, canvas_w);
                 hw.SetPreferences(prefs, empty_config, true);
                 for (Scenario sc : scenarios) {
                     const auto res = RunScenario(hw, &hw, host.hwnd, nullptr,
-                                                 w, h, sc, before_discard, after_discard, discard_event, warmup, frames);
-                    const char *tag = hd_mode ? (hw.UsingHardware() ? "D2D-HW-HD" : "D2D-FB-HD")
-                                              : (hw.UsingHardware() ? "D2D-HW" : "D2D-FALLBK");
-                    PrintRow(tag, w, h, sc, res);
+                                                 w, h, canvas_w, sc, before_discard, after_discard, discard_event, warmup, frames);
+                    PrintRow(hw.UsingHardware() ? "D2D-HW" : "D2D-FALLBK", w, h, sc, res);
                 }
             }
         }

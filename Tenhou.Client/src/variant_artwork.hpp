@@ -12,7 +12,6 @@ namespace tenhou {
         // Missing optional artwork uses the caller's text fallback. Invalid PNGs fail visibly.
         const Image *Get(AssetId id);
         const Image *GetSprite(unsigned id);
-        const Image *GetHdSprite(unsigned id);
     private:
         std::filesystem::path directory_;
         std::map<AssetId, std::optional<Image>> images_;

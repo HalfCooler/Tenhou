@@ -2,6 +2,7 @@
 #include "resource_manager.hpp"
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 
 namespace tenhou {
@@ -64,9 +65,10 @@ namespace tenhou {
     }
 
     ShadowPack::ShadowPack(Bytes raw) : raw_(std::move(raw)) {
-        if (raw_.size() < 0x18ac || U32(raw_, 0) != 0x32776473 || U32(raw_, 4) != 0x18ac || U32(raw_, 8) != raw_.size()
-            - 0x18ac)
-            throw std::runtime_error("Invalid fixed HD shadow resource");
+        const unsigned sig = raw_.size() >= 4 ? U32(raw_, 0) : 0;
+        if (raw_.size() < 0x18ac || (sig != 0x32776473u && sig != 0x30776473u) || U32(raw_, 4) != 0x18ac ||
+            U32(raw_, 8) != raw_.size() - 0x18ac)
+            throw std::runtime_error("Invalid shadow resource");
         for (unsigned slot = 12; slot < 0x18ac; slot += 4) {
             const auto offset = U32(raw_, slot);
             if (!offset || masks_.count(offset)) continue;
@@ -76,7 +78,7 @@ namespace tenhou {
             mask.width = I16(raw_, offset + 4);
             mask.height = I16(raw_, offset + 6);
             mask.stride = (mask.width + 3) & ~3;
-            if (mask.width <= 0 || mask.height <= 0 || mask.width > 1440 || mask.height > 1080) throw
+            if (mask.width <= 0 || mask.height <= 0 || mask.width > 4096 || mask.height > 4096) throw
                     std::runtime_error("Invalid shadow dimensions");
             const auto size = U32(raw_, offset + 8), expected = static_cast<unsigned>(mask.stride * mask.height);
             if (offset + 12 + std::uint64_t(size) > raw_.size()) throw std::runtime_error("Invalid shadow payload");
@@ -95,6 +97,28 @@ namespace tenhou {
             return InflateZlib(Bytes(view.data, view.data + view.size), 16 * 1024 * 1024);
         }());
         return pack;
+    }
+
+    const ShadowPack *ResolveShadowPack(const std::filesystem::path &directory, int canvas_width) {
+        if (canvas_width == 1440) return &ShadowPack::Embedded();
+        if (directory.empty()) return nullptr;
+        AssetId id = AssetId::TileShadowsSd;
+        if (canvas_width == 1024) id = AssetId::TileShadowsSd;
+        else if (canvas_width == 1920) id = AssetId::TileShadows1920;
+        else if (canvas_width == 2640) id = AssetId::TileShadows2640;
+        else return nullptr;
+        const auto path = ResourceManager(directory).Path(id);
+        if (!std::filesystem::is_regular_file(path)) return nullptr;
+        static std::mutex mutex;
+        static std::map<std::string, std::shared_ptr<const ShadowPack>> cache;
+        std::error_code ec;
+        auto canonical = std::filesystem::weakly_canonical(path, ec);
+        if (ec) canonical = path.lexically_normal();
+        const auto key = canonical.u8string();
+        std::lock_guard lock(mutex);
+        auto &entry = cache[key];
+        if (!entry) entry = std::make_shared<ShadowPack>(ReadFile(canonical));
+        return entry.get();
     }
 
     const ShadowMask *ShadowPack::Get(ShadowKey key) const {
@@ -117,7 +141,7 @@ namespace tenhou {
     std::vector<TileShadow> BuildTileShadows(const std::vector<PositionedTile> &scene, TableArtwork &artwork,
                                              const ShadowPack &pack) {
         std::vector<TileShadow> result;
-        if (artwork.width() != 1440) return result; // This fixed resource is HD only.
+        if (!artwork.width()) return result;
         result.reserve(scene.size());
 
         // Pre-index top wall tiles (slot < 17) so lower wall sprites skip in O(1).
@@ -349,9 +373,10 @@ namespace tenhou {
         return nullptr;
     }
 
-    const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, int strength) {
-        if (!strength || scene.empty()) return nullptr;
-        constexpr int kCanvasW = 1440, kCanvasH = 1080;
+    const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, int strength,
+                                         int canvas_w, int canvas_h) {
+        if (!strength || scene.empty() || canvas_w <= 0 || canvas_h <= 0) return nullptr;
+        const int kCanvasW = canvas_w, kCanvasH = canvas_h;
         const bool full_rebuild = strength_ != strength || pixels_.width != kCanvasW || pixels_.height != kCanvasH ||
                                   pixels_.bgra.size() != static_cast<std::size_t>(kCanvasW) * kCanvasH * 4;
 
@@ -475,8 +500,9 @@ namespace tenhou {
         return &pixels_;
     }
 
-    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, int strength) {
-        if (!Raster(scene, strength)) return;
+    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, int strength,
+                                int canvas_w, int canvas_h) {
+        if (!Raster(scene, strength, canvas_w, canvas_h)) return;
         // RGB is identically black, hence already premultiplied for every alpha.
         Gdiplus::Bitmap bitmap(pixels_.width, pixels_.height, pixels_.width * 4, PixelFormat32bppPARGB,
                                pixels_.bgra.data());

@@ -32,6 +32,8 @@ namespace tenhou {
         std::map<unsigned, ShadowMask> masks_;
     };
 
+    const ShadowPack *ResolveShadowPack(const std::filesystem::path &directory, int canvas_width);
+
     std::array<unsigned, 258> OriginalShadowPalette(int strength);
 
     // An entry represents one original placeholder, even when the face resource
@@ -58,8 +60,10 @@ namespace tenhou {
 
     class TileShadowLayer {
     public:
-        void Paint(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, int strength);
-        const Image *Raster(const std::vector<TileShadow> &scene, int strength);
+        void Paint(Gdiplus::Graphics &graphics, const std::vector<TileShadow> &scene, int strength,
+                   int canvas_w = 1440, int canvas_h = 1080);
+        const Image *Raster(const std::vector<TileShadow> &scene, int strength,
+                            int canvas_w = 1440, int canvas_h = 1080);
         std::size_t revision() const { return revision_; }
         CanvasRect last_dirty() const { return last_dirty_; }
 

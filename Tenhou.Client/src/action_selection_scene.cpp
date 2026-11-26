@@ -31,8 +31,9 @@ namespace tenhou {
                 return ActionGroup(a.kind) == kinds[i];
             }))
                 buttons.push_back(i == 10 ? 5151 : 5120 + i);
-        const double scale = width == 1440 ? 1.4 : 1.0;
-        int x = std::max(0, static_cast<int>(anchor.first + 65.0 - (static_cast<int>(buttons.size()) - 1) * 110 * scale));
+        const double ui_ratio = width == 1024 ? 1.0 : double(width) / 1440.0;
+        const double scale = width == 1024 ? 1.0 : 1.4 * ui_ratio;
+        int x = std::max(0, static_cast<int>(anchor.first + 65.0 * ui_ratio - (static_cast<int>(buttons.size()) - 1) * 110 * scale));
         const int y = static_cast<int>(anchor.second - 45 * scale);
         std::vector<ActionPlacement> result;
         for (int button: buttons) {

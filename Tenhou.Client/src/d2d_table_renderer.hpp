@@ -36,7 +36,6 @@ namespace tenhou {
         std::size_t PresentedFrames() const;
         std::size_t DeviceGeneration() const;
         bool UsingHardware() const;
-        bool UsingHdArtwork() const;
         void SetSyncInterval(unsigned interval);
         BenchStats Stats() const;
         void ResetStats();

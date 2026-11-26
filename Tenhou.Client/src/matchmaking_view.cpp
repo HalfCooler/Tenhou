@@ -85,14 +85,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
     void MatchmakingView::Show(bool visible) { ShowWindow(window_, visible ? SW_SHOW : SW_HIDE); }
 
     void MatchmakingView::ConfigureArtwork(const std::filesystem::path &directory) {
-        // The fixed-size lobby panel uses the HD display pack at both table sizes.
+        // The fixed-size lobby panel uses the HD display pack at every table size.
         artwork_.Configure(directory, 1440);
-        InvalidateRect(window_, nullptr, FALSE);
-    }
-
-    void MatchmakingView::SetHdArtwork(bool enabled) {
-        if (hd_artwork_ == enabled) return;
-        hd_artwork_ = enabled;
         InvalidateRect(window_, nullptr, FALSE);
     }
 
@@ -234,19 +228,11 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
 
     void MatchmakingView::Paint(HDC dc) {
         try {
-            const auto &frame = hd_artwork_ ? artwork_.GetHd(592) : artwork_.Get(592);
-            if (!hd_artwork_ && (frame.width != 590 || frame.height != 430))
+            const auto &frame = artwork_.Get(592);
+            if (frame.width != 590 || frame.height != 430)
                 throw std::runtime_error("Invalid lobby resource 592 dimensions");
             Gdiplus::Graphics graphics(dc);
-            if (frame.width != 590 || frame.height != 430) {
-                Gdiplus::Bitmap bmp(frame.width, frame.height, frame.width * 4, PixelFormat32bppARGB,
-                                    const_cast<BYTE *>(frame.bgra.data()));
-                graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-                graphics.DrawImage(&bmp, Gdiplus::Rect(0, 0, 590, 430),
-                                   0, 0, frame.width, frame.height, Gdiplus::UnitPixel);
-            } else {
-                artwork_.Sprite(graphics, 592, 0, 0);
-            }
+            artwork_.Sprite(graphics, 592, 0, 0);
         } catch (const std::exception &) {
             const RECT panel{0, 0, 590, 430};
             FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));

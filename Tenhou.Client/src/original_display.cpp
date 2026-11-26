@@ -3,6 +3,7 @@
 #include "shared_assets.hpp"
 #include "table_scene.hpp"
 #include "text_catalog.hpp"
+#include "window_layout.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -39,12 +40,19 @@ namespace tenhou {
 
     RECT OriginalAutoButtonRect(int width, int index) {
         // 0047d657..0047d77a: right offsets 2.15,3.15,4.15,5.15.
-        // Native controls are 80x22 (1024) and 110x37 (1440).
-        const int bw = width == 1440 ? 110 : 80, bh = width == 1440 ? 37 : 22;
-        const int stride = width == 1440 ? 123 : 88; // trunc(88 * (1.4 or 1.0)), 0047d5f7..0047d60c.
-        const int x = static_cast<int>(width - stride * (2.15 + index));
-        const int y = width * 3 / 4 - (width == 1440 ? 57 : 32);
-        return {x, y, x + bw, y + bh};
+        // Native controls are 80x22 (1024) and 110x37 (1440); higher tiers scale linearly from 1440.
+        if (width == 1024) {
+            const int x = static_cast<int>(1024 - 88 * (2.15 + index));
+            const int y = 768 - 32;
+            return {x, y, x + 80, y + 22};
+        }
+        const int x1440 = static_cast<int>(1440 - 123 * (2.15 + index));
+        const int y1440 = 1080 - 57;
+        if (width == 1440) return {x1440, y1440, x1440 + 110, y1440 + 37};
+        const double ratio = double(width) / 1440.0;
+        const int x = static_cast<int>(std::lround(x1440 * ratio));
+        const int y = static_cast<int>(std::lround(y1440 * ratio));
+        return {x, y, x + static_cast<int>(std::lround(110 * ratio)), y + static_cast<int>(std::lround(37 * ratio))};
     }
 
     namespace {
@@ -107,16 +115,20 @@ namespace tenhou {
     }
 
     OriginalHudLayout BuildOriginalHud(const ReplayState &state, int width) {
-        if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported native display canvas");
+        if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported native display canvas");
         OriginalHudLayout out;
-        // Original HUD uses exactly 1.4, not the tile canvas ratio 1440/1024.
-        out.scale = width == 1440 ? 1.4f : 1;
+        // Original HUD uses exactly 1.4 at 1440; 1920/2640 scale linearly from 1440.
+        const float ratio = width == 1024 ? 1.0f : float(width) / 1440.0f;
+        out.scale = width == 1024 ? 1.0f : 1.4f * ratio;
         out.outline_width = 2 * out.scale;
-        out.center = {width / 2.0f, width * 3 / 8.0f - (width == 1440 ? 75.0f : 52.0f) - 1};
-        const int panel_width = width == 1440 ? 244 : 174, panel_height = width == 1440 ? 172 : 123;
+        out.center = {width / 2.0f, width * 3 / 8.0f - (width == 1024 ? 52.0f : 75.0f * ratio) - ratio};
+        const int panel_width = width == 1024 ? 174 : static_cast<int>(std::lround(244.0 * ratio));
+        const int panel_height = width == 1024 ? 123 : static_cast<int>(std::lround(172.0 * ratio));
+        const int pad_w = static_cast<int>(std::lround(18.0 * ratio));
+        const int pad_h = static_cast<int>(std::lround(20.0 * ratio));
         out.panel = {
-            (width - panel_width - 18) / 2 + 9,
-            (width * 3 / 4 - panel_height - 20) / 2 - (width == 1440 ? 75 : 52) + 10,
+            (width - panel_width - pad_w) / 2 + pad_w / 2,
+            (width * 3 / 4 - panel_height - pad_h) / 2 - (width == 1024 ? 52 : static_cast<int>(std::lround(75.0 * ratio))) + pad_h / 2,
             panel_width, panel_height
         };
         const Affine base{1, 0, 0, 1, out.center[0], out.center[1]};
@@ -142,7 +154,7 @@ namespace tenhou {
             const unsigned wind = static_cast<unsigned>(SeatWind(state.seat_mask, state.dealer, i));
             out.text.push_back({
                 state.turn == i ? active[wind] : inactive[wind],
-                static_cast<int>(6 - 58 * out.scale), scaled(28), i
+                static_cast<int>(6 * ratio - 58 * out.scale), scaled(28), i
             });
             if (state.players[i].reach == 2) out.sprites.push_back({466, 0, scaled(57), i, true});
         }
@@ -159,7 +171,7 @@ namespace tenhou {
         text_font_.reset();
         variants_.Configure(directory);
         directory_ = directory;
-        width_ = width;
+        width_ = UiDesignWidth(width);
         pack_.reset();
         images_.clear();
         captions_.clear();
@@ -168,7 +180,7 @@ namespace tenhou {
     const Image *DisplayArtwork::FindSprite(unsigned id) {
         const auto *source = variants_.GetSprite(id);
         if (!source) return nullptr;
-        if (width_ == 1440) return &images_.emplace(id, *source).first->second;
+        if (width_ != 1024) return &images_.emplace(id, *source).first->second;
         Image scaled;
         scaled.width = std::max(1, static_cast<int>(source->width / 1.4));
         scaled.height = std::max(1, static_cast<int>(source->height / 1.4));
@@ -193,13 +205,20 @@ namespace tenhou {
                                         [&](const Resource &r) { return r.id == id; });
         if (found == pack_->entries.end()) throw std::runtime_error(
             "Missing original display sprite " + std::to_string(id));
-        return images_.emplace(id, DecodeImage(*found)).first->second;
-    }
-
-    const Image &DisplayArtwork::GetHd(unsigned id) {
-        if (!FindTextImageByOrigin(id)) throw std::runtime_error("Unsupported display image ID " + std::to_string(id));
-        if (const auto *hd = variants_.GetHdSprite(id)) return *hd;
-        return Get(id);
+        auto decoded = DecodeImage(*found);
+        if (width_ == 1024 && pack_->signature == "res2") {
+            Image scaled;
+            scaled.width = std::max(1, static_cast<int>(decoded.width / 1.4));
+            scaled.height = std::max(1, static_cast<int>(decoded.height / 1.4));
+            scaled.bgra.resize(std::size_t(scaled.width) * scaled.height * 4);
+            for (int y = 0; y < scaled.height; ++y) for (int x = 0; x < scaled.width; ++x) {
+                const auto from = (std::size_t(y * decoded.height / scaled.height) * decoded.width + x * decoded.width / scaled.width) * 4;
+                const auto to = (std::size_t(y) * scaled.width + x) * 4;
+                std::copy_n(decoded.bgra.data() + from, 4, scaled.bgra.data() + to);
+            }
+            return images_.emplace(id, std::move(scaled)).first->second;
+        }
+        return images_.emplace(id, std::move(decoded)).first->second;
     }
 
     float DisplayArtwork::MeasureText(const std::string &text, float em) {
@@ -367,14 +386,22 @@ namespace tenhou {
                 if (!SeatPresent(state.seat_mask, seat) || (!flower && (!(state.type & 16) || player.nuki.empty()))) continue;
                 // 00480930 maps the original entity sentinel 254 to variant 37.
                 const auto &tile = tiles.Get({'n', 0, flower ? player.flowers.front() : -1, seat});
+                const double to_ui = tiles.width() > 0 && tiles.width() != width_
+                                         ? double(width_) / double(tiles.width())
+                                         : 1.0;
+                const RECT anchor{
+                    static_cast<LONG>(std::lround(tile.x * to_ui)),
+                    static_cast<LONG>(std::lround(tile.y * to_ui)),
+                    static_cast<LONG>(std::lround((tile.x + tile.image.width) * to_ui)),
+                    static_cast<LONG>(std::lround((tile.y + tile.image.height) * to_ui))
+                };
                 const auto text = (flower ? L"\n×" : L"\nx") + std::to_wstring(flower ? player.flowers.size() : player.nuki.size());
                 Gdiplus::RectF measure;
                 // WM_CREATE measures the fixed two-line PE string, not the
                 // current count. The standard mode leaves the first line blank.
                 g.MeasureString(L"99+\nx99", -1, &font, Gdiplus::PointF(0, 0), &measure);
                 const auto layout = OriginalNukiCountLayout(
-                    {tile.x, tile.y, tile.x + tile.image.width, tile.y + tile.image.height},
-                    seat, static_cast<int>(measure.Width), static_cast<int>(measure.Height));
+                    anchor, seat, static_cast<int>(measure.Width), static_cast<int>(measure.Height));
                 g.ResetTransform();
                 if (scale_x != 1.0f || scale_y != 1.0f) g.ScaleTransform(scale_x, scale_y);
                 g.TranslateTransform(static_cast<float>(layout.bounds.left), static_cast<float>(layout.bounds.top));

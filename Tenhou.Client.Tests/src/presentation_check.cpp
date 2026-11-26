@@ -4,8 +4,7 @@
 #include "tile_shadow.hpp"
 #include "wall_scene.hpp"
 #include "d2d_table_renderer.hpp"
-#include "hd_tile_atlas.hpp"
-#include "hd_tile_quads.hpp"
+#include "window_layout.hpp"
 #include <commctrl.h>
 #include <algorithm>
 #include <iostream>
@@ -570,9 +569,7 @@ namespace {
 
     void RiichiFlights(const std::filesystem::path &resources) {
         TableArtwork art;
-        for (const int width: {1024, 1440}) {
-            if (width == 1024 && (!std::filesystem::exists(resources / "packs/_obj0.dat") ||
-                                  !std::filesystem::exists(resources / "packs/_obj1.dat"))) continue;
+        for (const int width: kTableCanvasWidths) {
             art.Load(resources, width);
             const auto origin = [&](const TableTile &tile) {
                 const auto &image = art.Get(tile);
@@ -869,36 +866,28 @@ namespace {
         result.Show(false);
     }
 
-    void HdArtworkAndScalingCheck(HWND parent, const std::filesystem::path &resources) {
-        // 1. Validate 44-slice atlas mapping & 694 perspective quads
-        for (unsigned v = 0; v <= 33; ++v) Check(HdTileFaceSlice(v) == static_cast<int>(v), "HD face slice mismatch 0..33");
-        Check(HdTileFaceSlice(34) == -1 && HdTileFaceSlice(37) == -1, "Blank/back tile must not map to HD face slice");
-        Check(HdTileFaceSlice(35) == 34 && HdTileFaceSlice(36) == 35, "Dragon face slice mismatch");
-        for (unsigned v = 40; v <= 47; ++v) Check(HdTileFaceSlice(v) == static_cast<int>(v - 40 + 36), "Flower face slice mismatch");
-        for (const auto &[fam, slot, dir] : std::vector<std::tuple<char, int, int>>{
-                 {'t', 0, 0}, {'t', 13, 0}, {'k', 0, 0}, {'k', 40, 0}, {'k', 0, 1}, {'k', 0, 2}, {'k', 0, 3},
-                 {'n', 0, 0}, {'n', 20, 0}, {'n', 60, 0}, {'y', 0, 0}, {'y', 0, 1}}) {
-            const auto *q = FindHdTileFaceQuad(fam, slot, dir);
-            Check(q != nullptr, "Missing HD perspective tile quad");
-            const float area = (q->x1 - q->x0) * (q->y3 - q->y0) - (q->y1 - q->y0) * (q->x3 - q->x0);
-            Check(area > 20.0f, "Degenerate HD perspective tile quad");
-        }
+    void MultiResolutionArtworkAndScalingCheck(HWND parent, const std::filesystem::path &resources) {
+        // 1. Verify original [STATUS] SCREENSIZE parsing & 4-tier auto selection
+        Check(ParseScreenSizeSetting("") == 0 && ParseScreenSizeSetting("default") == 0, "Auto screen size parse failed");
+        Check(ParseScreenSizeSetting("1024x768") == 1024 && ParseScreenSizeSetting("1440x1080") == 1440 &&
+              ParseScreenSizeSetting("1920x1440") == 1920 && ParseScreenSizeSetting("2640x1980") == 2640,
+              "4-tier screen size parse failed");
+        Check(std::string(FormatScreenSizeSetting(0)) == "default" &&
+              std::string(FormatScreenSizeSetting(1024)) == "1024x768" &&
+              std::string(FormatScreenSizeSetting(1440)) == "1440x1080" &&
+              std::string(FormatScreenSizeSetting(1920)) == "1920x1440" &&
+              std::string(FormatScreenSizeSetting(2640)) == "2640x1980",
+              "4-tier screen size format failed");
+        Check(SelectAutoTableWidth(1024, 768) == 1024 && SelectAutoTableWidth(1366, 768) == 1024,
+              "Auto tier for <=1024 failed");
+        Check(SelectAutoTableWidth(1440, 1080) == 1440 && SelectAutoTableWidth(1920, 1080) == 1440,
+              "Auto tier for 1080p failed");
+        Check(SelectAutoTableWidth(1920, 1440) == 1920 && SelectAutoTableWidth(2560, 1440) == 1920,
+              "Auto tier for 2K failed");
+        Check(SelectAutoTableWidth(2640, 1980) == 2640 && SelectAutoTableWidth(3840, 2160) == 2640,
+              "Auto tier for 4K failed");
 
-        // 2. Validate all 7 redrawn HD sprites load with exact expected dimensions
-        DisplayArtwork display;
-        display.Configure(resources, 1440);
-        const std::pair<unsigned, std::pair<int, int>> expected_hd[]{
-            {401, {56, 104}}, {402, {56, 104}}, {440, {560, 204}},
-            {466, {456, 56}}, {589, {976, 688}}, {591, {1456, 660}}, {592, {1180, 860}}
-        };
-        for (const auto &[id, dims] : expected_hd) {
-            const auto &im = display.GetHd(id);
-            Check(im.width == dims.first && im.height == dims.second &&
-                  im.bgra.size() == static_cast<std::size_t>(dims.first) * dims.second * 4,
-                  "Redrawn HD sprite dimensions mismatch");
-        }
-
-        // 3. Verify D2DTableRenderer Classic vs HD rendering, scaling (1440x1080 & 2560x1440), and device-loss recovery
+        // 2. Verify all 4 native table & shadow packs load and decode
         ReplayState state;
         state.initialized = true;
         state.seat_mask = 0x0f;
@@ -916,23 +905,17 @@ namespace {
         state.players[0].drawn_tile = 135;
         state.players[0].flowers = {136};
 
-        D2DTableRenderer renderer(true); // WARP for deterministic CI execution
-        renderer.Configure(resources, 1440);
-        ClientPreferences classic_prefs;
-        classic_prefs.hd_artwork = false;
-        renderer.SetPreferences(classic_prefs, {}, true);
-
-        const auto render_to_buf = [&](int w, int h) -> std::vector<std::uint8_t> {
+        const auto render_tier = [&](D2DTableRenderer &renderer, int canvas_w, int vw, int vh) -> std::vector<std::uint8_t> {
             BITMAPINFO bi{};
-            bi.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
+            bi.bmiHeader = {sizeof(BITMAPINFOHEADER), vw, -vh, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
             HDC dc = CreateCompatibleDC(nullptr);
             void *bits = nullptr;
             HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
             HGDIOBJ old = SelectObject(dc, bmp);
             TableRenderFrame frame;
-            frame.canvas_width = 1440;
-            frame.bounds = {0, 0, w, h};
-            frame.destination = FitNativeCanvasBounds(frame.bounds, 1440);
+            frame.canvas_width = canvas_w;
+            frame.bounds = {0, 0, vw, vh};
+            frame.destination = FitNativeCanvasBounds(frame.bounds, canvas_w);
             frame.state = state;
             frame.red_tiles = true;
             frame.online_mode = true;
@@ -949,7 +932,7 @@ namespace {
                                   true, false, false, true, TableActionButtonStyle::Sprite440, {}};
             frame.buttons.push_back(btn);
             renderer.RenderToDc(dc, frame);
-            std::vector<std::uint8_t> out(static_cast<std::size_t>(w) * h * 4);
+            std::vector<std::uint8_t> out(static_cast<std::size_t>(vw) * vh * 4);
             std::memcpy(out.data(), bits, out.size());
             SelectObject(dc, old);
             DeleteObject(bmp);
@@ -957,22 +940,27 @@ namespace {
             return out;
         };
 
-        const auto classic_1440 = render_to_buf(1440, 1080);
-        Check(!renderer.UsingHdArtwork(), "Classic mode unexpectedly activated HD pipeline");
+        D2DTableRenderer renderer(true); // WARP for deterministic CI execution
+        ClientPreferences prefs;
+        for (const int canvas_w : kTableCanvasWidths) {
+            const auto *shadow_pack = ResolveShadowPack(resources, canvas_w);
+            Check(shadow_pack != nullptr && shadow_pack->Get({'t', 0, 0, 0}) != nullptr,
+                  ("Missing native shadow pack for tier " + std::to_string(canvas_w)).c_str());
+            renderer.Configure(resources, canvas_w);
+            renderer.SetPreferences(prefs, {}, true);
+            const auto native = render_tier(renderer, canvas_w, canvas_w, canvas_w * 3 / 4);
+            Check(!native.empty(), ("Failed to render native tier " + std::to_string(canvas_w)).c_str());
+            const auto wide = render_tier(renderer, canvas_w, 1600, 900);
+            Check(!wide.empty(), ("Failed to scale tier " + std::to_string(canvas_w)).c_str());
+        }
 
-        ClientPreferences hd_prefs;
-        hd_prefs.hd_artwork = true;
-        renderer.SetPreferences(hd_prefs, {}, true);
-        const auto hd_1440 = render_to_buf(1440, 1080);
-        Check(renderer.UsingHdArtwork(), "HD mode did not activate GPU homography pipeline");
-        Check(classic_1440 != hd_1440, "HD rendered frame did not differ from Classic bitmap frame");
-
-        // Free scaling to 2560x1440 + simulated device loss recovery in HD mode
-        const auto hd_2k = render_to_buf(2560, 1440);
-        Check(renderer.UsingHdArtwork() && !hd_2k.empty(), "HD 2560x1440 rendering failed");
+        // Verify deterministic device loss recovery at highest 2640x1980 tier
+        renderer.Configure(resources, 2640);
+        renderer.SetPreferences(prefs, {}, true);
+        const auto before_loss = render_tier(renderer, 2640, 1920, 1080);
         renderer.SimulateDeviceLoss();
-        const auto hd_2k_recovered = render_to_buf(2560, 1440);
-        Check(renderer.UsingHdArtwork() && hd_2k == hd_2k_recovered, "HD pipeline did not recover deterministically after device loss");
+        const auto after_loss = render_tier(renderer, 2640, 1920, 1080);
+        Check(before_loss == after_loss, "2640x1980 rendering did not recover deterministically after device loss");
         (void) parent;
     }
 }
@@ -998,10 +986,10 @@ int main(int argc, char **argv) {
         LobbyPresentationCheck::ProtocolOpening(parent, argv[1], "guobiao");
         LobbyPresentationCheck::Run(parent, argv[1]);
         RunTextTableChecks(parent, argv[1]);
-        HdArtworkAndScalingCheck(parent, argv[1]);
+        MultiResolutionArtworkAndScalingCheck(parent, argv[1]);
         DestroyWindow(parent); parent = nullptr;
         Gdiplus::GdiplusShutdown(gdiplus);
-        std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation, HD SVG homography, and recovery\n";
+        std::cout << "PASS guobiao flowers, 18-stack geometry/shadows, replacement origins, 82 fan mappings, PNG overrides/paging; shared presentation, 4-tier native resolution packs, and recovery\n";
         return 0;
     } catch (const std::exception &error) {
         if (parent) DestroyWindow(parent);

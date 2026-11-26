@@ -1,5 +1,6 @@
 #include "tile_geometry.hpp"
 #include "resource_manager.hpp"
+#include "window_layout.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -19,30 +20,35 @@ namespace tenhou {
     }
 
     TileOffset TableTileOffset(const TableTile &tile, int width) {
+        const auto scale_hd = [&](int v) -> int {
+            if (width <= 1440) return v;
+            return static_cast<int>(std::lround(v * (double(width) / 1440.0)));
+        };
         // FUN_004902f0 stores literal native-pixel wall offsets from the PE table.
-        if (tile.family == 'y') return {tile.dx, tile.dy};
+        if (tile.family == 'y') return {scale_hd(tile.dx), scale_hd(tile.dy)};
         TileOffset offset{static_cast<int>(tile.dx * width / 1024.0), static_cast<int>(tile.dy * width / 1024.0)};
         if (tile.native_draw_offset) {
             constexpr int x[]{4, -1, -3, -1}, y[]{0, -3, 0, 3}; // PE 004e6098 / 004e60a8.
-            offset.x += x[tile.direction];
-            offset.y += y[tile.direction];
+            offset.x += scale_hd(x[tile.direction]);
+            offset.y += scale_hd(y[tile.direction]);
         }
         if (tile.river_waiting) {
             // FUN_00491fe0 discard: original signed-short placeholder offsets,
-            // PE 004e61b0 (x) and 004e61a0 (y), literal pixels at either canvas.
+            // PE 004e61b0 (x) and 004e61a0 (y), literal pixels at 1024/1440, scaled above 1440.
             static constexpr int x[]{15, 5, -15, -5}, y[]{5, -15, -5, 15};
-            offset.x += x[tile.direction];
-            offset.y += y[tile.direction];
+            offset.x += scale_hd(x[tile.direction]);
+            offset.y += scale_hd(y[tile.direction]);
         }
+        const bool hd_table = width != 1024;
         if (tile.family == 'k' && tile.river_reach_slot >= 0) {
             // FUN_00478be0: literal PE 004fd518 / 004fd724, indexed by
             // declaration slot (not following slot); only the rest of that row.
             const int slot = tile.river_reach_slot, seat = tile.direction;
             if (slot < 24 && slot != 5 && slot != 11) {
                 static constexpr int x[2][4]{{13, -1, -11, -1}, {18, -2, -16, -2}};
-                offset.x += x[width == 1440][seat];
-                if (seat == 1) offset.y += width == 1440 ? (slot >= 18 ? -11 : -12) : -9;
-                if (seat == 3) offset.y += width == 1440 ? (slot >= 18 ? 13 : 12) : (slot >= 18 ? 10 : 9);
+                offset.x += scale_hd(x[hd_table][seat]);
+                if (seat == 1) offset.y += scale_hd(hd_table ? (slot >= 18 ? -11 : -12) : -9);
+                if (seat == 3) offset.y += scale_hd(hd_table ? (slot >= 18 ? 13 : 12) : (slot >= 18 ? 10 : 9));
             }
         }
         if (tile.family != 'n' || !tile.meld_sideways) return offset;
@@ -75,11 +81,14 @@ namespace tenhou {
                 }
             }
         };
+        int sum_x = 0, sum_y = 0;
         for (int slot = 0; slot < std::min(16, tile.slot % 20); ++slot)
             if (tile.meld_sideways & (1u << slot)) {
-                offset.x += shifts[width == 1440][tile.direction][0][slot];
-                offset.y += shifts[width == 1440][tile.direction][1][slot];
+                sum_x += shifts[hd_table][tile.direction][0][slot];
+                sum_y += shifts[hd_table][tile.direction][1][slot];
             }
+        offset.x += scale_hd(sum_x);
+        offset.y += scale_hd(sum_y);
         return offset;
     }
 
@@ -271,20 +280,25 @@ namespace tenhou {
     }
 
     void TileGeometryCatalog::Load(const std::filesystem::path &directory, int width) {
-        if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported table canvas");
-        const int number = width == 1024 ? 0 : 2;
-        auto even = std::make_shared<ObjectPack>(
-            LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TablePackSd : AssetId::TablePack)));
-        auto odd = std::make_shared<ObjectPack>(
-            LoadObjectPack(ResourceManager(directory).Path(width == 1024 ? AssetId::TableCompanionPackSd : AssetId::TableCompanionPack)));
-        if (even->signature != "obj" + std::to_string(number) || odd->signature != "obj" + std::to_string(number + 1))
+        if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
+        const AssetId even_id = width == 1024 ? AssetId::TablePackSd :
+                                width == 1440 ? AssetId::TablePack :
+                                width == 1920 ? AssetId::TablePack1920 : AssetId::TablePack2640;
+        const AssetId odd_id = width == 1024 ? AssetId::TableCompanionPackSd :
+                               width == 1440 ? AssetId::TableCompanionPack :
+                               width == 1920 ? AssetId::TableCompanionPack1920 : AssetId::TableCompanionPack2640;
+        const std::string expected_even = width == 1440 ? "obj2" : "obj0";
+        const std::string expected_odd = width == 1440 ? "obj3" : "obj1";
+        auto even = std::make_shared<ObjectPack>(LoadObjectPack(ResourceManager(directory).Path(even_id)));
+        auto odd = std::make_shared<ObjectPack>(LoadObjectPack(ResourceManager(directory).Path(odd_id)));
+        if (even->signature != expected_even || odd->signature != expected_odd)
             throw std::runtime_error("Wrong table object pack resolution");
         LoadPacks(std::move(even), std::move(odd), width);
     }
 
     void TileGeometryCatalog::LoadPacks(std::shared_ptr<const ObjectPack> even, std::shared_ptr<const ObjectPack> odd,
                                         int width) {
-        if (width != 1024 && width != 1440) throw std::runtime_error("Unsupported table canvas");
+        if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
         if (!even || !odd) throw std::runtime_error("Missing table object packs");
         even_ = std::move(even);
         odd_ = std::move(odd);

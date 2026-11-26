@@ -87,9 +87,6 @@ namespace tenhou {
         void Configure(const std::filesystem::path &directory, int width);
 
         const Image &Get(unsigned id);
-        // Returns the high-resolution replacement sprite (images/sprites/hd/{id}.png)
-        // when present; otherwise falls back to the classic sprite Get(id).
-        const Image &GetHd(unsigned id);
 
         static float MeasureText(const std::string &text, float em);
 

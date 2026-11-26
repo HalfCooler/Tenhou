@@ -7,11 +7,15 @@ tenhou_asset(LobbyMusic audio/_bgm0.wav FILE 0 REQUIRED _bgm0.wav)
 tenhou_asset(LobbyMusicAlternate audio/_bgm1.wav FILE 0 REQUIRED _bgm1.wav)
 # The bundled display pack contains the seven original images and sound effects.
 tenhou_asset(DisplayPack packs/_res2.dat FILE 0 REQUIRED _res2.dat)
+# Four native 4:3 table object packs (1024, 1440, 1920, 2640).
+tenhou_asset(TablePackSd packs/_obj0.dat FILE 0 REQUIRED _obj0.dat)
+tenhou_asset(TableCompanionPackSd packs/_obj1.dat FILE 0 REQUIRED _obj1.dat)
 tenhou_asset(TablePack packs/_obj2.dat FILE 0 REQUIRED _obj2.dat)
 tenhou_asset(TableCompanionPack packs/_obj3.dat FILE 0 REQUIRED _obj3.dat)
-# The repository ships HD artwork. Keep optional SD packs usable via --resources.
-tenhou_asset(TablePackSd packs/_obj0.dat FILE 0 OPTIONAL _obj0.dat)
-tenhou_asset(TableCompanionPackSd packs/_obj1.dat FILE 0 OPTIONAL _obj1.dat)
+tenhou_asset(TablePack1920 packs/_obj0_1920x1440.dat FILE 0 REQUIRED _obj0_1920x1440.dat)
+tenhou_asset(TableCompanionPack1920 packs/_obj1_1920x1440.dat FILE 0 REQUIRED _obj1_1920x1440.dat)
+tenhou_asset(TablePack2640 packs/_obj0_2640x1980.dat FILE 0 REQUIRED _obj0_2640x1980.dat)
+tenhou_asset(TableCompanionPack2640 packs/_obj1_2640x1980.dat FILE 0 REQUIRED _obj1_2640x1980.dat)
 # Exact original RT_DIALOG bytes; IDs also identify settings page handlers.
 tenhou_asset(Dialog104 dialogs/104.bin EMBEDDED 104 REQUIRED -)
 tenhou_asset(Dialog105 dialogs/105.bin EMBEDDED 105 REQUIRED -)
@@ -21,8 +25,11 @@ tenhou_asset(Dialog108 dialogs/108.bin EMBEDDED 108 REQUIRED -)
 tenhou_asset(Dialog109 dialogs/109.bin EMBEDDED 109 REQUIRED -)
 tenhou_asset(Dialog110 dialogs/110.bin EMBEDDED 110 REQUIRED -)
 tenhou_asset(Dialog114 dialogs/114.bin EMBEDDED 114 REQUIRED -)
-# Fixed original 0040c1d0 output, zlib-compressed sdw2 data.
+# Fixed original 0040c1d0 output (zlib-compressed sdw2 for 1440) and native sdw0 packs for 1024/1920/2640.
 tenhou_asset(TileShadows shadows/shadow-hd.dat EMBEDDED 2000 REQUIRED -)
+tenhou_asset(TileShadowsSd shadows/_sdw0_1024x768.dat FILE 0 REQUIRED _sdw0_1024x768.dat)
+tenhou_asset(TileShadows1920 shadows/_sdw0_1920x1440.dat FILE 0 REQUIRED _sdw0_1920x1440.dat)
+tenhou_asset(TileShadows2640 shadows/_sdw0_2640x1980.dat FILE 0 REQUIRED _sdw0_2640x1980.dat)
 
 # Flowers retain their dedicated tile-face artwork.
 tenhou_asset(FlowerMei images/variants/flowers/梅.png FILE 0 REQUIRED -)
@@ -34,13 +41,10 @@ tenhou_asset(FlowerXia images/variants/flowers/夏.png FILE 0 REQUIRED -)
 tenhou_asset(FlowerQiu images/variants/flowers/秋.png FILE 0 REQUIRED -)
 tenhou_asset(FlowerDong images/variants/flowers/冬.png FILE 0 REQUIRED -)
 
-# Optional HD PNG overrides for the original display images.
+# Optional PNG overrides for the seven non-text original display images.
 set(display_sprite_ids 401 402 440 466 589 591 592)
 foreach(sprite_id IN LISTS display_sprite_ids)
     tenhou_sprite(${sprite_id})
-    tenhou_asset(HdSprite${sprite_id} "images/sprites/hd/${sprite_id}.png" FILE 0 OPTIONAL -)
 endforeach()
-# Offline SVG-baked HD mahjong tile-face atlas (44 slices, 8x6 grid of 384x512 cells).
-tenhou_asset(HdTileFaces "images/hd_tiles/faces.png" FILE 0 OPTIONAL -)
 # Private TrueType source already present in the repository; no system-font copying.
 tenhou_asset(TextFont "fonts/HGSeikaiShotaiPRO.TTF" FILE 0 OPTIONAL -)

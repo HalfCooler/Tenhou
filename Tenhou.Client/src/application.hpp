@@ -26,7 +26,6 @@ namespace tenhou {
         std::filesystem::path resource_directory;
         std::filesystem::path replay;
         bool offline_lobby = false, service_lobby = false;
-        std::optional<bool> hd_artwork;
         int initial_width = 0, initial_height = 0;
     };
 
@@ -67,7 +66,9 @@ namespace tenhou {
         void UpdateWindowTitle();
         void ApplyClientSizePreset(int client_width, int client_height);
         void SetFullscreen(bool enabled);
-        void ToggleHdArtwork();
+        int ResolveTableWidth(int client_width, int client_height) const;
+        void ApplyScreenWidth(int next_width);
+        void SyncAutoScreenWidth(int client_width, int client_height);
 
         void OpenLog();
         void RotateLogIfNeeded();
@@ -98,10 +99,10 @@ namespace tenhou {
         int width_ = 1440, height_ = 1080;
         bool fullscreen_ = false;
         bool start_maximized_ = false, start_fullscreen_ = false;
-        bool hd_artwork_ = false;
         WINDOWPLACEMENT windowed_placement_{sizeof(WINDOWPLACEMENT)};
         DWORD windowed_style_ = 0, windowed_ex_style_ = 0;
         std::string view_;
+        int configured_screen_width_ = 0; // 0 = auto ("default"), or 1024/1440/1920/2640.
         int screen_width_ = 1440;
         bool original_display_ = true;
         bool sound_effects_only_ = false;

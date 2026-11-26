@@ -158,7 +158,8 @@ namespace tenhou {
         artwork_.SetRedTiles(state.red_tiles);
         artwork_.BeginFrame();
 
-        const auto shadows = BuildTileShadows(tiles, artwork_, ShadowPack::Embedded());
+        const auto *shadow_pack = ResolveShadowPack(directory_, w);
+        const auto shadows = shadow_pack ? BuildTileShadows(tiles, artwork_, *shadow_pack) : std::vector<TileShadow>{};
         const auto shadow_damage = TileShadowDamage(tiles, shadows, artwork_, red);
 
         std::ostringstream stamp;
@@ -186,11 +187,13 @@ namespace tenhou {
             const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
             atomic_layers.push_back({cx - radius, cy - radius, cx + radius, cy + radius});
             if (frame.online_mode) {
+                const double furiten_scale = w == 1024 ? 1.0 : 1.4 * (double(w) / 1440.0);
                 metadata_regions.push_back(atomic_layers.front());
                 metadata_regions.push_back({w - static_cast<int>(220 * unit), 0, w, static_cast<int>(200 * unit)});
                 metadata_regions.push_back({
-                    static_cast<LONG>(300 * (w == 1440 ? 1.4 : 1.0)), OriginalAutoButtonRect(w, 0).top,
-                    static_cast<LONG>(300 * (w == 1440 ? 1.4 : 1.0) + 100), OriginalAutoButtonRect(w, 0).top + 35
+                    static_cast<LONG>(300 * furiten_scale), OriginalAutoButtonRect(w, 0).top,
+                    static_cast<LONG>(300 * furiten_scale + 100 * (w == 1024 ? 1.0 : double(w) / 1440.0)),
+                    OriginalAutoButtonRect(w, 0).top + static_cast<LONG>(35 * (w == 1024 ? 1.0 : double(w) / 1440.0))
                 });
                 for (int i = 0; i < 4; ++i) metadata_regions.push_back(OriginalAutoButtonRect(w, i));
             }
@@ -200,7 +203,7 @@ namespace tenhou {
         if (interaction && !interaction->countdown.empty()) {
             for (const auto &t: tiles)
                 if (t.tile.direction == 0 && std::string(t.tile.role) == "hand") {
-                    RECT r{0, t.y - 3, w, t.y + 64};
+                    RECT r{0, t.y - 3, w, t.y + static_cast<LONG>(64 * unit)};
                     if (IsRectEmpty(&clock_overlay)) clock_overlay = r;
                     else {
                         RECT united{};
@@ -229,6 +232,8 @@ namespace tenhou {
 
         const RECT dest{frame.destination.left, frame.destination.top,
                         frame.destination.right, frame.destination.bottom};
+        const int ui_w = w == 1024 ? 1024 : 1440;
+        const float hud_scale = static_cast<float>(w) / static_cast<float>(ui_w);
 
         native_buffer_.Render(
             dc, w, dest, tiles, artwork_, red, {}, stamp.str(),
@@ -242,7 +247,7 @@ namespace tenhou {
                 {
                     Gdiplus::Graphics graphics(memory);
                     ClipGraphics(graphics, region);
-                    shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow);
+                    shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow, w, h);
                     const auto matrix = [](float r, float g, float b, float dr, float dg, float db) {
                         return Gdiplus::ColorMatrix{{{r, 0, 0, 0, 0},
                                                      {0, g, 0, 0, 0},
@@ -322,15 +327,17 @@ namespace tenhou {
                     if (Overlaps(region, atomic_layers.front())) {
                         const auto draw_hud = [&](HDC target) {
                             Gdiplus::Graphics g(target);
-                            display_artwork_.PaintHudImages(g, state);
+                            display_artwork_.PaintHudImages(g, state, {}, hud_scale, hud_scale);
                         };
                         if (reference_rendering_) draw_hud(memory);
                         else hud_cache_.Paint(memory, w, atomic_layers.front(), TableMetadata(state), draw_hud);
                     }
                     Gdiplus::Graphics graphics(memory);
                     ClipGraphics(graphics, region);
+                    if (hud_scale != 1.0f) graphics.ScaleTransform(hud_scale, hud_scale);
                     display_artwork_.PaintChromeBackground(graphics, interaction ? interaction->hovered_button : -1);
-                    display_artwork_.PaintNukiCounts(graphics, state, artwork_);
+                    if (hud_scale != 1.0f) graphics.ResetTransform();
+                    display_artwork_.PaintNukiCounts(graphics, state, artwork_, hud_scale, hud_scale);
                 } else if (frame.online_mode) {
                     const auto font = CreateFontW(-static_cast<int>(22 * unit), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
                                                   FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -435,7 +442,7 @@ namespace tenhou {
             auto layout = renderer.Layout(*key);
             const auto &ink = layout.metrics.ink;
             const double sd = width_ == 1024 ? 1.0 / 1.4 : 1.0;
-            const double fit = double(bw) / (width_ == 1440 ? 140 : 100);
+            const double fit = double(bw) / (width_ == 1024 ? 100 : 140);
             TextRenderContext context;
             context.native_layout_scale = sd;
             context.viewport_scale_x = context.viewport_scale_y = fit;

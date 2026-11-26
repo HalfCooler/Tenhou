@@ -25,9 +25,6 @@ namespace tenhou {
         void Load(const std::filesystem::path &directory, int width);
 
         const ObjectImage &Get(const TableTile &tile, bool red = true);
-        // Blank tile body (variant 34 for face-up tiles, 37 for backs) colored with tile_rgb,
-        // used by the HD GPU perspective renderer before projecting SVG-baked faces.
-        const ObjectImage &GetBody(const TableTile &tile);
         const ObjectImage &GetFlight(const TileFlightImage &flight, bool red);
 
         TileOffset Offset(const TableTile &tile) { return geometry_.Offset(tile); }
@@ -39,7 +36,7 @@ namespace tenhou {
         void BeginFrame();
 
         std::size_t cached_bytes() const { return cached_bytes_; }
-        void SetCacheBudget(std::size_t bytes) { cache_budget_ = bytes; }
+        void SetCacheBudget(std::size_t bytes) { cache_budget_ = bytes; custom_budget_ = true; }
         std::size_t evictions() const { return evictions_; }
         int width() const { return geometry_.width(); }
 
@@ -63,6 +60,7 @@ namespace tenhou {
         std::uint64_t frame_ = 1;
         std::size_t cached_bytes_ = 0;
         std::size_t cache_budget_ = 32 * 1024 * 1024, evictions_ = 0;
+        bool custom_budget_ = false;
     };
 
     inline void SortTableScene(std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red = true) {

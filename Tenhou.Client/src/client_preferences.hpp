@@ -26,7 +26,6 @@ namespace tenhou {
         std::array<int, 3> tile_rgb{0, 0, 38};
         std::array<std::string, 10> background_lhsv{"2", "0", "255", "255", "", "", "", "", "", ""};
         std::string background_source;
-        bool hd_artwork = false;
 
         std::string BackgroundLhsv() const;
 

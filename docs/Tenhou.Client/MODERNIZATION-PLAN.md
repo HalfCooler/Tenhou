@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | **Phase A** | 基础设施全面现代化：原生 x64、核心层去平台/架构类型（UTF-8 与 `<cstdint>`）、主窗口统一 `W` + 滚动日志、进程级 `SharedAssetStore`、音频迁移至 `miniaudio`（WASAPI）、网络栈独立 I/O 线程（`getaddrinfo` + `WSAPoll`）与纯 C++ `ini_store` | **已完成并验收** |
 | **Phase B** | 渲染性能专项优化：建立 `tenhou_render_bench` 基准、消除主循环 1440×1080 Host DIB 往返、`ID2D1StrokeStyle` 焦点框、静态底图缓存、消除阴影 `O(N²)` 扫描与增量阴影上传、O(1) LRU 与结算背景缓存 | **已完成并验收** |
-| **Phase C** | 高清化与自由缩放：基于 `lietxia/mahjong_graphic` 的构建期 SVG 烘焙管线、GPU 四点透视牌面模型、7 张残留 Sprites（`401/402/440/466/589/591/592`）重绘与**人工视觉验收门禁**、解除 `1440×1080` 固定窗口限制 | **已完成，待人工验视签收** |
+| **Phase C** | 4 档原生分辨率材质与原版分辨率选择恢复：回滚 SVG 烘焙牌面与 7 张重绘精灵至原版视觉风格；接入原版 `1024×768` 与 C-EGG 授权 CDN `1920×1440` / `2640×1980` 原生 3D 透视牌面及配套阴影包；恢复原版设置页 `画面`（Dialog `114`）与 `[STATUS] SCREENSIZE` / `FULLSCREENSIZE` 分辨率选择逻辑，并保留自由窗口缩放与无边框全屏 | **已完成并验收** |
 | **Phase D** | 跨平台结构解耦：拆分大文件、提取声明式 `SettingsSchema`（移除 `104.bin`–`114.bin` 对话框依赖）与视图 ViewModel、清理最后 Win32 尾项（`RCDATA`/`bcrypt`/`ITextRasterizer`），再替换 UI 壳层 | 待开始 |
 
 ---
@@ -95,33 +95,36 @@
 
 ---
 
-## Phase C 已确认的取证与实施细节
+## Phase C 已确认的取证与实施细节（2026-11-26 方案切换为 4 档原生材质）
 
-1. **构建期 SVG 烘焙管线（零运行时 SVG 解析，零外部依赖）**
-   - 将 `lietxia/mahjong_graphic`（commit `3e275804ff58325306710bef3a7406860444bc6a`，自由商用许可）全部 44 张透明背景 SVG 母版（33 张标准牌面 + 3 张赤宝 + 8 张花牌；白板 `5z` 复用空白象牙白牌体）纳入 `Tenhou.Client/assets/sources/mahjong_graphic/`，同步更新 `README.md` 与 `THIRD-PARTY-NOTICES.md`。
-   - 新增原生零依赖构建期工具 [svg_bake.cpp](../../Tenhou.Client/tools/svg_bake.cpp)（Windows 10+ Direct2D `ID2D1DeviceContext5` + 内置 `<style>` 类内联展开 + WIC PNG 编码），与一键重烘焙脚本 [Bake-HdAssets.ps1](../../scripts/Bake-HdAssets.ps1)，将 44 张牌面批量烘焙为 `3072×3072`（`8×6` 网格，单格 `384×512`）预乘/直通图集 `Tenhou.Client/assets/images/hd_tiles/faces.png`（约 910 KB），并通过 [catalog.cmake](../../Tenhou.Client/assets/catalog.cmake) 自动发布至 `resources/images/hd_tiles/faces.png`。
-2. **原版 694 槽位透视反演与 GPU 四点透视单应（Homography）管线**
-   - 通过 [extract_tile_quads.py](../../Tenhou.Client/tools/extract_tile_quads.py) 对原版 `_obj2.dat` / `_obj3.dat` 中全部 694 个朝上牌槽位（`variant == 34`）的 35 种牌面像素并集凸包拟合与一万红黑质心朝向标定，生成精确 4 顶点透视表 [hd_tile_quads.hpp](../../Tenhou.Client/src/hd_tile_quads.hpp)（`694/694` 全部一次通过，自动精确区分 4 家方位与横置立直/鸣牌 `n/20`, `n/60`, `k/40`）。
-   - 新增 [hd_tile_shader.hlsl](../../Tenhou.Client/src/hd_tile_shader.hlsl) 与离线 `fxc.exe` 预编译字节码 [hd_tile_shader_bc.hpp](../../Tenhou.Client/src/hd_tile_shader_bc.hpp)（零 `d3dcompiler` 运行时依赖），以及 [hd_tile_pipeline.hpp](../../Tenhou.Client/src/hd_tile_pipeline.hpp) / [hd_tile_pipeline.cpp](../../Tenhou.Client/src/hd_tile_pipeline.cpp)：上传 44 层 `Texture2DArray` + 硬件 `GenerateMips` 完整 Mipmap 链 + 16× 各向异性过滤，由对角线交点解析齐次权重 `(q0..q3)` 实现数学精确无折痕四点透视单应投影。
-   - [d2d_table_renderer.cpp](../../Tenhou.Client/src/d2d_table_renderer.cpp) 保留 Classic 模式为默认（零像素偏差兼容全部既有回归）；开启 `HdArtwork` 后，`static_board` / `base`、牌张纹理与 HUD 路径文字均直接在目标视口原生像素分辨率合成，并支持 `D2D1_COMPOSITE_MODE_SOURCE_ATOP` 精确接收阴影与设备丢失恢复。
-3. **7 张剩余 UI 精灵高清矢量重绘（人工视觉验收门禁）**
-   - 核对 `_res2.dat` 原始尺寸、色值与轮廓后，通过 [generate_hd_sprites.py](../../Tenhou.Client/tools/generate_hd_sprites.py) 产出 7 张 SVG 源稿（`Tenhou.Client/assets/sources/sprites/{401,402,440,466,589,591,592}.svg`）并烘焙至 `Tenhou.Client/assets/images/sprites/hd/{id}.png`：`401/402` (`7×13 → 56×104`)、`440` (`140×51 → 560×204`)、`466` (`114×14 → 456×56`)、`589` (`244×172 → 976×688`)、`591` (`728×330 → 1456×660`)、`592` (`590×430 → 1180×860`)。
-   - 接入 `DisplayArtwork::GetHd`、`D2DTableRenderer`、`WelcomeView`、`MatchmakingView` 与 `OfflineLobbyView`；Classic 模式继续保持 `_res2.dat` 原版路径不变，待**人工实窗逐张验视签收**后再决定是否提升为默认。
-4. **解除固定 `1440×1080` 窗口限制与画质/全屏热切换**
-   - 更新 [window_layout.hpp](../../Tenhou.Client/src/window_layout.hpp)、[application.hpp](../../Tenhou.Client/src/application.hpp)、[application.cpp](../../Tenhou.Client/src/application.cpp) 与 [table_view.cpp](../../Tenhou.Client/src/table_view.cpp) / [welcome_view.cpp](../../Tenhou.Client/src/welcome_view.cpp) / [offline_lobby_view.cpp](../../Tenhou.Client/src/offline_lobby_view.cpp)：
-     - 恢复 `WS_THICKFRAME | WS_MAXIMIZEBOX`，`WM_GETMINMAXINFO` 仅保留最小客户区 `640×480`，解除最大尺寸锁，首次启动自动安全夹取至显示器工作区；
-     - 窗口系统菜单提供常用尺寸预设（`1024×768` / `1280×960` / `1440×1080` / `1920×1440` / `2560×1440`）、无边框全屏（`Alt+Enter` / `F11`）与 Classic ↔ HD 热切换（`F6`），命令行新增 `--hd`、`--classic`、`--width`、`--height`，配置持久化至 `config.ini` `[REBUILD]`（`Width`/`Height`/`Maximized`/`Fullscreen`/`HdArtwork`）。
+1. **回滚 SVG 烘焙与 7 张重绘精灵**
+   - 经视觉对比确认 SVG 重绘牌面与原版 3D 透视预渲染质感存在明显差异，按用户决策完整回滚构建期 SVG 烘焙管线与 `HdArtwork` 路径（移除 `hd_tile_*`、`svg_bake.cpp`、`extract_tile_quads.py`、`generate_hd_sprites.py`、`scripts/Bake-HdAssets.ps1`、`assets/images/hd_tiles/`、`assets/images/sprites/hd/`、`assets/sources/sprites/` 及非花牌 SVG，保留 `mahjong_graphic` 8 张花牌与许可）。
+   - 保留 Phase A/B 全部基础设施与 Direct2D 渲染优化、自由窗口缩放、系统菜单尺寸预设与无边框全屏（`Alt+Enter` / `F11`）。
+2. **4 档原生 3D 透视牌面与阴影资源接入（C-EGG 授权打包）**
+   - 静态二进制核对确认：`tenhou.net/4/`（Desktop4K 版）通过 `wss://b-wk.mjv.jp` 下发 `.ini` 清单并从 `https://cdn.tenhou.net/4/res/` 分发与 Windows 原版完全同构的 `obj0`（25,928 条记录，头长 `0x19564`）、`obj1`（944 条记录，头长 `0xf10`）和 `sdw0`（1,504 个唯一阴影蒙版，头长 `0x18ac`）资源包；其中 `9/_obj0_{W}x{H}_{8hex}.dat` 分块按 `.ini` 顺序字节拼接即为标准连续 `obj0` 包。
+   - 全部 4 档资源纳入 `Tenhou.Client/assets/catalog.cmake` 作为 `REQUIRED` 发布资产：
+     - **`1024×768`**：`_obj0.dat`（20,236,526 B，源自原版 `130/0005`）、`_obj1.dat`（1,724,607 B，源自原版 `130/0005`）、`_sdw0_1024x768.dat`（864,152 B，SHA-256 前缀 `96c937f14cf579a4`）。
+     - **`1440×1080`**：`_obj2.dat`（30,210,614 B）、`_obj3.dat`（2,581,907 B）、内嵌 `shadow-hd.dat`（`sdw2`，915,664 B）。
+     - **`1920×1440`**：`_obj0_1920x1440.dat`（43,583,771 B，SHA-256 前缀 `f86709d7a835751f`）、`_obj1_1920x1440.dat`（3,624,779 B，SHA-256 前缀 `f6ff7e96174b2ce2`）、`_sdw0_1920x1440.dat`（1,757,510 B，SHA-256 前缀 `eb63f151a7d4784d`）。
+     - **`2640×1980`**：`_obj0_2640x1980.dat`（66,751,696 B，SHA-256 前缀 `c329ec6247a2d953`）、`_obj1_2640x1980.dat`（5,300,074 B，SHA-256 前缀 `2e7411cb53331c39`）、`_sdw0_2640x1980.dat`（2,553,534 B，SHA-256 前缀 `24b42681dfe04593`）。
+   - 渲染与几何扩展：`TableArtwork`、`TileGeometryCatalog`、`ShadowPack`/`TileShadowLayer`、`DisplayArtwork`、`D2DTableRenderer`、`GdiTableRenderer`、`SettlementScene`/`SettlementView`、`MatchIntroView` 与 `ActionSelectionScene` 全面支持 4 档画布宽度；`1024×768` 与 `1440×1080` 保持原版字面偏移表与像素对齐，`1920×1440` / `2640×1980` 沿 `1440` HD 设计空间等比映射，所有文字通过 `FinalScene` 直接在目标视口像素上矢量化绘制。
+3. **原版 `画面`（Dialog `114`）与 `[STATUS] SCREENSIZE` 逻辑恢复**
+   - 原版取证（`Tenhou.Client.Origin/tenhou/tenhou.exe.c:20358-20372`、`24382-24482`、`61519-61548`、`70140`，`tenhou.exe` SHA-256 `96164cdb63e043541c27572a22b895072a8f9a0a0ee97d877a3cb340e327ffe6`）：
+     - 设置属性页顺序为 `104(牌), 105(卓), 106(SE), 109(BGM), 110(牌譜), 114(画面), 107(その他)`；
+     - `Dialog 114`（`assets/dialogs/114.bin`）包含 `0x426`（`画面サイズ`：`自動` / `1024 x 768` / `1440 x 1080`，重建端按授权扩展增加 `1920 x 1440` / `2640 x 1980`）与 `0x429`（`フルスクリーン`：`自動` + 显示器 32bpp 枚举模式）；
+     - 持久化键遵循原版 `[STATUS] SCREENSIZE`（`default` / `1024x768` / `1440x1080` / `1920x1440` / `2640x1980`）与 `[STATUS] FULLSCREENSIZE`（`W,H`）。
+   - 项目差异（用户明确授权）：`default`（自动）按当前客户区 4:3 适配宽度在 4 档中自动切档（`≤1024 → 1024`、`≤1440 → 1440`、`≤1920 → 1920`、`>1920 → 2640`），修改 `0x426` 立即热切换材质档位与窗口尺寸，无需强制重启应用。
 
 ### Phase C 验收范围
 
 | 验收维度 | 覆盖内容 | 结果 |
 | --- | --- | --- |
-| **静态与构建检查** | MSVC C++17 `/W4 /WX /utf-8 /EHsc` x64 Release（全 4 项目 + `tenhou_rule_oracle`）与 Debug（`Tenhou.Client`）零警告通过；694/694 原版透视槽位拟合零异常；`fxc.exe` 离线着色器预编译零运行时 `d3dcompiler` 依赖；44 张 SVG 与 7 张 HD 精灵打包至 `resources/images/` | 全部通过 |
-| **自动化测试与基准** | `ctest` 8/8 全量通过（`client_presentation` 新增 `HdArtworkAndScalingCheck` 覆盖 44 切片映射、694 Quad 校验、7 张 HD 精灵尺寸校验、Classic 零回归、HD `1440×1080` / `2560×1440` 渲染与设备丢失恢复）；`tenhou_render_bench --hd` 硬件 GPU 2560×1440 全场景 P95 ≤ 2.84 ms / P99 ≤ 3.29 ms；`Tenhou.Server.Tests` 与 `scripts/tests` 6/6 全量通过 | 全部通过 |
-| **实窗验证与人工验视** | 独立 `--config-dir` 实窗启动 `--offline-lobby --hd --width 1280 --height 960` 及 `--replay --classic/--hd --width 1600 --height 1000`，验证自由缩放客户区尺寸、标题 `[HD]`、配置持久化与 `EXIT code=0`，并导出 7 精灵并排对照板与实窗牌桌对比截图待用户人工验视签收 | 自动实窗通过；**待用户人工验视签收** |
+| **静态取证与构建检查** | 核对原版 `tenhou.exe` `130/0005` `RT_DIALOG 114`、`FUN_0041d...` 与 `70140` 阴影签名逻辑；二进制校验全部 4 档 `obj0/obj1/sdw0` 记录数、连续布局与 zlib 解码；MSVC C++17 `/W4 /WX /utf-8 /EHsc` x64 Release 零警告通过 | 全部通过 |
+| **自动化测试与基准** | `ctest` 8/8 全量通过（`client_presentation` 新增 `MultiResolutionArtworkAndScalingCheck` 覆盖 4 档 `SCREENSIZE` 解析/自动选档、4 档原生渲染与阴影包、4 档 `RiichiFlights` 与 `2640×1980` 设备丢失恢复；`client_resources` 逐字节校验全部 4 档发布资产）；`tenhou_render_bench` 硬件 GPU 实测 `1920` 档 `2560×1440` P95 ≤ 2.33 ms、`2640` 档 `2560×1440` P95 ≤ 2.84 ms | 全部通过 |
+| **实窗冒烟验证** | 独立 `--config-dir` 实窗验证 `SCREENSIZE=1024x768`、`SCREENSIZE=default`（`1920×1440` 自动选档）与 `SCREENSIZE=2640x1980` 三个场景，确认窗口标题、日志、`config.ini` 持久化与 `EXIT code=0` 正常退出；高分屏下各档位人工肉眼对照与设置页交互细检列为后续人工验收项 | 自动实窗通过 |
 
 ---
 
 ## 待验证项（后续阶段）
-- **Phase C 人工验视门禁**：7 张重绘精灵（`401, 402, 440, 466, 589, 591, 592`）与 HD 模式实窗牌面/缩放效果需由用户人工签收（签收后可按意愿将 `HdArtwork` 保持可选或设为默认）。
+- **4 档实窗细检**：在 2K/4K 实机上人工打开设置页 `画面` 切档，核对 `1024 / 1440 / 1920 / 2640` 下的牌局、立直飞牌、鸣牌偏移、结算界面与全屏切换体验。
 - **Phase D**：设置页 `SettingsSchema` 与原版 `104.bin`–`114.bin` 控件项逐项对照，以及跨平台 UI 壳层替换后的实窗行为核对。

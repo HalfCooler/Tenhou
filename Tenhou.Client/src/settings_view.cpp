@@ -4,12 +4,14 @@
 #include "replay_effects.hpp"
 #include "background.hpp"
 #include "music_preferences.hpp"
+#include "window_layout.hpp"
 #include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <set>
 #include <stdexcept>
 #include <algorithm>
 
@@ -35,7 +37,7 @@ namespace tenhou {
         : parent_(parent), config_(std::move(config)), resources_(std::move(resources)),
           changed_(std::move(changed)), log_(std::move(log)), audio_(log_) {
         const AssetId assets[]{AssetId::Dialog104, AssetId::Dialog105, AssetId::Dialog106,
-                               AssetId::Dialog109, AssetId::Dialog110, AssetId::Dialog107};
+                               AssetId::Dialog109, AssetId::Dialog110, AssetId::Dialog114, AssetId::Dialog107};
         for (unsigned i = 0; i < pages_.size(); ++i)
             pages_[i] = {this, static_cast<int>(ResourceManager::Info(assets[i]).embedded_id), assets[i]};
     }
@@ -88,7 +90,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         owner_focus_ = GetFocus();
         INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_WIN95_CLASSES};
         InitCommonControlsEx(&controls);
-        std::array<PROPSHEETPAGEW, 6> pages{};
+        std::array<PROPSHEETPAGEW, 7> pages{};
         for (unsigned i = 0; i < pages.size(); ++i) {
             auto &p = pages[i];
             p.dwSize = sizeof(p);
@@ -121,7 +123,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         // network message pump running, while enforcing its disabled-owner input.
         owner_disabled_ = IsWindowEnabled(parent_) != FALSE;
         if (owner_disabled_) EnableWindow(parent_, FALSE);
-        log_("SETTINGS OPEN pages=104,105,106,109,110,107");
+        log_("SETTINGS OPEN pages=104,105,106,109,110,114,107");
     }
 
     void SettingsView::InitMusic(HWND page) {
@@ -297,6 +299,71 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         const bool enabled = IsDlgButtonChecked(page, 0x420) == BST_CHECKED;
         for (int id: {0x419, 0x41a, 6, 0x408}) EnableWindow(GetDlgItem(page, id), enabled);
         if (!initializing_) SaveReplaySettings(page);
+    }
+
+    void SettingsView::InitScreen(HWND page) {
+        // Original Dialog 114 (FUN_0041d...): 0x426 = ScreenSize, 0x429 = FullscreenSize.
+        for (const auto *label: {L"自动", L"1024 x 768", L"1440 x 1080", L"1920 x 1440", L"2640 x 1980"})
+            SendDlgItemMessageW(page, 0x426, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(label));
+        const int configured = ParseScreenSizeSetting(PreferenceString(config_, "STATUS", "SCREENSIZE"));
+        const int selected = configured == 1024 ? 1 :
+                             configured == 1440 ? 2 :
+                             configured == 1920 ? 3 :
+                             configured == 2640 ? 4 : 0;
+        SendDlgItemMessageW(page, 0x426, CB_SETCURSEL, selected, 0);
+
+        const auto fs_combo = GetDlgItem(page, 0x429);
+        const auto auto_idx = SendMessageW(fs_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"自动"));
+        if (auto_idx >= 0) SendMessageW(fs_combo, CB_SETITEMDATA, auto_idx, 0);
+        int want_w = 0, want_h = 0;
+        const auto saved_fs = PreferenceString(config_, "STATUS", "FULLSCREENSIZE");
+        if (const auto comma = saved_fs.find(','); comma != std::string::npos) {
+            try {
+                want_w = std::stoi(saved_fs.substr(0, comma));
+                want_h = std::stoi(saved_fs.substr(comma + 1));
+            } catch (...) {
+                want_w = want_h = 0;
+            }
+        }
+        std::set<std::pair<int, int>> modes;
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        for (DWORD i = 0; EnumDisplaySettingsW(nullptr, i, &dm); ++i) {
+            if (dm.dmBitsPerPel == 32 && dm.dmPelsWidth >= 1024 && dm.dmPelsHeight >= 768)
+                modes.emplace(static_cast<int>(dm.dmPelsWidth), static_cast<int>(dm.dmPelsHeight));
+        }
+        int fs_selected = 0;
+        for (const auto &[mw, mh]: modes) {
+            const auto text = std::to_wstring(mw) + L" x " + std::to_wstring(mh);
+            const auto idx = SendMessageW(fs_combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text.c_str()));
+            if (idx >= 0) {
+                SendMessageW(fs_combo, CB_SETITEMDATA, idx, MAKELPARAM(mw, mh));
+                if (mw == want_w && mh == want_h) fs_selected = static_cast<int>(idx);
+            }
+        }
+        SendMessageW(fs_combo, CB_SETCURSEL, fs_selected, 0);
+    }
+
+    void SettingsView::ScreenCommand(HWND page, int control) {
+        if (control == 0x426) {
+            const auto sel = static_cast<int>(SendDlgItemMessageW(page, 0x426, CB_GETCURSEL, 0, 0));
+            constexpr const char *values[]{"default", "1024x768", "1440x1080", "1920x1440", "2640x1980"};
+            const char *chosen = (sel >= 0 && sel < 5) ? values[sel] : "default";
+            if (PreferenceString(config_, "STATUS", "SCREENSIZE") != chosen) {
+                WritePreference(config_, "STATUS", "SCREENSIZE", chosen);
+                log_(std::string("SETTINGS SCREENSIZE=") + chosen);
+                changed_(PreferenceChange::ScreenSize);
+            }
+        } else if (control == 0x429) {
+            const auto sel = SendDlgItemMessageW(page, 0x429, CB_GETCURSEL, 0, 0);
+            const auto data = sel >= 0 ? SendDlgItemMessageW(page, 0x429, CB_GETITEMDATA, sel, 0) : 0;
+            if (!data || data == CB_ERR) {
+                WritePreference(config_, "STATUS", "FULLSCREENSIZE", nullptr);
+            } else {
+                const auto text = std::to_string(LOWORD(data)) + "," + std::to_string(HIWORD(data));
+                WritePreference(config_, "STATUS", "FULLSCREENSIZE", text.c_str());
+            }
+        }
     }
 
     bool SettingsView::HandleMessage(MSG &message) {
@@ -629,6 +696,7 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
             else if (id == 106) InitSound(page);
             else if (id == 109) InitMusic(page);
             else if (id == 110) InitReplay(page);
+            else if (id == 114) InitScreen(page);
             else InitAppearance(page, id);
             initializing_ = false;
             return TRUE;
@@ -644,6 +712,14 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
             return TRUE;
         }
         if (initializing_) return FALSE;
+        if (id == 114) {
+            if (message == WM_COMMAND && HIWORD(wparam) == CBN_SELCHANGE &&
+                (LOWORD(wparam) == 0x426 || LOWORD(wparam) == 0x429)) {
+                ScreenCommand(page, LOWORD(wparam));
+                return TRUE;
+            }
+            return FALSE;
+        }
         if (id == 110) {
             if (message == WM_COMMAND && (LOWORD(wparam) == 0x408 || LOWORD(wparam) == 6 || LOWORD(wparam) == 0x420)) {
                 ReplayCommand(page, LOWORD(wparam));

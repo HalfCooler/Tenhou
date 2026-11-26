@@ -41,7 +41,6 @@ namespace tenhou {
             start = end + 1;
         }
         value.background_source = ReadIniString(config, "RESOURCE", "BG_SRC");
-        value.hd_artwork = ReadIniInt(config, "REBUILD", "HdArtwork", 0) != 0;
         return value;
     }
 

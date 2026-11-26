@@ -214,7 +214,6 @@ namespace tenhou {
         if (change == PreferenceChange::Artwork || change == PreferenceChange::Initial) {
             lobby_background_ = {};
             table_.SetPreferences(preferences, config_, change == PreferenceChange::Artwork);
-            if (matching_) matching_->SetHdArtwork(preferences.hd_artwork);
             InvalidateRect(window_, nullptr, FALSE);
             if (service_lobby_ && !resource_directory_.empty())
                 service_lobby_->ConfigureArtwork(resource_directory_, canvas_width_);
@@ -1024,7 +1023,7 @@ namespace tenhou {
                 if (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_LBUTTONDOWN ||
                     (message == WM_TIMER && wparam == 9)) {
                     if (self->sequencer_.original_display() &&
-                        self->hud_interaction_.Handle(window, self->BoardBounds(), 1440, message, lparam)) {
+                        self->hud_interaction_.Handle(window, self->BoardBounds(), self->canvas_width_, message, lparam)) {
                         self->table_.SetRelativeScores(self->hud_interaction_.relative());
                         const auto bounds = self->BoardBounds();
                         InvalidateRect(window, &bounds, FALSE);
