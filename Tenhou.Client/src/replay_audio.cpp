@@ -23,10 +23,10 @@ namespace tenhou {
         constexpr std::size_t kMaxMusicBytes = 256u * 1024u * 1024u;
         constexpr unsigned kWaveFormatPcm = 1;
 
-        unsigned U16(const Bytes &b, std::size_t p) { return b.at(p) | (unsigned(b.at(p + 1)) << 8); }
-        unsigned U32(const Bytes &b, std::size_t p) { return U16(b, p) | (U16(b, p + 2) << 16); }
+        unsigned U16(const Bytes &b, const std::size_t p) { return b.at(p) | (static_cast<unsigned>(b.at(p + 1)) << 8); }
+        unsigned U32(const Bytes &b, const std::size_t p) { return U16(b, p) | (U16(b, p + 2) << 16); }
 
-        void MaCheck(ma_result result, const char *action) {
+        void MaCheck(const ma_result result, const char *action) {
             if (result != MA_SUCCESS) {
                 throw std::runtime_error(std::string(action) + " failed (miniaudio " +
                                          ma_result_description(result) + ")");
@@ -157,7 +157,7 @@ namespace tenhou {
         return result;
     }
 
-    void ReplaySoundBank::Load(const std::filesystem::path &resources, int canvas_width,
+    void ReplaySoundBank::Load(const std::filesystem::path &resources, const int canvas_width,
                                const std::filesystem::path &config) {
         (void) canvas_width; // Audio shares the sole HD resource pack.
         const auto pack_path = ResourceManager(resources).Path(AssetId::DisplayPack);
@@ -183,7 +183,7 @@ namespace tenhou {
 
         clips_ = SharedAssets().GetSoundBank(fp.str(), [&]() -> SharedSoundBank {
             const auto pack = LoadResourcePack(pack_path,
-                [](unsigned id, unsigned metadata) { return id > 100 && id < 172 && !metadata; });
+                [](const unsigned id, const unsigned metadata) { return id > 100 && id < 172 && !metadata; });
             SharedSoundBank original, candidate;
             for (const auto &entry : pack.entries)
                 original[entry.id] = std::make_shared<SoundClip>(DecodeSound(entry.payload));
@@ -220,22 +220,22 @@ namespace tenhou {
         });
     }
 
-    const std::shared_ptr<const SoundClip> &ReplaySoundBank::Get(unsigned id) const {
+    const std::shared_ptr<const SoundClip> &ReplaySoundBank::Get(const unsigned id) const {
         const auto found = clips_->find(id);
         if (found == clips_->end()) throw std::runtime_error("Missing replay sound alias " + std::to_string(id));
         return found->second;
     }
 
-    Bytes ScaleSoundPcm(const SoundClip &clip, double gain) {
+    Bytes ScaleSoundPcm(const SoundClip &clip, const double gain) {
         if (!std::isfinite(gain) || gain < 0 || gain > 4) throw std::runtime_error("Invalid audio gain");
         Bytes pcm = clip.pcm;
         if (clip.format.bits_per_sample == 8) {
             for (auto &sample : pcm) sample = static_cast<std::uint8_t>(std::clamp(
-                                         128 + int((int(sample) - 128) * gain), 0, 255));
+                                         128 + static_cast<int>((int(sample) - 128) * gain), 0, 255));
         } else if (clip.format.bits_per_sample == 16) {
             for (std::size_t i = 0; i + 1 < pcm.size(); i += 2) {
-                const int sample = static_cast<std::int16_t>(unsigned(pcm[i]) | (unsigned(pcm[i + 1]) << 8));
-                const auto scaled = static_cast<std::int16_t>(std::clamp(int(sample * gain), -32768, 32767));
+                const int sample = static_cast<std::int16_t>(static_cast<unsigned>(pcm[i]) | (static_cast<unsigned>(pcm[i + 1]) << 8));
+                const auto scaled = static_cast<std::int16_t>(std::clamp(static_cast<int>(sample * gain), -32768, 32767));
                 pcm[i] = static_cast<std::uint8_t>(scaled);
                 pcm[i + 1] = static_cast<std::uint8_t>(static_cast<unsigned short>(scaled) >> 8);
             }
@@ -285,7 +285,7 @@ namespace tenhou {
             for (const auto &m : msgs) log(m);
         }
 
-        static Track DecodeTrack(const std::filesystem::path &path, bool seek, double gain) {
+        static Track DecodeTrack(const std::filesystem::path &path, const bool seek, const double gain) {
             const auto clip = DecodeMusic(ReadFile(path));
             auto samples = ConvertClipToMixFloat(clip);
             const std::size_t frames = samples.size() / kMixChannels;
@@ -337,7 +337,7 @@ namespace tenhou {
             peak_right.store(0.f, std::memory_order_relaxed);
         }
 
-        static void DataCallback(ma_device *dev, void *output, const void *, ma_uint32 frame_count) {
+        static void DataCallback(ma_device *dev, void *output, const void *, const ma_uint32 frame_count) {
             auto *self = static_cast<Impl *>(dev->pUserData);
             auto *out = static_cast<float *>(output);
             std::memset(out, 0, static_cast<std::size_t>(frame_count) * kMixChannels * sizeof(float));
@@ -351,7 +351,7 @@ namespace tenhou {
                     return;
                 }
                 // Original 00403f90 applies a 5e-6 step per channel sample at 44.1 kHz stereo.
-                constexpr double kStep = 5e-6 * 88200.0 / (kMixSampleRate * double(kMixChannels));
+                constexpr double kStep = 5e-6 * 88200.0 / (kMixSampleRate * static_cast<double>(kMixChannels));
                 ma_uint32 i = 0;
                 while (i < frame_count) {
                     if (!self->active || self->current.samples.empty()) break;
@@ -361,7 +361,7 @@ namespace tenhou {
                         const std::size_t base = self->current.cursor_frame * kMixChannels;
                         for (unsigned ch = 0; ch < kMixChannels; ++ch) {
                             const double val = std::clamp(
-                                double(self->current.samples[base + ch]) * self->current.gain * self->current.envelope,
+                                static_cast<double>(self->current.samples[base + ch]) * self->current.gain * self->current.envelope,
                                 -1.0, 1.0);
                             const float f = static_cast<float>(val);
                             out[i * kMixChannels + ch] = f;
@@ -404,7 +404,8 @@ namespace tenhou {
 
     BackgroundMusic::~BackgroundMusic() = default;
 
-    void BackgroundMusic::Select(const std::filesystem::path &path, bool seek, double gain) {
+    void BackgroundMusic::Select(const std::filesystem::path &path, const bool seek, const double gain) const
+    {
         impl_->DrainLogs();
         const bool changed = impl_->requested != path;
         std::optional<Impl::Track> decoded;
@@ -460,7 +461,8 @@ namespace tenhou {
         impl_->DrainLogs();
     }
 
-    void BackgroundMusic::Stop() {
+    void BackgroundMusic::Stop() const
+    {
         impl_->DrainLogs();
         {
             std::lock_guard lock(impl_->mutex);
@@ -585,7 +587,7 @@ namespace tenhou {
             for (unsigned id : stopped_ids) log("AUDIO STOP id=" + std::to_string(id));
         }
 
-        static void DataCallback(ma_device *dev, void *output, const void *, ma_uint32 frame_count) {
+        static void DataCallback(ma_device *dev, void *output, const void *, const ma_uint32 frame_count) {
             auto *self = static_cast<Impl *>(dev->pUserData);
             auto *out = static_cast<float *>(output);
             std::memset(out, 0, static_cast<std::size_t>(frame_count) * kMixChannels * sizeof(float));
@@ -623,7 +625,8 @@ namespace tenhou {
 
     ReplayAudio::~ReplayAudio() = default;
 
-    void ReplayAudio::SetVolumePercent(int percent) {
+    void ReplayAudio::SetVolumePercent(const int percent) const
+    {
         std::lock_guard lock(impl_->mutex);
         impl_->volume_percent = std::clamp(percent, 0, 200);
     }
@@ -648,7 +651,7 @@ namespace tenhou {
         }
     }
 
-    void ReplayAudio::Schedule(unsigned id, std::shared_ptr<const SoundClip> clip, unsigned delay) {
+    void ReplayAudio::Schedule(const unsigned id, std::shared_ptr<const SoundClip> clip, const unsigned delay) {
         if (!clip) return; // Original RESOURCE/key=none removes this alias only.
         if (!delay) {
             Play(id, std::move(clip));
@@ -660,7 +663,7 @@ namespace tenhou {
                          [](const Impl::Pending &a, const Impl::Pending &b) { return a.due < b.due; });
     }
 
-    void ReplayAudio::Stop() { impl_->Stop(); }
+    void ReplayAudio::Stop() const { impl_->Stop(); }
 
     bool ReplayAudio::Active() const {
         std::lock_guard lock(impl_->mutex);
@@ -674,7 +677,8 @@ namespace tenhou {
         return impl_->last_played_at;
     }
 
-    void ReplayAudio::Play(unsigned id, std::shared_ptr<const SoundClip> clip, bool loop, double base_gain) {
+    void ReplayAudio::Play(const unsigned id, std::shared_ptr<const SoundClip> clip, const bool loop, const double base_gain) const
+    {
         if (!clip) return;
         impl_->ReapFinished();
         auto samples = impl_->GetConverted(clip);

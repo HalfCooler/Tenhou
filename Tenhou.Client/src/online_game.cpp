@@ -11,7 +11,7 @@ namespace tenhou {
     namespace {
         [[noreturn]] void Fail(const std::string &reason) { throw std::runtime_error("Online game: " + reason); }
 
-        std::string Attr(const NetworkMessage &m, const std::string &key, bool required = true) {
+        std::string Attr(const NetworkMessage &m, const std::string &key, const bool required = true) {
             const auto it = m.attributes.find(key);
             if (it == m.attributes.end()) {
                 if (required) Fail("missing " + key);
@@ -20,7 +20,7 @@ namespace tenhou {
             return it->second;
         }
 
-        int Number(const std::string &text, int low, int high) {
+        int Number(const std::string &text, const int low, const int high) {
             int n = 0;
             const auto p = std::from_chars(text.data(), text.data() + text.size(), n);
             if (text.empty() || p.ec != std::errc() || p.ptr != text.data() + text.size() || n < low || n > high)
@@ -28,11 +28,11 @@ namespace tenhou {
             return n;
         }
 
-        int Num(const NetworkMessage &m, const std::string &key, int low, int high) {
+        int Num(const NetworkMessage &m, const std::string &key, const int low, const int high) {
             return Number(Attr(m, key), low, high);
         }
 
-        std::vector<int> List(const std::string &text, int low, int high, std::size_t limit) {
+        std::vector<int> List(const std::string &text, const int low, const int high, const std::size_t limit) {
             std::vector<int> result;
             std::size_t start = 0;
             for (;;) {
@@ -46,9 +46,9 @@ namespace tenhou {
         }
 
         int Count(const OnlinePlayer &p) { return static_cast<int>(p.known_hand.size()) + p.hidden_count; }
-        bool Contains(const std::vector<int> &v, int tile) { return std::find(v.begin(), v.end(), tile) != v.end(); }
+        bool Contains(const std::vector<int> &v, const int tile) { return std::find(v.begin(), v.end(), tile) != v.end(); }
 
-        void Remove(OnlinePlayer &p, int tile) {
+        void Remove(OnlinePlayer &p, const int tile) {
             const auto it = std::find(p.known_hand.begin(), p.known_hand.end(), tile);
             if (it != p.known_hand.end()) p.known_hand.erase(it);
             else if (p.hidden_count) --p.hidden_count;
@@ -549,7 +549,7 @@ namespace tenhou {
     void OnlineGame::Validate() const {
         const auto &s = state;
         std::array < bool, 136 > used{}, historical{};
-        auto use = [&](int tile) {
+        auto use = [&](const int tile) {
             if (tile < 0 || tile > 135 || used[static_cast<std::size_t>(tile)]) Fail(
                 "duplicate/invalid known physical tile");
             used[static_cast<std::size_t>(tile)] = true;

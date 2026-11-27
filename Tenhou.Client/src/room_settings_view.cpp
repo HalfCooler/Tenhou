@@ -15,7 +15,7 @@ namespace tenhou {
             HFONT font = nullptr;
             HWND window = nullptr;
 
-            HWND add(int id, const wchar_t *cls, const std::wstring &text, DWORD style, int x, int y, int width, int height) {
+            HWND add(const int id, const wchar_t *cls, const std::wstring &text, const DWORD style, const int x, const int y, const int width, const int height) {
                 RECT r{x, y, x + width, y + height}; MapDialogRect(window, &r);
                 HWND control = CreateWindowExW(0, cls, text.c_str(), WS_CHILD | WS_VISIBLE | style,
                     r.left, r.top, r.right - r.left, r.bottom - r.top, window,
@@ -69,7 +69,7 @@ namespace tenhou {
                 }
                 return true;
             }
-            void init(HWND target) {
+            void init(const HWND target) {
                 window = target;
                 font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei");
@@ -87,7 +87,7 @@ namespace tenhou {
                 add(IDOK, L"BUTTON", L"保存房间配置", WS_TABSTOP | BS_DEFPUSHBUTTON, 180, 334, 96, 22);
                 add(IDCANCEL, L"BUTTON", L"取消", WS_TABSTOP, 282, 334, 61, 22); render();
             }
-            static INT_PTR CALLBACK procedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
+            static INT_PTR CALLBACK procedure(const HWND window, const UINT message, const WPARAM wp, const LPARAM lp) {
                 auto *self = reinterpret_cast<RoomDialog *>(GetWindowLongPtrW(window, DWLP_USER));
                 if (message == WM_INITDIALOG) { self = reinterpret_cast<RoomDialog *>(lp); SetWindowLongPtrW(window, DWLP_USER, lp); self->init(window); return TRUE; }
                 if (!self) return FALSE;
@@ -113,7 +113,7 @@ namespace tenhou {
         };
     }
     std::optional<std::map<std::string, std::string> > EditRoomSettings(
-        HWND owner, const std::map<std::string, std::string> &settings, const std::map<std::string, ServerRule> &rules) {
+        const HWND owner, const std::map<std::string, std::string> &settings, const std::map<std::string, ServerRule> &rules) {
         RoomDialog dialog{{}, rules, settings, {}, {}, nullptr, nullptr};
         DLGTEMPLATE header{}; header.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME; header.cx = 356; header.cy = 370;
         const std::wstring title = L"好友麻将 · 房间规则";

@@ -14,7 +14,8 @@ namespace tenhou {
     }
 
     void OnlineTable::SetPreferences(const ClientPreferences &preferences, const std::filesystem::path &config,
-                                     bool rebuild) {
+                                     const bool rebuild) const
+    {
         renderer_->SetPreferences(preferences, config, rebuild);
     }
 
@@ -24,18 +25,19 @@ namespace tenhou {
         return {static_cast<LONG>(anchor.first), static_cast<LONG>(anchor.second)};
     }
 
-    void OnlineTable::Configure(const std::filesystem::path &directory, int width) {
+    void OnlineTable::Configure(const std::filesystem::path &directory, const int width) {
         CancelAnimation();
         width_ = width;
         hand_.ClearRaised();
         renderer_->Configure(directory, width);
     }
 
-    void OnlineTable::Prepare() {
+    void OnlineTable::Prepare() const
+    {
         renderer_->Prepare();
     }
 
-    void OnlineTable::Accept(const OnlineState &online, const ReplayEvent &event, bool animate, double now) {
+    void OnlineTable::Accept(const OnlineState &online, const ReplayEvent &event, const bool animate, const double now) {
         auto after = Project(online);
         auto before = previous_;
         if (event.kind == ReplayEventKind::Init || after.round != before.round || after.settlement.receipts.empty())
@@ -52,7 +54,7 @@ namespace tenhou {
                             now, false, &geometry, red);
     }
 
-    bool OnlineTable::MoveHandTile(int tile, int target, const OnlineState &online) {
+    bool OnlineTable::MoveHandTile(const int tile, const int target, const OnlineState &online) {
         ReplayState before, after;
         if (!hand_.MoveHandTile(tile, target, online, &before, &after)) return false;
         previous_ = after;
@@ -66,7 +68,7 @@ namespace tenhou {
         return true;
     }
 
-    void OnlineTable::SetAutoSort(bool enabled, const OnlineState &online) {
+    void OnlineTable::SetAutoSort(const bool enabled, const OnlineState &online) {
         ReplayState before, after;
         if (!hand_.SetAutoSort(enabled, online, &before, &after)) return;
         previous_ = after;
@@ -81,10 +83,10 @@ namespace tenhou {
                             AnimationNow(), false);
     }
 
-    void OnlineTable::Paint(HDC dc, RECT bounds, const OnlineState &online, bool interactive,
+    void OnlineTable::Paint(const HDC dc, const RECT bounds, const OnlineState &online, const bool interactive,
                             const OpeningPresentation *opening, const TableInteraction *interaction,
-                            double now, const ActionCaptions *captions, unsigned dpi,
-                            const std::vector<TableActionButton> *buttons, HWND window) {
+                            double now, const ActionCaptions *captions, const unsigned dpi,
+                            const std::vector<TableActionButton> *buttons, const HWND window) {
         if (paused_at_) now = paused_at_;
         const auto &geometry = renderer_->EnsureGeometry(online.red_tiles);
         auto frame = BuildOnlineTableRenderFrame(
@@ -95,9 +97,9 @@ namespace tenhou {
         if (!window || !renderer_->RenderToWindow(window, frame)) renderer_->RenderToDc(dc, frame);
     }
 
-    bool OnlineTable::PaintToWindow(HWND window, RECT bounds, const OnlineState &online, bool interactive,
+    bool OnlineTable::PaintToWindow(const HWND window, const RECT bounds, const OnlineState &online, const bool interactive,
                                     const OpeningPresentation *opening, const TableInteraction *interaction,
-                                    double now, const ActionCaptions *captions, unsigned dpi,
+                                    double now, const ActionCaptions *captions, const unsigned dpi,
                                     const std::vector<TableActionButton> *buttons) {
         if (!window) return false;
         if (paused_at_) now = paused_at_;
@@ -110,7 +112,7 @@ namespace tenhou {
         return renderer_->RenderToWindow(window, frame);
     }
 
-    int OnlineTable::HitTile(RECT bounds, const OnlineState &online, int x, int y) {
+    int OnlineTable::HitTile(const RECT bounds, const OnlineState &online, const int x, const int y) {
         if (!renderer_->HasLoadedAssets() || !online.initialized) return -1;
         auto &geometry = renderer_->EnsureGeometry(online.red_tiles);
         std::vector<PositionedTile> animated;

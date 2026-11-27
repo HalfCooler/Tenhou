@@ -10,7 +10,7 @@
 #include <stdexcept>
 
 namespace tenhou {
-    void TableView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
+    void TableView::ApplyPreferences(const ClientPreferences &preferences, const PreferenceChange change) {
         preferences_ = preferences;
         settlement_view_->SetPeekEnabled(preferences.ResultPeek());
         settlement_view_->SetTileColor(preferences.TileColor());
@@ -51,19 +51,19 @@ namespace tenhou {
             return result;
         }
 
-        void Fill(HDC dc, RECT bounds, COLORREF color) {
+        void Fill(const HDC dc, const RECT bounds, const COLORREF color) {
             const auto brush = CreateSolidBrush(color);
             FillRect(dc, &bounds, brush);
             DeleteObject(brush);
         }
 
-        void Text(HDC dc, const std::string &value, RECT bounds,
-                  UINT format = DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS) {
+        void Text(const HDC dc, const std::string &value, RECT bounds,
+                  const UINT format = DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS) {
             const auto text = Wide(value);
             DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &bounds, format);
         }
 
-        std::string CompactTile(int tile, bool red = true) {
+        std::string CompactTile(const int tile, const bool red = true) {
             if (tile >= 108 && tile < 136) return std::string(1, "ESWNPFC"[tile / 4 - 27]);
             if (red && tile == 16) return "0m";
             if (red && tile == 52) return "0p";
@@ -74,7 +74,7 @@ namespace tenhou {
         }
     } // namespace
 
-    TableView::TableView(HWND parent, std::function<void(const std::string &)> log, const std::filesystem::path &config)
+    TableView::TableView(const HWND parent, std::function<void(const std::string &)> log, const std::filesystem::path &config)
         : parent_(parent), renderer_(std::make_unique<D2DTableRenderer>()), log_(std::move(log)), audio_(log_),
           config_path_(config) {
         renderer_->SetPreferences(preferences_, config_path_, false);
@@ -92,7 +92,7 @@ namespace tenhou {
         viewport_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                                     0, 0, width_, height_, parent_, reinterpret_cast<HMENU>(202), instance, this);
         if (!viewport_) throw std::runtime_error("Cannot create offline table viewport");
-        const auto control = [&](const wchar_t *kind, const wchar_t *text, int id, DWORD style = 0) {
+        const auto control = [&](const wchar_t *kind, const wchar_t *text, const int id, const DWORD style = 0) {
             const auto window = CreateWindowExW(std::wstring(kind) == L"EDIT" ? WS_EX_CLIENTEDGE : 0,
                                                 kind, text, WS_CHILD | WS_VISIBLE | style, 0, 0, 1, 1, viewport_,
                                                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
@@ -119,7 +119,7 @@ namespace tenhou {
         results_control_ = control(L"BUTTON", L"结算", kResults, WS_TABSTOP | BS_AUTOCHECKBOX);
         back_ = control(L"BUTTON", L"返回", kBack, WS_TABSTOP);
         settlement_view_ = std::make_unique<SettlementView>(viewport_);
-        settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
+        settlement_view_->SetBackgroundPainter([this](const HDC dc, const RECT r) {
             if (sequencer_.session() && sequencer_.session()->state().initialized) PaintTable(dc, r);
         });
         settlement_view_->SetConfirmHandler([this] {
@@ -133,8 +133,8 @@ namespace tenhou {
             log_("MATCH INTRO DONE tick=" + std::to_string(GetTickCount64()));
             Update();
         });
-        match_intro_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
-        settlement_view_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
+        match_intro_->SetSoundPlayer([this](const unsigned id) { PlaySoundId(id); });
+        settlement_view_->SetSoundPlayer([this](const unsigned id) { PlaySoundId(id); });
         settlement_view_->SetSoundStopper([this] {
             try { audio_.Stop(); } catch (const std::exception &e) { SoundError(e); }
         });
@@ -212,7 +212,7 @@ namespace tenhou {
         }
     }
 
-    void TableView::Show(bool visible) {
+    void TableView::Show(const bool visible) {
         if (!visible) {
             Stop();
             Update();
@@ -220,7 +220,7 @@ namespace tenhou {
         ShowWindow(viewport_, visible ? SW_SHOW : SW_HIDE);
     }
 
-    void TableView::ConfigureArtwork(const std::filesystem::path &directory, int width) {
+    void TableView::ConfigureArtwork(const std::filesystem::path &directory, const int width) {
         match_intro_->Configure(directory, width);
         settlement_view_->Configure(directory, width);
         const bool was_playing = sequencer_.playing();
@@ -298,7 +298,7 @@ namespace tenhou {
         return Compact() ? RECT{8, 78, width_ - 8, height_ - 30} : RECT{16, 204, width_ - 16, height_ - 48};
     }
 
-    void TableView::SetOriginalDisplay(bool enabled) {
+    void TableView::SetOriginalDisplay(const bool enabled) {
         Stop();
         sequencer_.set_original_display(enabled);
         RECT r{};
@@ -306,12 +306,12 @@ namespace tenhou {
         Resize(r.right, r.bottom);
     }
 
-    void TableView::SetEffectsOnly(bool enabled) {
+    void TableView::SetEffectsOnly(const bool enabled) {
         try { audio_.Stop(); } catch (const std::exception &e) { SoundError(e); }
         sequencer_.set_effects_only(enabled);
     }
 
-    void TableView::SetEffectsMuted(bool muted) {
+    void TableView::SetEffectsMuted(const bool muted) {
         if (sequencer_.effects_muted() == muted) return;
         sequencer_.set_effects_muted(muted);
         settlement_view_->SetSoundEnabled(EffectsEnabled());
@@ -426,7 +426,7 @@ namespace tenhou {
         Resize(r.right, r.bottom);
     }
 
-    void TableView::Command(int id) {
+    void TableView::Command(const int id) {
         if (id == kBack) {
             Stop();
             PostMessageW(parent_, WM_APP + 25, 0, 0);
@@ -540,7 +540,8 @@ namespace tenhou {
             [this] { return EnsureGeometry(); }));
     }
 
-    void TableView::SaveSettings() {
+    void TableView::SaveSettings() const
+    {
         WritePreferenceInt(config_path_, "REBUILD", "ReplayAnimation", sequencer_.animation_enabled() ? 1 : 0);
         WritePreferenceInt(config_path_, "REBUILD", "ReplaySound", sequencer_.sound_enabled() ? 1 : 0);
     }
@@ -570,7 +571,7 @@ namespace tenhou {
             GetTickCount64(), AnimationNow(), [this] { return EnsureGeometry(); }));
     }
 
-    void TableView::PlaySoundId(unsigned id, unsigned delay) {
+    void TableView::PlaySoundId(const unsigned id, const unsigned delay) {
         if (!EffectsEnabled() || !audio_error_.empty()) return;
         try {
             if (!sound_loaded_) {
@@ -596,7 +597,7 @@ namespace tenhou {
         ApplyEffects(sequencer_.OpeningTick(AnimationNow(), match_intro_->Active()));
     }
 
-    bool TableView::PaintTableToWindow(HWND surface_parent, RECT bounds) {
+    bool TableView::PaintTableToWindow(const HWND surface_parent, const RECT bounds) {
         if (!surface_parent) return false;
         const auto *session = sequencer_.session();
         if (!session || !session->state().initialized) return false;
@@ -626,7 +627,7 @@ namespace tenhou {
         }
     }
 
-    void TableView::PaintTable(HDC dc, RECT bounds, HWND surface_parent) {
+    void TableView::PaintTable(const HDC dc, const RECT bounds, const HWND surface_parent) {
         try {
             const auto &session_state = sequencer_.session()->state();
             const auto &geometry = renderer_->EnsureGeometry(session_state.red_tiles);
@@ -655,7 +656,7 @@ namespace tenhou {
         }
     }
 
-    void TableView::Paint(HDC dc, bool table_only, HWND surface_parent) {
+    void TableView::Paint(const HDC dc, const bool table_only, const HWND surface_parent) {
         if (!table_only) Fill(dc, {0, 0, width_, height_}, RGB(23, 45, 44));
         const auto old_font = SelectObject(dc, font_);
         SetBkMode(dc, TRANSPARENT);
@@ -733,7 +734,7 @@ namespace tenhou {
         match_intro_->Capture(dc);
     }
 
-    LRESULT CALLBACK TableView::ViewProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK TableView::ViewProc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *view = reinterpret_cast<TableView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             view = static_cast<TableView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -807,7 +808,7 @@ namespace tenhou {
                         if (presented) return 0;
                         InvalidateRect(window, &board, FALSE);
                     }
-                    view->paint_buffer_.Paint(window, [&](HDC dc) { view->Paint(dc, table_only, window); });
+                    view->paint_buffer_.Paint(window, [&](const HDC dc) { view->Paint(dc, table_only, window); });
                     return 0;
                 }
             } catch (const std::exception &error) {

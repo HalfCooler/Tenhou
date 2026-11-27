@@ -369,7 +369,8 @@ namespace tenhou {
         return exit_code_;
     }
 
-    void Application::SetupSystemMenu() {
+    void Application::SetupSystemMenu() const
+    {
         const HMENU sys = GetSystemMenu(window_, FALSE);
         if (!sys) return;
         AppendMenuW(sys, MF_SEPARATOR, 0, nullptr);

@@ -26,7 +26,7 @@ namespace tenhou {
             std::vector<IniLine> lines;
         };
 
-        std::string LowerAscii(std::string_view text) {
+        std::string LowerAscii(const std::string_view text) {
             std::string out(text);
             for (char &c : out) {
                 if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
@@ -42,7 +42,7 @@ namespace tenhou {
             return s;
         }
 
-        std::string Utf16LeToUtf8(const std::uint8_t *data, std::size_t bytes) {
+        std::string Utf16LeToUtf8(const std::uint8_t *data, const std::size_t bytes) {
             std::string out;
             out.reserve(bytes);
             const std::size_t count = bytes / 2;
@@ -111,10 +111,8 @@ namespace tenhou {
                         item.is_section = true;
                     }
                 } else if (!trimmed.empty() && trimmed.front() != ';' && trimmed.front() != '#') {
-                    const auto eq = line_view.find('=');
-                    if (eq != std::string_view::npos) {
-                        const auto key = Trim(line_view.substr(0, eq));
-                        if (!key.empty()) {
+                    if (const auto eq = line_view.find('='); eq != std::string_view::npos) {
+                        if (const auto key = Trim(line_view.substr(0, eq)); !key.empty()) {
                             auto val = Trim(line_view.substr(eq + 1));
                             // Match Win32 GetPrivateProfileString stripping matching surrounding quotes.
                             if (val.size() >= 2 &&
@@ -140,7 +138,7 @@ namespace tenhou {
 
         std::filesystem::path CacheKey(const std::filesystem::path &path) {
             std::error_code ec;
-            auto abs = std::filesystem::absolute(path, ec);
+            const auto abs = std::filesystem::absolute(path, ec);
             return (ec ? path : abs).lexically_normal();
         }
 
@@ -151,8 +149,7 @@ namespace tenhou {
             std::filesystem::file_time_type mtime{};
             if (exists) mtime = std::filesystem::last_write_time(key, ec);
             const bool has_mtime = exists && !ec;
-
-            auto it = g_cache.find(key);
+            const auto it = g_cache.find(key);
             if (it != g_cache.end() && it->second.has_mtime == has_mtime &&
                 (!has_mtime || it->second.mtime == mtime)) {
                 return it->second;
@@ -162,9 +159,8 @@ namespace tenhou {
             doc.mtime = mtime;
             doc.has_mtime = has_mtime;
             if (exists) {
-                std::ifstream in(key, std::ios::binary);
-                if (in) {
-                    std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                if (std::ifstream in(key, std::ios::binary); in) {
+                    const std::string raw((std::istreambuf_iterator(in)), std::istreambuf_iterator<char>());
                     doc.lines = ParseIni(DecodeIniBytes(raw));
                 }
             }
@@ -210,10 +206,10 @@ namespace tenhou {
         }
     } // namespace
 
-    std::string ReadIniString(const std::filesystem::path &path, std::string_view section,
-                              std::string_view key, std::string_view fallback) {
+    std::string ReadIniString(const std::filesystem::path &path, const std::string_view section,
+                              const std::string_view key, const std::string_view fallback) {
         if (path.empty()) return std::string(fallback);
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::scoped_lock lock(g_mutex);
         const auto &doc = LoadDocumentLocked(path);
         const auto want_sec = LowerAscii(section);
         const auto want_key = LowerAscii(key);
@@ -224,8 +220,8 @@ namespace tenhou {
         return std::string(fallback);
     }
 
-    int ReadIniInt(const std::filesystem::path &path, std::string_view section,
-                   std::string_view key, int fallback) {
+    int ReadIniInt(const std::filesystem::path &path, const std::string_view section,
+                   const std::string_view key, const int fallback) {
         const auto text = ReadIniString(path, section, key, "");
         if (text.empty()) return fallback;
         char *end = nullptr;
@@ -237,7 +233,7 @@ namespace tenhou {
     void WriteIniString(const std::filesystem::path &path, std::string_view section,
                         std::string_view key, std::optional<std::string_view> value) {
         if (path.empty()) return;
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::scoped_lock lock(g_mutex);
         auto &doc = LoadDocumentLocked(path);
         const auto want_sec = LowerAscii(section);
         const auto want_key = LowerAscii(key);
@@ -290,14 +286,14 @@ namespace tenhou {
         SaveDocumentLocked(path, doc);
     }
 
-    void WriteIniInt(const std::filesystem::path &path, std::string_view section,
-                     std::string_view key, int value) {
+    void WriteIniInt(const std::filesystem::path &path, const std::string_view section,
+                     const std::string_view key, const int value) {
         const auto text = std::to_string(value);
         WriteIniString(path, section, key, std::string_view(text));
     }
 
     void InvalidateIniCache(const std::filesystem::path &path) {
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::scoped_lock lock(g_mutex);
         if (path.empty()) g_cache.clear();
         else g_cache.erase(CacheKey(path));
     }

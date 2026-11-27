@@ -8,10 +8,10 @@
 #include <string_view>
 
 namespace tenhou {
-    CanvasRect FitNativeCanvasBounds(CanvasRect bounds, int width) {
+    CanvasRect FitNativeCanvasBounds(const CanvasRect bounds, const int width) {
         const int aw = std::max(1, bounds.right - bounds.left);
         const int ah = std::max(1, bounds.bottom - bounds.top);
-        const double scale = std::min(double(aw) / width, double(ah) / (width * 3 / 4));
+        const double scale = std::min(static_cast<double>(aw) / width, static_cast<double>(ah) / (width * 3 / 4));
         const int w = std::max(1, static_cast<int>(width * scale));
         const int h = std::max(1, static_cast<int>(width * 3 / 4 * scale));
         const int x = bounds.left + (aw - w) / 2;
@@ -19,10 +19,10 @@ namespace tenhou {
         return {x, y, x + w, y + h};
     }
 
-    TileOffset TableTileOffset(const TableTile &tile, int width) {
-        const auto scale_hd = [&](int v) -> int {
+    TileOffset TableTileOffset(const TableTile &tile, const int width) {
+        const auto scale_hd = [&](const int v) -> int {
             if (width <= 1440) return v;
-            return static_cast<int>(std::lround(v * (double(width) / 1440.0)));
+            return static_cast<int>(std::lround(v * (static_cast<double>(width) / 1440.0)));
         };
         // FUN_004902f0 stores literal native-pixel wall offsets from the PE table.
         if (tile.family == 'y') return {scale_hd(tile.dx), scale_hd(tile.dy)};
@@ -92,7 +92,7 @@ namespace tenhou {
         return offset;
     }
 
-    int TileVariant(int tile, bool red) {
+    int TileVariant(const int tile, const bool red) {
         if (tile < 0 || tile > 135) return 37;
         if (red && (tile == 16 || tile == 52 || tile == 88)) return tile == 16 ? 0 : tile == 52 ? 10 : 20;
         const int kind = tile / 4;
@@ -121,12 +121,12 @@ namespace tenhou {
     }
 
     void SortOriginHand(std::vector<int> &tiles, const std::array<int, 3> &suit_order) {
-        const auto key = [&](int tile) {
+        const auto key = [&](const int tile) {
             return tile >= 0 && tile < 108
                        ? (tile % 36) + suit_order[static_cast<std::size_t>(tile / 36)] * 36
                        : tile;
         };
-        std::sort(tiles.begin(), tiles.end(), [&](int a, int b) {
+        std::sort(tiles.begin(), tiles.end(), [&](const int a, const int b) {
             const int ka = key(a), kb = key(b);
             return ka != kb ? ka < kb : a < b;
         });
@@ -248,7 +248,7 @@ namespace tenhou {
                 if (!closed) tiles.erase(std::remove(tiles.begin(), tiles.end(), meld.called_tile), tiles.end());
                 std::sort(tiles.rbegin(), tiles.rend());
                 if (closed) {
-                    const auto red = std::find_if(tiles.begin(), tiles.end(), [](int tile) {
+                    const auto red = std::find_if(tiles.begin(), tiles.end(), [](const int tile) {
                         return tile == 16 || tile == 52 || tile == 88;
                     });
                     if (red != tiles.end()) std::iter_swap(tiles.begin() + 1, red);
@@ -279,7 +279,7 @@ namespace tenhou {
         return result;
     }
 
-    void TileGeometryCatalog::Load(const std::filesystem::path &directory, int width) {
+    void TileGeometryCatalog::Load(const std::filesystem::path &directory, const int width) {
         if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
         const AssetId even_id = width == 1024 ? AssetId::TablePackSd :
                                 width == 1440 ? AssetId::TablePack :
@@ -297,7 +297,7 @@ namespace tenhou {
     }
 
     void TileGeometryCatalog::LoadPacks(std::shared_ptr<const ObjectPack> even, std::shared_ptr<const ObjectPack> odd,
-                                        int width) {
+                                        const int width) {
         if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
         if (!even || !odd) throw std::runtime_error("Missing table object packs");
         even_ = std::move(even);
@@ -306,7 +306,7 @@ namespace tenhou {
         alpha_cache_.clear();
     }
 
-    std::uint32_t TileGeometryCatalog::ImageKey(const TableTile &tile, bool red) const {
+    std::uint32_t TileGeometryCatalog::ImageKey(const TableTile &tile, const bool red) const {
         if (!loaded()) throw std::runtime_error("Table artwork is not loaded");
         if (tile.slot < 0 || tile.slot > 255 || tile.direction < 0 || tile.direction > 3)
             throw std::runtime_error("Invalid table resource command");
@@ -315,11 +315,11 @@ namespace tenhou {
         const bool flower = tile.tile >= 136 && tile.tile < 144;
         const unsigned variant = static_cast<unsigned>(
             flower ? 40 + tile.tile - 136 : aka ? tile.tile / 36 * 10 : TileVariant(tile.tile, false));
-        return static_cast<unsigned char>(tile.family) | (unsigned(tile.slot) << 8) |
-               (variant << 16) | (unsigned(tile.direction) << 24);
+        return static_cast<unsigned char>(tile.family) | (static_cast<unsigned>(tile.slot) << 8) |
+               (variant << 16) | (static_cast<unsigned>(tile.direction) << 24);
     }
 
-    TileSpriteBounds TileGeometryCatalog::Bounds(const TableTile &tile, bool red) const {
+    TileSpriteBounds TileGeometryCatalog::Bounds(const TableTile &tile, const bool red) const {
         const auto key = ImageKey(tile, red);
         const unsigned variant = (key >> 16) & 0xff;
         const bool flower = variant >= 40;
@@ -334,8 +334,8 @@ namespace tenhou {
         const auto &record = pack.entries[entry->second];
         if (direct || variant == 38 || variant == 39)
             return {record.x, record.y, record.width, record.height};
-        const std::uint32_t base_key = record.key[0] | (std::uint32_t(record.key[1]) << 8) |
-                                       (34u << 16) | (std::uint32_t(record.key[3]) << 24);
+        const std::uint32_t base_key = record.key[0] | (static_cast<std::uint32_t>(record.key[1]) << 8) |
+                                       (34u << 16) | (static_cast<std::uint32_t>(record.key[3]) << 24);
         const auto base_entry = odd_->key_index.find(base_key);
         if (base_entry == odd_->key_index.end())
             throw std::runtime_error("Object companion base is missing");
@@ -376,13 +376,13 @@ namespace tenhou {
         return offset;
     }
 
-    std::pair<int, int> TileGeometryCatalog::Origin(const TableTile &tile, bool red) const {
+    std::pair<int, int> TileGeometryCatalog::Origin(const TableTile &tile, const bool red) const {
         const auto bounds = Bounds(tile, red);
         const auto offset = Offset(tile);
         return {bounds.x + offset.x, bounds.y + offset.y};
     }
 
-    bool TileGeometryCatalog::OpaqueAt(const TableTile &tile, bool red, int local_x, int local_y) {
+    bool TileGeometryCatalog::OpaqueAt(const TableTile &tile, const bool red, const int local_x, const int local_y) {
         const auto key = ImageKey(tile, red);
         const unsigned variant = (key >> 16) & 0xff;
         const bool flower = variant >= 40;
@@ -414,7 +414,7 @@ namespace tenhou {
         return (mask.bits[index >> 3] & static_cast<std::uint8_t>(1u << (index & 7))) != 0;
     }
 
-    void SortTableScene(std::vector<PositionedTile> &scene, const TileGeometryCatalog &geometry, bool red) {
+    void SortTableScene(std::vector<PositionedTile> &scene, const TileGeometryCatalog &geometry, const bool red) {
         struct DepthTile {
             PositionedTile placed;
             std::pair<int, int> extent;

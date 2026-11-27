@@ -11,7 +11,7 @@
 #include <stdexcept>
 
 namespace tenhou {
-    bool HudInteraction::Handle(HWND window, RECT board, int width, UINT message, LPARAM point) {
+    bool HudInteraction::Handle(const HWND window, const RECT board, const int width, const UINT message, const LPARAM point) {
         if (message == WM_TIMER) {
             KillTimer(window, 9);
             if (inside_) return false;
@@ -22,7 +22,7 @@ namespace tenhou {
         bool inside = false;
         if (message != WM_MOUSELEAVE) {
             const auto target = FitNativeCanvas(board, width);
-            const double fit = double(target.right - target.left) / width;
+            const double fit = static_cast<double>(target.right - target.left) / width;
             const auto hud = BuildOriginalHud({}, width);
             const double x = (static_cast<short>(LOWORD(point)) - target.left) / fit;
             const double y = (static_cast<short>(HIWORD(point)) - target.top) / fit;
@@ -38,7 +38,7 @@ namespace tenhou {
         return changed;
     }
 
-    RECT OriginalAutoButtonRect(int width, int index) {
+    RECT OriginalAutoButtonRect(const int width, const int index) {
         // 0047d657..0047d77a: right offsets 2.15,3.15,4.15,5.15.
         // Native controls are 80x22 (1024) and 110x37 (1440); higher tiers scale linearly from 1440.
         if (width == 1024) {
@@ -49,7 +49,7 @@ namespace tenhou {
         const int x1440 = static_cast<int>(1440 - 123 * (2.15 + index));
         const int y1440 = 1080 - 57;
         if (width == 1440) return {x1440, y1440, x1440 + 110, y1440 + 37};
-        const double ratio = double(width) / 1440.0;
+        const double ratio = static_cast<double>(width) / 1440.0;
         const int x = static_cast<int>(std::lround(x1440 * ratio));
         const int y = static_cast<int>(std::lround(y1440 * ratio));
         return {x, y, x + static_cast<int>(std::lround(110 * ratio)), y + static_cast<int>(std::lround(37 * ratio))};
@@ -66,7 +66,7 @@ namespace tenhou {
             };
         }
 
-        Affine Rotation(float degrees) {
+        Affine Rotation(const float degrees) {
             const double angle = degrees * 3.14159265358979323846 / 180;
             return {
                 static_cast<float>(std::cos(angle)), static_cast<float>(std::sin(angle)),
@@ -74,7 +74,7 @@ namespace tenhou {
             };
         }
 
-        void Transform(Gdiplus::Graphics &g, const Affine &a, float sx = 1.0f, float sy = 1.0f) {
+        void Transform(Gdiplus::Graphics &g, const Affine &a, const float sx = 1.0f, const float sy = 1.0f) {
             Gdiplus::Matrix matrix(a[0], a[1], a[2], a[3], a[4], a[5]);
             if (sx != 1.0f || sy != 1.0f) matrix.Scale(sx, sy, Gdiplus::MatrixOrderAppend);
             if (g.SetTransform(&matrix) != Gdiplus::Ok) throw std::runtime_error(
@@ -87,6 +87,107 @@ namespace tenhou {
             if (size) MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), size);
             return out;
         }
+
+        // Exact 2-pass separable Box/Area downsampler on premultiplied BGRA.
+        // Preserves thin lines and small dots cleanly across both integer (4x/8x) and fractional ratios.
+        Image DownsampleAreaPremul(const Image &src, const int dst_w, const int dst_h) {
+            if (dst_w <= 0 || dst_h <= 0 || src.width <= 0 || src.height <= 0)
+                throw std::runtime_error("Invalid display sprite downsample dimensions");
+            if (dst_w == src.width && dst_h == src.height) return src;
+            // Horizontal pass: src (src.width x src.height) -> mid (dst_w x src.height) in premultiplied float BGRA.
+            std::vector<float> mid(static_cast<std::size_t>(dst_w) * src.height * 4, 0.0f);
+            const double scale_x = static_cast<double>(src.width) / static_cast<double>(dst_w);
+            for (int dx = 0; dx < dst_w; ++dx) {
+                const double x0 = dx * scale_x;
+                const double x1 = (dx + 1) * scale_x;
+                const int ix0 = std::max(0, static_cast<int>(std::floor(x0)));
+                const int ix1 = std::min(src.width - 1, static_cast<int>(std::ceil(x1)) - 1);
+                const double inv_area = 1.0 / (x1 - x0);
+                for (int sy = 0; sy < src.height; ++sy) {
+                    double b = 0, g = 0, r = 0, a = 0;
+                    const std::uint8_t *row = src.bgra.data() + static_cast<std::size_t>(sy) * src.width * 4;
+                    for (int sx = ix0; sx <= ix1; ++sx) {
+                        const double w = std::min(x1, static_cast<double>(sx + 1)) - std::max(x0, static_cast<double>(sx));
+                        if (w <= 0.0) continue;
+                        const std::uint8_t *p = row + static_cast<std::size_t>(sx) * 4;
+                        const double alpha = static_cast<double>(p[3]) / 255.0;
+                        const double wa = w * alpha;
+                        b += p[0] * wa;
+                        g += p[1] * wa;
+                        r += p[2] * wa;
+                        a += p[3] * w;
+                    }
+                    float *out = mid.data() + (static_cast<std::size_t>(sy) * dst_w + dx) * 4;
+                    out[0] = static_cast<float>(b * inv_area);
+                    out[1] = static_cast<float>(g * inv_area);
+                    out[2] = static_cast<float>(r * inv_area);
+                    out[3] = static_cast<float>(a * inv_area);
+                }
+            }
+            // Vertical pass: mid (dst_w x src.height) -> dst (dst_w x dst_h) unpremultiplied 8-bit BGRA.
+            Image dst;
+            dst.width = dst_w;
+            dst.height = dst_h;
+            dst.bgra.resize(static_cast<std::size_t>(dst_w) * dst_h * 4);
+            const double scale_y = static_cast<double>(src.height) / static_cast<double>(dst_h);
+            for (int dy = 0; dy < dst_h; ++dy) {
+                const double y0 = dy * scale_y;
+                const double y1 = (dy + 1) * scale_y;
+                const int iy0 = std::max(0, static_cast<int>(std::floor(y0)));
+                const int iy1 = std::min(src.height - 1, static_cast<int>(std::ceil(y1)) - 1);
+                const double inv_area = 1.0 / (y1 - y0);
+                std::uint8_t *dst_row = dst.bgra.data() + static_cast<std::size_t>(dy) * dst_w * 4;
+                for (int dx = 0; dx < dst_w; ++dx) {
+                    double b = 0, g = 0, r = 0, a = 0;
+                    for (int sy = iy0; sy <= iy1; ++sy) {
+                        const double w = std::min(y1, static_cast<double>(sy + 1)) - std::max(y0, static_cast<double>(sy));
+                        if (w <= 0.0) continue;
+                        const float *p = mid.data() + (static_cast<std::size_t>(sy) * dst_w + dx) * 4;
+                        b += p[0] * w;
+                        g += p[1] * w;
+                        r += p[2] * w;
+                        a += p[3] * w;
+                    }
+                    b *= inv_area;
+                    g *= inv_area;
+                    r *= inv_area;
+                    a *= inv_area;
+                    std::uint8_t *out = dst_row + static_cast<std::size_t>(dx) * 4;
+                    const int alpha_u8 = std::clamp(static_cast<int>(std::lround(a)), 0, 255);
+                    out[3] = static_cast<std::uint8_t>(alpha_u8);
+                    if (a > 0.5) {
+                        const double inv_a = 255.0 / a;
+                        out[0] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::lround(b * inv_a)), 0, 255));
+                        out[1] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::lround(g * inv_a)), 0, 255));
+                        out[2] = static_cast<std::uint8_t>(std::clamp(static_cast<int>(std::lround(r * inv_a)), 0, 255));
+                    } else {
+                        out[0] = out[1] = out[2] = 0;
+                    }
+                }
+            }
+            return dst;
+        }
+    }
+
+    DisplaySpriteSize OriginalDisplaySpriteSize(const unsigned id, const int design_width) {
+        DisplaySpriteSize hd{};
+        switch (id) {
+            case 401:
+            case 402: hd = {7, 13}; break;
+            case 440: hd = {140, 51}; break;
+            case 466: hd = {114, 14}; break;
+            case 589: hd = {244, 172}; break;
+            case 591: hd = {728, 330}; break;
+            case 592: hd = {590, 430}; break;
+            default: return {};
+        }
+        if (design_width == 1024) {
+            return {
+                std::max(1, static_cast<int>(hd.width / 1.4)),
+                std::max(1, static_cast<int>(hd.height / 1.4))
+            };
+        }
+        return hd;
     }
 
     void DisplayArtwork::Caption(Gdiplus::Graphics &g, const std::wstring &text, float x, float y,
@@ -114,11 +215,11 @@ namespace tenhou {
         g.FillPath(&fill, found->second.get());
     }
 
-    OriginalHudLayout BuildOriginalHud(const ReplayState &state, int width) {
+    OriginalHudLayout BuildOriginalHud(const ReplayState &state, const int width) {
         if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported native display canvas");
         OriginalHudLayout out;
         // Original HUD uses exactly 1.4 at 1440; 1920/2640 scale linearly from 1440.
-        const float ratio = width == 1024 ? 1.0f : float(width) / 1440.0f;
+        const float ratio = width == 1024 ? 1.0f : static_cast<float>(width) / 1440.0f;
         out.scale = width == 1024 ? 1.0f : 1.4f * ratio;
         out.outline_width = 2 * out.scale;
         out.center = {width / 2.0f, width * 3 / 8.0f - (width == 1024 ? 52.0f : 75.0f * ratio) - ratio};
@@ -141,7 +242,7 @@ namespace tenhou {
         out.sticks = out.seats;
         out.sticks[1] = Multiply({.9f, 0, 0, 1, 0, 0}, Multiply(Rotation(-.6f), out.seats[1]));
         out.sticks[3] = Multiply({.9f, 0, 0, 1, 0, 0}, Multiply(Rotation(.6f), out.seats[3]));
-        const auto scaled = [&](float n) { return static_cast<int>(n * out.scale); };
+        const auto scaled = [&](const float n) { return static_cast<int>(n * out.scale); };
         constexpr TextKey winds[]{TextKey::center_east, TextKey::center_south, TextKey::center_west, TextKey::center_north};
         constexpr TextKey hands[]{TextKey::center_hand_one, TextKey::center_hand_two, TextKey::center_hand_three, TextKey::center_hand_four};
         out.text.push_back({winds[(state.round / 4) % 4], scaled(-30), scaled(-17)});
@@ -161,36 +262,46 @@ namespace tenhou {
         return out;
     }
 
-    RECT FitNativeCanvas(RECT bounds, int width) {
+    RECT FitNativeCanvas(const RECT bounds, const int width) {
         const auto fitted = FitNativeCanvasBounds({bounds.left, bounds.top, bounds.right, bounds.bottom}, width);
         return {fitted.left, fitted.top, fitted.right, fitted.bottom};
     }
 
-    void DisplayArtwork::Configure(const std::filesystem::path &directory, int width) {
+    void DisplayArtwork::Configure(const std::filesystem::path &directory, const int width) {
         text_renderer_.reset();
         text_font_.reset();
         variants_.Configure(directory);
         directory_ = directory;
-        width_ = UiDesignWidth(width);
+        canvas_width_ = IsSupportedTableWidth(width) ? width : UiDesignWidth(width);
+        width_ = UiDesignWidth(canvas_width_);
         pack_.reset();
         images_.clear();
         captions_.clear();
     }
 
+    DisplaySpriteSize DisplayArtwork::LogicalSize(const unsigned id) const {
+        return OriginalDisplaySpriteSize(id, width_);
+    }
+
     const Image *DisplayArtwork::FindSprite(unsigned id) {
         const auto *source = variants_.GetSprite(id);
         if (!source) return nullptr;
-        if (width_ != 1024) return &images_.emplace(id, *source).first->second;
-        Image scaled;
-        scaled.width = std::max(1, static_cast<int>(source->width / 1.4));
-        scaled.height = std::max(1, static_cast<int>(source->height / 1.4));
-        scaled.bgra.resize(std::size_t(scaled.width) * scaled.height * 4);
-        for (int y = 0; y < scaled.height; ++y) for (int x = 0; x < scaled.width; ++x) {
-            const auto from = (std::size_t(y * source->height / scaled.height) * source->width + x * source->width / scaled.width) * 4;
-            const auto to = (std::size_t(y) * scaled.width + x) * 4;
-            std::copy_n(source->bgra.data() + from, 4, scaled.bgra.data() + to);
+        const auto logical = LogicalSize(id);
+        if (logical.width > 0 && logical.height > 0) {
+            const double scale = canvas_width_ == width_ ? 1.0 : static_cast<double>(canvas_width_) / static_cast<double>(width_);
+            const int target_w = std::max(1, static_cast<int>(std::lround(logical.width * scale)));
+            const int target_h = std::max(1, static_cast<int>(std::lround(logical.height * scale)));
+            if (source->width > target_w || source->height > target_h) {
+                return &images_.emplace(
+                    id, DownsampleAreaPremul(*source, std::min(source->width, target_w), std::min(source->height, target_h))
+                ).first->second;
+            }
+            return &images_.emplace(id, *source).first->second;
         }
-        return &images_.emplace(id, std::move(scaled)).first->second;
+        if (width_ != 1024) return &images_.emplace(id, *source).first->second;
+        const int dst_w = std::max(1, static_cast<int>(source->width / 1.4));
+        const int dst_h = std::max(1, static_cast<int>(source->height / 1.4));
+        return &images_.emplace(id, DownsampleAreaPremul(*source, dst_w, dst_h)).first->second;
     }
 
     const Image &DisplayArtwork::Get(unsigned id) {
@@ -207,21 +318,14 @@ namespace tenhou {
             "Missing original display sprite " + std::to_string(id));
         auto decoded = DecodeImage(*found);
         if (width_ == 1024 && pack_->signature == "res2") {
-            Image scaled;
-            scaled.width = std::max(1, static_cast<int>(decoded.width / 1.4));
-            scaled.height = std::max(1, static_cast<int>(decoded.height / 1.4));
-            scaled.bgra.resize(std::size_t(scaled.width) * scaled.height * 4);
-            for (int y = 0; y < scaled.height; ++y) for (int x = 0; x < scaled.width; ++x) {
-                const auto from = (std::size_t(y * decoded.height / scaled.height) * decoded.width + x * decoded.width / scaled.width) * 4;
-                const auto to = (std::size_t(y) * scaled.width + x) * 4;
-                std::copy_n(decoded.bgra.data() + from, 4, scaled.bgra.data() + to);
-            }
-            return images_.emplace(id, std::move(scaled)).first->second;
+            const int dst_w = std::max(1, static_cast<int>(decoded.width / 1.4));
+            const int dst_h = std::max(1, static_cast<int>(decoded.height / 1.4));
+            return images_.emplace(id, DownsampleAreaPremul(decoded, dst_w, dst_h)).first->second;
         }
         return images_.emplace(id, std::move(decoded)).first->second;
     }
 
-    float DisplayArtwork::MeasureText(const std::string &text, float em) {
+    float DisplayArtwork::MeasureText(const std::string &text, const float em) {
         Gdiplus::Bitmap bitmap(1, 1, PixelFormat32bppARGB);
         Gdiplus::Graphics graphics(&bitmap);
         Gdiplus::FontFamily family(L"System");
@@ -233,12 +337,26 @@ namespace tenhou {
         return rect.Width;
     }
 
-    void DisplayArtwork::Sprite(Gdiplus::Graphics &graphics, unsigned id, int x, int y, bool cx, bool cy) {
+    void DisplayArtwork::Sprite(Gdiplus::Graphics &graphics, const unsigned id, const int x, const int y, const bool cx, const bool cy) {
         const auto &im = Get(id);
+        const auto logical = LogicalSize(id);
+        const int draw_w = logical.width > 0 ? logical.width : im.width;
+        const int draw_h = logical.height > 0 ? logical.height : im.height;
+        const int dx = x - (cx ? draw_w / 2 : 0);
+        const int dy = y - (cy ? draw_h / 2 : 0);
         Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
                                const_cast<BYTE *>(im.bgra.data()));
-        if (graphics.DrawImage(&bitmap, x - (cx ? im.width / 2 : 0), y - (cy ? im.height / 2 : 0)) != Gdiplus::Ok)
-            throw std::runtime_error("Cannot draw original display sprite");
+        if (im.width == draw_w && im.height == draw_h) {
+            if (graphics.DrawImage(&bitmap, dx, dy) != Gdiplus::Ok)
+                throw std::runtime_error("Cannot draw original display sprite");
+        } else {
+            const auto prev_mode = graphics.GetInterpolationMode();
+            graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            const auto status = graphics.DrawImage(&bitmap, Gdiplus::Rect(dx, dy, draw_w, draw_h),
+                                                   0, 0, im.width, im.height, Gdiplus::UnitPixel);
+            graphics.SetInterpolationMode(prev_mode);
+            if (status != Gdiplus::Ok) throw std::runtime_error("Cannot draw original display sprite");
+        }
     }
 
     void DisplayArtwork::PaintHudImages(Gdiplus::Graphics &g, const ReplayState &state, const HudSprite &draw_sprite,
@@ -251,12 +369,15 @@ namespace tenhou {
             // 00482fe1 pushes 0x24d. 00482f30 draws that rounded plate at
             // (9,10) inside a centered (image+18,image+20) background capture.
             const Affine center{1, 0, 0, 1, hud.center[0], hud.center[1]};
-            const auto sprite = [&](unsigned id, int x, int y, const Affine &transform,
-                                    bool cx = false, bool cy = false) {
+            const auto sprite = [&](const unsigned id, const int x, const int y, const Affine &transform,
+                                    const bool cx = false, const bool cy = false) {
                 if (draw_sprite) {
                     const auto &im = Get(id);
-                    draw_sprite(id, im, x - (cx ? im.width / 2 : 0),
-                                y - (cy ? im.height / 2 : 0), transform);
+                    const auto logical = LogicalSize(id);
+                    const int lw = logical.width > 0 ? logical.width : im.width;
+                    const int lh = logical.height > 0 ? logical.height : im.height;
+                    draw_sprite(id, im, x - (cx ? lw / 2 : 0),
+                                y - (cy ? lh / 2 : 0), transform);
                 } else {
                     Transform(g, transform, scale_x, scale_y);
                     Sprite(g, id, x, y, cx, cy);
@@ -309,7 +430,8 @@ namespace tenhou {
         }
     }
 
-    void DisplayArtwork::PaintChromeBackground(Gdiplus::Graphics &g, int hovered) {
+    void DisplayArtwork::PaintChromeBackground(Gdiplus::Graphics &g, const int hovered) const
+    {
         const auto saved = g.Save();
         try {
             // Caption styles/opacity are appended separately at final device size.
@@ -328,7 +450,7 @@ namespace tenhou {
         }
     }
 
-    std::array<float, 2> DisplayArtwork::MeasureTextExtent(const std::string &text, float em) {
+    std::array<float, 2> DisplayArtwork::MeasureTextExtent(const std::string &text, const float em) {
         Gdiplus::Bitmap bitmap(1, 1, PixelFormat32bppARGB);
         Gdiplus::Graphics g(&bitmap);
         Gdiplus::FontFamily family(L"System");
@@ -341,7 +463,7 @@ namespace tenhou {
         return {bounds.Width, bounds.Height};
     }
 
-    NukiCountLayout OriginalNukiCountLayout(RECT a, int seat, int text_width, int text_height) {
+    NukiCountLayout OriginalNukiCountLayout(const RECT a, const int seat, const int text_width, const int text_height) {
         const int w = (seat & 1) ? text_height : text_width, h = (seat & 1) ? text_width : text_height;
         RECT r{};
         switch (seat) {
@@ -369,7 +491,8 @@ namespace tenhou {
     }
 
     void DisplayArtwork::PaintNukiCounts(Gdiplus::Graphics &g, const ReplayState &state, TableArtwork &tiles,
-                                         float scale_x, float scale_y) {
+                                         const float scale_x, const float scale_y) const
+    {
         if (std::all_of(state.players.begin(), state.players.end(),
                 [](const ReplayPlayer &p) { return p.nuki.empty() && p.flowers.empty(); })) return;
         // 0049c200 / 004aa250: one n/0 sprite plus a rotated xN count,
@@ -387,7 +510,7 @@ namespace tenhou {
                 // 00480930 maps the original entity sentinel 254 to variant 37.
                 const auto &tile = tiles.Get({'n', 0, flower ? player.flowers.front() : -1, seat});
                 const double to_ui = tiles.width() > 0 && tiles.width() != width_
-                                         ? double(width_) / double(tiles.width())
+                                         ? static_cast<double>(width_) / static_cast<double>(tiles.width())
                                          : 1.0;
                 const RECT anchor{
                     static_cast<LONG>(std::lround(tile.x * to_ui)),
@@ -428,7 +551,7 @@ namespace tenhou {
         return *text_renderer_;
     }
 
-    SceneTextRun DisplayArtwork::TextRun(TextKey key, float x, float y, bool cx, bool cy) {
+    SceneTextRun DisplayArtwork::TextRun(const TextKey key, const float x, const float y, const bool cx, const bool cy) {
         const float hd = width_ == 1024 ? 1.4f : 1.f;
         auto layout = Text().Layout(key);
         const auto &ink = layout.metrics.ink;
@@ -470,7 +593,7 @@ namespace tenhou {
         }
     }
 
-    std::vector<TextKey> OriginalInfoKeys(unsigned type, bool variant) {
+    std::vector<TextKey> OriginalInfoKeys(const unsigned type, const bool variant) {
         constexpr TextKey levels[]{TextKey::info_general, TextKey::info_advanced, TextKey::info_expert, TextKey::info_phoenix};
         constexpr TextKey parlor_levels[]{TextKey::info_wakaba, TextKey::info_silver, TextKey::info_amber, TextKey::info_peacock};
         constexpr TextKey parlor_bonuses[]{TextKey::info_no_bonus, TextKey::info_bonus_2000, TextKey::info_bonus_5000};
@@ -488,7 +611,7 @@ namespace tenhou {
                 (type >> 1 & 1u) ? TextKey::info_no_red : TextKey::info_red};
     }
 
-    void DisplayArtwork::AppendChrome(FinalScene &scene, unsigned type, const std::array<bool, 4> &automatic, bool variant) {
+    void DisplayArtwork::AppendChrome(FinalScene &scene, const unsigned type, const std::array<bool, 4> &automatic, const bool variant) {
         {
             float y = 0;
             for (auto key : OriginalInfoKeys(type, variant)) {

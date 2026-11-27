@@ -23,7 +23,7 @@ namespace tenhou {
 
     class LobbyView {
     public:
-        LobbyView(HWND parent, const std::filesystem::path &config, std::function<void(const std::string &)> log);
+        LobbyView(HWND parent, std::filesystem::path config, std::function<void(const std::string &)> log);
 
         ~LobbyView();
 
@@ -46,9 +46,9 @@ namespace tenhou {
 
         void Capture(HDC dc);
 
-        void Save();
+        void Save() const;
 
-        void Disconnect();
+        void Disconnect() const;
 
         void ConfigureArtwork(const std::filesystem::path &directory, int width);
 
@@ -56,13 +56,14 @@ namespace tenhou {
 
         bool HandleKey(UINT key);
 
-        bool HandleExitVoteMessage(MSG &message) {
+        bool HandleExitVoteMessage(MSG &message) const
+        {
             return exit_vote_ && IsWindowVisible(exit_vote_) &&
                    (message.hwnd == exit_vote_ || IsChild(exit_vote_, message.hwnd)) &&
                    IsDialogMessageW(exit_vote_, &message);
         }
 
-        void SetEffectsOnly(bool enabled) {
+        void SetEffectsOnly(const bool enabled) {
             StopAudio();
             sequencer_.set_effects_only(enabled);
         }
@@ -80,7 +81,7 @@ namespace tenhou {
 
         static LRESULT CALLBACK ExitVoteProcedure(HWND, UINT, WPARAM, LPARAM);
 
-        void UpdateExitVote();
+        void UpdateExitVote() const;
 
         OnlineSequencerContext MakeContext() const;
         OnlineMotionCallbacks MakeMotion();

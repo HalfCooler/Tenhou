@@ -33,22 +33,22 @@ namespace tenhou {
         SharedAssetStore(const SharedAssetStore &) = delete;
         SharedAssetStore &operator=(const SharedAssetStore &) = delete;
 
-        std::shared_ptr<const ObjectPack> GetObjectPack(const std::filesystem::path &path);
-        std::shared_ptr<const ResourcePack> GetDisplayPack(const std::filesystem::path &path, int width);
-        std::shared_ptr<const TextFontService> GetTextFont(const std::filesystem::path &resources_dir);
+        std::shared_ptr<const ObjectPack> GetObjectPack(const std::filesystem::path &path) const;
+        std::shared_ptr<const ResourcePack> GetDisplayPack(const std::filesystem::path &path, int width) const;
+        std::shared_ptr<const TextFontService> GetTextFont(const std::filesystem::path &resources_dir) const;
         std::shared_ptr<const Image> GetBackground(const std::filesystem::path &directory,
                                                    const std::filesystem::path &config,
                                                    int width, int height,
                                                    const ClientPreferences &preferences,
-                                                   const std::function<Image()> &builder);
+                                                   const std::function<Image()> &builder) const;
         std::shared_ptr<const SharedSoundBank> GetSoundBank(const std::string &fingerprint,
-                                                            const std::function<SharedSoundBank()> &loader);
+                                                            const std::function<SharedSoundBank()> &loader) const;
 
         static std::string FileFingerprint(const std::filesystem::path &path);
 
         SharedAssetStats Stats() const;
-        void ResetStats();
-        void Clear();
+        void ResetStats() const;
+        void Clear() const;
 
     private:
         struct Impl;

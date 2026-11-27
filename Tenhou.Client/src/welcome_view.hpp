@@ -23,11 +23,11 @@ namespace tenhou {
 
         void Resize(int width, int height);
 
-        void Show(bool visible);
+        void Show(bool visible) const;
 
         void Capture(HDC dc);
 
-        void Save(const std::filesystem::path &config);
+        void Save(const std::filesystem::path &config) const;
 
         bool Ready() const { return error_.empty() && !banner_.bgra.empty() && !background_.bgra.empty(); }
         HWND Window() const { return viewport_; }
@@ -47,14 +47,14 @@ namespace tenhou {
 
         bool HasOfficialId() const;
 
-        void ClearPassword();
+        void ClearPassword() const;
 
         char Gender() const { return vm_.gender(); }
         bool Connecting() const { return vm_.connecting(); }
 
         void SetLoginState(bool connecting, const std::wstring &status);
 
-        void SetHiddenId(bool hidden);
+        void SetHiddenId(bool hidden) const;
 
     private:
         struct Control;
@@ -69,13 +69,13 @@ namespace tenhou {
 
         void PaintPanel(HDC dc);
 
-        void PaintButton(Control &control, HDC dc);
+        void PaintButton(Control &control, HDC dc) const;
 
-        void Arrange();
+        void Arrange() const;
 
         void Command(int id);
 
-        void SetGender(char gender);
+        void SetGender(char gender) const;
 
         void SetServer(bool official);
 

@@ -22,7 +22,7 @@ namespace tenhou {
         if (ui_font_) DeleteObject(ui_font_);
     }
 
-    void GdiTableRenderer::Configure(const std::filesystem::path &directory, int canvas_width) {
+    void GdiTableRenderer::Configure(const std::filesystem::path &directory, const int canvas_width) {
         display_artwork_.Configure(directory, canvas_width);
         directory_ = directory;
         width_ = canvas_width;
@@ -34,7 +34,7 @@ namespace tenhou {
     }
 
     void GdiTableRenderer::SetPreferences(const ClientPreferences &preferences, const std::filesystem::path &config,
-                                          bool rebuild_background) {
+                                          const bool rebuild_background) {
         Image background;
         if (rebuild_background && !directory_.empty())
             background = BuildPreferredBackground(directory_, config, width_, width_ * 3 / 4, preferences);
@@ -62,7 +62,7 @@ namespace tenhou {
         hud_cache_.Invalidate();
     }
 
-    void GdiTableRenderer::SetReferenceRendering(bool enabled) {
+    void GdiTableRenderer::SetReferenceRendering(const bool enabled) {
         native_buffer_.SetReferenceRendering(enabled);
         reference_rendering_ = enabled;
     }
@@ -76,12 +76,12 @@ namespace tenhou {
         return artwork_.geometry();
     }
 
-    void PaintTableInteraction(HDC memory, const TableRenderFrame &frame, TableArtwork &artwork,
-                               bool grayscale) {
+    void PaintTableInteraction(const HDC dc_memory, const TableRenderFrame &frame, TableArtwork &artwork,
+                               const bool grayscale) {
         if (!frame.interaction) return;
         const auto *interaction = &*frame.interaction;
         const int w = frame.canvas_width, h = w * 3 / 4;
-        const double unit = double(w) / 1024.0;
+        const double unit = static_cast<double>(w) / 1024.0;
         const auto &tiles = frame.tiles;
         const bool red = frame.red_tiles;
         if (!interaction->hint.empty()) {
@@ -89,13 +89,13 @@ namespace tenhou {
                                           FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                           CLIP_DEFAULT_PRECIS, grayscale ? ANTIALIASED_QUALITY : CLEARTYPE_QUALITY,
                                           DEFAULT_PITCH, L"KaiTi");
-            const auto old = SelectObject(memory, font);
-            SetBkMode(memory, TRANSPARENT);
-            SetTextColor(memory, RGB(255, 242, 190));
+            const auto old = SelectObject(dc_memory, font);
+            SetBkMode(dc_memory, TRANSPARENT);
+            SetTextColor(dc_memory, RGB(255, 242, 190));
             RECT hint{w / 8, h - static_cast<int>(52 * unit), w * 7 / 8, h - static_cast<int>(28 * unit)};
             const auto hint_wide = Utf8ToWide(interaction->hint);
-            DrawTextW(memory, hint_wide.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-            SelectObject(memory, old);
+            DrawTextW(dc_memory, hint_wide.c_str(), -1, &hint, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            SelectObject(dc_memory, old);
             DeleteObject(font);
         }
         if (!interaction->countdown.empty()) {
@@ -112,22 +112,22 @@ namespace tenhou {
                 -std::max(8, static_cast<int>(9 * unit)), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY,
                 DEFAULT_PITCH, L"Arial");
-            const auto old = SelectObject(memory, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
+            const auto old = SelectObject(dc_memory, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
             SIZE size{};
             const auto text = Utf8ToWide(interaction->countdown);
             const int length = static_cast<int>(text.size());
-            GetTextExtentPoint32W(memory, text.c_str(), length, &size);
+            GetTextExtentPoint32W(dc_memory, text.c_str(), length, &size);
             const int x = std::min(right + std::max(2, static_cast<int>(2 * unit)),
                                    w - static_cast<int>(size.cx) - 3);
-            SetBkMode(memory, TRANSPARENT);
-            SetTextColor(memory, RGB(0, 0, 0));
-            TextOutW(memory, x - 1, top, text.c_str(), length);
-            TextOutW(memory, x + 1, top, text.c_str(), length);
-            TextOutW(memory, x, top - 1, text.c_str(), length);
-            TextOutW(memory, x, top + 1, text.c_str(), length);
-            SetTextColor(memory, RGB(255, 255, 255));
-            TextOutW(memory, x, top, text.c_str(), length);
-            SelectObject(memory, old);
+            SetBkMode(dc_memory, TRANSPARENT);
+            SetTextColor(dc_memory, RGB(0, 0, 0));
+            TextOutW(dc_memory, x - 1, top, text.c_str(), length);
+            TextOutW(dc_memory, x + 1, top, text.c_str(), length);
+            TextOutW(dc_memory, x, top - 1, text.c_str(), length);
+            TextOutW(dc_memory, x, top + 1, text.c_str(), length);
+            SetTextColor(dc_memory, RGB(255, 255, 255));
+            TextOutW(dc_memory, x, top, text.c_str(), length);
+            SelectObject(dc_memory, old);
             if (clock_font) DeleteObject(clock_font);
         }
     }
@@ -149,7 +149,7 @@ namespace tenhou {
         }
 
         const int w = width_, h = w * 3 / 4;
-        const double unit = double(w) / 1024.0;
+        const double unit = static_cast<double>(w) / 1024.0;
         const bool red = frame.red_tiles;
         const auto &state = frame.state;
         const auto &tiles = frame.tiles;
@@ -168,8 +168,8 @@ namespace tenhou {
             stamp << ':' << frame.game_type << ':' << frame.match_complete << ':' << frame.interactive;
             if (interaction) {
                 stamp << ':' << interaction->hovered_button;
-                for (auto c: interaction->hint) stamp << ':' << int(c);
-                for (auto c: interaction->countdown) stamp << ':' << int(c);
+                for (auto c: interaction->hint) stamp << ':' << static_cast<int>(c);
+                for (auto c: interaction->countdown) stamp << ':' << static_cast<int>(c);
                 for (auto value: interaction->automatic) stamp << ':' << value;
             }
         }
@@ -187,13 +187,13 @@ namespace tenhou {
             const int cx = static_cast<int>(hud.center[0]), cy = static_cast<int>(hud.center[1]);
             atomic_layers.push_back({cx - radius, cy - radius, cx + radius, cy + radius});
             if (frame.online_mode) {
-                const double furiten_scale = w == 1024 ? 1.0 : 1.4 * (double(w) / 1440.0);
+                const double furiten_scale = w == 1024 ? 1.0 : 1.4 * (static_cast<double>(w) / 1440.0);
                 metadata_regions.push_back(atomic_layers.front());
                 metadata_regions.push_back({w - static_cast<int>(220 * unit), 0, w, static_cast<int>(200 * unit)});
                 metadata_regions.push_back({
                     static_cast<LONG>(300 * furiten_scale), OriginalAutoButtonRect(w, 0).top,
-                    static_cast<LONG>(300 * furiten_scale + 100 * (w == 1024 ? 1.0 : double(w) / 1440.0)),
-                    OriginalAutoButtonRect(w, 0).top + static_cast<LONG>(35 * (w == 1024 ? 1.0 : double(w) / 1440.0))
+                    static_cast<LONG>(300 * furiten_scale + 100 * (w == 1024 ? 1.0 : static_cast<double>(w) / 1440.0)),
+                    OriginalAutoButtonRect(w, 0).top + static_cast<LONG>(35 * (w == 1024 ? 1.0 : static_cast<double>(w) / 1440.0))
                 });
                 for (int i = 0; i < 4; ++i) metadata_regions.push_back(OriginalAutoButtonRect(w, i));
             }
@@ -237,18 +237,18 @@ namespace tenhou {
 
         native_buffer_.Render(
             dc, w, dest, tiles, artwork_, red, {}, stamp.str(),
-            [&](HDC memory) {
+            [&](const HDC memory) {
                 Gdiplus::Graphics graphics(memory);
                 Gdiplus::Bitmap bg(w, h, w * 4, PixelFormat32bppARGB, background_.bgra.data());
                 if (graphics.DrawImage(&bg, 0, 0) != Gdiplus::Ok)
                     throw std::runtime_error("Cannot draw table background");
             },
-            [&](HDC memory, RECT region) {
+            [&](const HDC memory, const RECT region) {
                 {
                     Gdiplus::Graphics graphics(memory);
                     ClipGraphics(graphics, region);
                     shadow_layer_.Paint(graphics, shadows, preferences_.tile_shadow, w, h);
-                    const auto matrix = [](float r, float g, float b, float dr, float dg, float db) {
+                    const auto matrix = [](const float r, const float g, const float b, const float dr, const float dg, const float db) {
                         return Gdiplus::ColorMatrix{{{r, 0, 0, 0, 0},
                                                      {0, g, 0, 0, 0},
                                                      {0, 0, b, 0, 0},
@@ -270,9 +270,9 @@ namespace tenhou {
                         const bool missing = frame.online_mode && std::string(tile.tile.role) == "missing_suit";
                         const auto &item = artwork_.Get(tile.tile, missing || red);
                         if (!Overlaps(region, TileBounds(tile, item.image.width, item.image.height))) continue;
-                        Image shaded;
                         const auto *pixels = item.image.bgra.data();
                         if (const auto *shadow = FindTileShadow(shadows, tile); shadow && shadow->received) {
+                            Image shaded;
                             shaded = ShadeTile(item.image, tile.x - shadow->dx, tile.y - shadow->dy,
                                                *shadow->received, preferences_.tile_shadow);
                             pixels = shaded.bgra.data();
@@ -301,14 +301,13 @@ namespace tenhou {
                         }
                     }
                     PaintTableFlights(graphics, region, tiles, artwork_, red);
-                    for (std::size_t i = 0; i < state.dora_indicators.size(); ++i) {
+                    for (int i = 0; i < static_cast<int>(state.dora_indicators.size()); ++i) {
                         if (frame.original_display && state.wall.known) break;
                         const auto &item = artwork_.Get({'k', 0, state.dora_indicators[i], 0}, red);
                         Gdiplus::Bitmap image(item.image.width, item.image.height, item.image.width * 4,
                                               PixelFormat32bppARGB, const_cast<BYTE *>(item.image.bgra.data()));
                         const int x = static_cast<int>((frame.original_display ? 28 + i * 40 : 410 + i * 40) * unit);
-                        const int y = static_cast<int>((frame.original_display ? 28 : 345) * unit);
-                        if (graphics.DrawImage(&image, x, y) != Gdiplus::Ok)
+                        if (const int y = static_cast<int>((frame.original_display ? 28 : 345) * unit); graphics.DrawImage(&image, x, y) != Gdiplus::Ok)
                             throw std::runtime_error("Cannot draw dora indicator");
                     }
                 }
@@ -325,7 +324,7 @@ namespace tenhou {
                 PaintTableInteraction(memory, frame, artwork_);
                 if (frame.original_display) {
                     if (Overlaps(region, atomic_layers.front())) {
-                        const auto draw_hud = [&](HDC target) {
+                        const auto draw_hud = [&](const HDC target) {
                             Gdiplus::Graphics g(target);
                             display_artwork_.PaintHudImages(g, state, {}, hud_scale, hud_scale);
                         };
@@ -345,15 +344,15 @@ namespace tenhou {
                     const auto old_font = SelectObject(memory, font ? font : GetStockObject(DEFAULT_GUI_FONT));
                     SetBkMode(memory, TRANSPARENT);
                     SetTextColor(memory, RGB(250, 246, 225));
-                    const auto caption = [&](const std::string &text, int x, int y, int width) {
+                    const auto caption = [&](const std::string &text, const int x, const int y, const int width) {
                         RECT r{static_cast<LONG>(x * unit), static_cast<LONG>(y * unit),
                                static_cast<LONG>((x + width) * unit), static_cast<LONG>((y + 28) * unit)};
                         const auto wide = Utf8ToWide(text);
                         DrawTextW(memory, wide.c_str(), -1, &r, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                     };
-                    constexpr int xs[]{220, 776, 280, 12}, ys[]{740, 580, 84, 580};
                     const char *winds[]{"E", "S", "W", "N"};
                     for (int i = 0; i < 4; ++i) {
+                        constexpr int xs[]{220, 776, 280, 12}, ys[]{ 740, 580, 84, 580 };
                         if (!SeatPresent(state.seat_mask, i)) continue;
                         const auto &p = state.players[i];
                         std::string label = std::string(winds[SeatWind(state.seat_mask, state.dealer, i)]) +
@@ -429,7 +428,7 @@ namespace tenhou {
             Gdiplus::Graphics graphics(dc);
             const auto saved = graphics.Save();
             graphics.SetClip(Gdiplus::Rect(r.left, r.top, bw, bh));
-            FillRect(dc, &r, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+            FillRect(dc, &r, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
             const auto &im = display_artwork_.Get(440);
             Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
                                    const_cast<BYTE *>(im.bgra.data()));
@@ -442,7 +441,7 @@ namespace tenhou {
             auto layout = renderer.Layout(*key);
             const auto &ink = layout.metrics.ink;
             const double sd = width_ == 1024 ? 1.0 / 1.4 : 1.0;
-            const double fit = double(bw) / (width_ == 1024 ? 100 : 140);
+            const double fit = static_cast<double>(bw) / (width_ == 1024 ? 100 : 140);
             TextRenderContext context;
             context.native_layout_scale = sd;
             context.viewport_scale_x = context.viewport_scale_y = fit;
@@ -453,7 +452,7 @@ namespace tenhou {
                 static_cast<float>(r.left), static_cast<float>(r.top),
                 static_cast<float>(bw), static_cast<float>(bh));
             SceneTextRun run;
-            run.layout = layout;
+            run.layout = std::move(layout);
             run.transform[4] = -ink.X - ink.Width / 2;
             run.transform[5] = -ink.Y - ink.Height / 2;
             renderer.Draw(graphics, context, run);

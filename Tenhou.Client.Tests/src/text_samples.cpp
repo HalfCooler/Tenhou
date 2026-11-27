@@ -27,7 +27,7 @@ namespace {
         unsigned dpi = 96;
         std::vector<int> widths{1440, 1024, 1279};
     };
-    Options Parse(int argc, wchar_t **argv) {
+    Options Parse(const int argc, wchar_t **argv) {
         Options result;
         for (int i = 1; i < argc; ++i) {
             const std::wstring arg = argv[i];
@@ -62,12 +62,12 @@ namespace {
         for (UINT i = 0; i < count; ++i) if (wcscmp(encoders[i].MimeType, L"image/png") == 0) return encoders[i].Clsid;
         throw std::runtime_error("No PNG encoder");
     }
-    void Label(Graphics &g, std::wstring_view text, REAL x, REAL y, REAL size = 16) {
+    void Label(Graphics &g, const std::wstring_view text, const REAL x, const REAL y, const REAL size = 16) {
         Font font(L"Segoe UI", size, FontStyleRegular, UnitPixel);
         SolidBrush brush(Color(255, 205, 215, 220));
         g.DrawString(text.data(), static_cast<INT>(text.size()), &font, PointF(x, y), &brush);
     }
-    void Box(Graphics &g, const RectF &rect, Color color) {
+    void Box(Graphics &g, const RectF &rect, const Color color) {
         Pen pen(color, 1); g.DrawRectangle(&pen, rect);
     }
     class Page {
@@ -76,7 +76,7 @@ namespace {
         Graphics graphics;
         double scale;
         TextRenderContext context;
-        Page(int width, int design_height, unsigned dpi) :
+        Page(const int width, const int design_height, const unsigned dpi) :
             bitmap(width, static_cast<int>(std::ceil(design_height * width / 1440.0)), PixelFormat32bppPARGB),
             graphics(&bitmap), scale(width / 1440.0), context(TextRenderContext::Viewport(1440, design_height,
                 RectF(0, 0, static_cast<REAL>(width), static_cast<REAL>(bitmap.GetHeight())), false, dpi)) {
@@ -84,10 +84,10 @@ namespace {
             bitmap.SetResolution(static_cast<REAL>(dpi), static_cast<REAL>(dpi));
             graphics.SetPageUnit(UnitPixel); graphics.Clear(Color(255, 24, 39, 43));
         }
-        void Text(std::wstring_view text, double x, double y, double size = 16) {
+        void Text(const std::wstring_view text, const double x, const double y, const double size = 16) {
             Label(graphics, text, static_cast<REAL>(x * scale), static_cast<REAL>(y * scale), static_cast<REAL>(size * scale));
         }
-        void Cell(double x, double y, double width, double height, TextColor fill) {
+        void Cell(const double x, const double y, const double width, const double height, TextColor fill) {
             const auto &color = kTextPalette[static_cast<std::size_t>(fill)].rgba;
             const bool dark_ink = color.r + color.g + color.b < 400;
             SolidBrush brush(dark_ink ? Color(255, 225, 227, 215) : Color(255, 32, 72, 67));
@@ -99,13 +99,13 @@ namespace {
             if (bitmap.Save(path.c_str(), &encoder) != Ok) throw std::runtime_error("Cannot save specimen PNG");
         }
     };
-    TextLayout Sample(TextRenderer &renderer, unsigned origin) {
+    TextLayout Sample(TextRenderer &renderer, const unsigned origin) {
         const auto *definition = FindTextByOrigin(origin);
         if (!definition) throw std::runtime_error("Unknown specimen origin");
         return renderer.Layout(definition->key);
     }
-    void LayoutRow(Page &page, TextRenderer &renderer, const TextLayout &layout, double x, double y,
-                   bool bounds, double opacity = 1, std::array<double, 6> transform = {1, 0, 0, 1, 0, 0}) {
+    void LayoutRow(Page &page, TextRenderer &renderer, const TextLayout &layout, const double x, const double y,
+                   const bool bounds, const double opacity = 1, std::array<double, 6> transform = {1, 0, 0, 1, 0, 0}) {
         SceneTextRun run{layout, PointF(static_cast<REAL>(x), static_cast<REAL>(y)), TextAlignment::left, transform, opacity};
         const auto device = renderer.Draw(page.graphics, page.context, run);
         if (bounds) {
@@ -119,7 +119,7 @@ namespace {
             }
         }
     }
-    void Overview(const Options &options, TextRenderer &renderer, int width, bool bounds, const CLSID &encoder) {
+    void Overview(const Options &options, TextRenderer &renderer, const int width, const bool bounds, const CLSID &encoder) {
         Page page(width, 1900, options.dpi);
         page.Text(L"P1 / HD design 1440 / device " + std::to_wstring(width) + L" / DPI " + std::to_wstring(options.dpi), 24, 14, 22);
         page.Text(L"Human-reviewed P1 profile. Green: ink / orange: device effect allocation.", 24, 48);
@@ -189,7 +189,7 @@ namespace {
         renderer.Draw(page.graphics, sd, SceneTextRun{Sample(renderer, 459), PointF(0, 0)});
         page.Save(options.output / ("transforms-" + std::to_string(width) + ".png"), encoder);
     }
-    void InfoLayer(const Options &options, TextRenderer &renderer, int width, const CLSID &encoder) {
+    void InfoLayer(const Options &options, TextRenderer &renderer, const int width, const CLSID &encoder) {
         const auto layout = renderer.Layout(TextKey::info_general);
         const auto scale = width / 1440.0;
         Bitmap bitmap(static_cast<INT>(std::ceil((layout.metrics.advance + 24) * scale)),
@@ -205,7 +205,7 @@ namespace {
         if (bitmap.Save((options.output / ("info-layer-" + std::to_string(width) + ".png")).c_str(), &encoder) != Ok)
             throw std::runtime_error("Cannot save transparent Info specimen");
     }
-    void Catalog(const Options &options, TextRenderer &renderer, int width, const CLSID &encoder) {
+    void Catalog(const Options &options, TextRenderer &renderer, const int width, const CLSID &encoder) {
         constexpr std::size_t per_page = 24;
         for (std::size_t start = 0; start < std::size(kTextDefinitions); start += per_page) {
             Page page(width, 1510, options.dpi);

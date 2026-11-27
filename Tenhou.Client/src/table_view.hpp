@@ -38,7 +38,7 @@ namespace tenhou {
 
         bool Ready() const { return error_.empty() && artwork_error_.empty() && audio_error_.empty() && painted_; }
 
-        void SaveSettings();
+        void SaveSettings() const;
 
         void SetOriginalDisplay(bool enabled);
 
@@ -48,7 +48,7 @@ namespace tenhou {
 
         void ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change);
 
-        bool HandleKey(UINT key) { return settlement_view_ && settlement_view_->HandleKey(key); }
+        bool HandleKey(const UINT key) const { return settlement_view_ && settlement_view_->HandleKey(key); }
 
     private:
         friend struct TextTableCheck;

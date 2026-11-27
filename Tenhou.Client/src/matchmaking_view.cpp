@@ -13,11 +13,11 @@ namespace tenhou {
     namespace {
         constexpr wchar_t kClass[] = L"TENHOU_MATCHMAKING";
 
-        void Label(HDC dc, const wchar_t *text, RECT r, UINT flags = DT_LEFT | DT_SINGLELINE) {
+        void Label(const HDC dc, const wchar_t *text, RECT r, const UINT flags = DT_LEFT | DT_SINGLELINE) {
             DrawTextW(dc, text, -1, &r, flags);
         }
 
-LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
+LRESULT CALLBACK Hover(const HWND window, const UINT message, const WPARAM wp, const LPARAM lp, UINT_PTR, DWORD_PTR) {
             if (message == WM_MOUSEMOVE) {
                 TRACKMOUSEEVENT t{sizeof(t), TME_LEAVE, window, 0};
                 TrackMouseEvent(&t);
@@ -28,7 +28,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         }
     }
 
-    MatchmakingView::MatchmakingView(HWND parent, std::function<void(const std::string &)> log) : log_(std::move(log)) {
+    MatchmakingView::MatchmakingView(const HWND parent, std::function<void(const std::string &)> log) : log_(std::move(log)) {
         const auto instance = GetModuleHandleW(nullptr);
         WNDCLASSEXW wc{sizeof(wc)};
         wc.hInstance = instance;
@@ -41,7 +41,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         window_ = CreateWindowExW(WS_EX_CONTROLPARENT, kClass, L"", WS_CHILD | WS_CLIPCHILDREN, 0, 0, 590, 430, parent,
                                   nullptr, instance, this);
         if (!font_ || !window_) throw std::runtime_error("Cannot create matching panel");
-        const auto add = [&](int id, const wchar_t *text, int x, int y, int w, int h, const wchar_t *cls = L"BUTTON") {
+        const auto add = [&](const int id, const wchar_t *text, const int x, const int y, const int w, const int h, const wchar_t *cls = L"BUTTON") {
             const bool edit = wcscmp(cls, L"EDIT") == 0;
             auto control = CreateWindowExW(0, cls, text,
                                            WS_CHILD | WS_TABSTOP | (
@@ -77,12 +77,13 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         if (font_) DeleteObject(font_);
     }
 
-    void MatchmakingView::Move(RECT bounds) {
+    void MatchmakingView::Move(const RECT bounds) const
+    {
         MoveWindow(window_, (bounds.left + bounds.right - 590) / 2, (bounds.top + bounds.bottom - 430) / 2, 590, 430,
                    TRUE);
     }
 
-    void MatchmakingView::Show(bool visible) { ShowWindow(window_, visible ? SW_SHOW : SW_HIDE); }
+    void MatchmakingView::Show(const bool visible) const { ShowWindow(window_, visible ? SW_SHOW : SW_HIDE); }
 
     void MatchmakingView::ConfigureArtwork(const std::filesystem::path &directory) {
         // The fixed-size lobby panel uses the HD display pack at every table size.
@@ -121,7 +122,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         Update();
     }
 
-    void MatchmakingView::Update() {
+    void MatchmakingView::Update() const
+    {
         const auto ui = vm_.UiState();
         const auto &snapshot = vm_.snapshot();
         const bool pending = snapshot.phase == LobbyPhase::Matching || snapshot.phase == LobbyPhase::Cancelling || !
@@ -151,7 +153,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void MatchmakingView::Command(int id) {
+    void MatchmakingView::Command(const int id) {
         if (vm_.editing()) return;
         const auto dispatch = [&](const std::optional<MatchmakingCommand> &cmd) {
             status_ = Utf8ToWide(vm_.status());
@@ -215,7 +217,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         const auto &draft = vm_.draft();
         try {
             const auto &frame = artwork_.Get(592);
-            if (frame.width != 590 || frame.height != 430)
+            if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty())
                 throw std::runtime_error("Invalid lobby resource 592 dimensions");
             Gdiplus::Graphics graphics(dc);
             artwork_.Sprite(graphics, 592, 0, 0);
@@ -293,7 +295,8 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         SelectObject(dc, old);
     }
 
-    void MatchmakingView::PaintButton(const DRAWITEMSTRUCT &item) {
+    void MatchmakingView::PaintButton(const DRAWITEMSTRUCT &item) const
+    {
         const bool enabled = IsWindowEnabled(item.hwndItem) != FALSE;
         POINT point{};
         GetCursorPos(&point);
@@ -349,7 +352,7 @@ LRESULT CALLBACK Hover(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT_PTR
         RestoreDC(dc, saved);
     }
 
-LRESULT CALLBACK MatchmakingView::Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK MatchmakingView::Procedure(const HWND window, const UINT message, const WPARAM wp, const LPARAM lp) {
         auto *self = reinterpret_cast<MatchmakingView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<MatchmakingView *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);

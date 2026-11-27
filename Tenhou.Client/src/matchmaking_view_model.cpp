@@ -7,7 +7,7 @@ namespace tenhou {
         unsigned ParseRoomNumber(const std::string &lobby) {
             if (lobby.size() != 5 || lobby[0] != 'L') return 0;
             if (!std::all_of(lobby.begin() + 1, lobby.end(),
-                             [](char c) { return c >= '0' && c <= '9'; })) {
+                             [](const char c) { return c >= '0' && c <= '9'; })) {
                 return 0;
             }
             return static_cast<unsigned>(std::stoul(lobby.substr(1)));
@@ -59,14 +59,14 @@ namespace tenhou {
         }
     }
 
-    void MatchmakingViewModel::SetCustomMode(bool custom) {
+    void MatchmakingViewModel::SetCustomMode(const bool custom) {
         custom_ = custom;
         status_.clear();
     }
 
-    void MatchmakingViewModel::SetEditing(bool editing) { editing_ = editing; }
+    void MatchmakingViewModel::SetEditing(const bool editing) { editing_ = editing; }
 
-    void MatchmakingViewModel::SetSelectedQueueIndex(std::size_t index) {
+    void MatchmakingViewModel::SetSelectedQueueIndex(const std::size_t index) {
         selected_queue_ = index;
     }
 
@@ -126,7 +126,7 @@ namespace tenhou {
         return MatchmakingCommand{"match", snapshot_.queues[selected_queue_].id, {}};
     }
 
-    std::optional<MatchmakingCommand> MatchmakingViewModel::JoinRoomNumber(std::string_view number) {
+    std::optional<MatchmakingCommand> MatchmakingViewModel::JoinRoomNumber(const std::string_view number) {
         MatchmakingDraft probe;
         if (!probe.JoinRoom(number)) {
             status_ = "请输入 1000～9999 的四位房间号";
@@ -162,7 +162,7 @@ namespace tenhou {
     }
 
     std::optional<MatchmakingCommand> MatchmakingViewModel::ApplyRoomSettings(
-        bool creating, std::map<std::string, std::string> settings) {
+        const bool creating, std::map<std::string, std::string> settings) {
         if (settings.empty()) return std::nullopt;
         status_.clear();
         return MatchmakingCommand{creating ? "create" : "settings", 0, std::move(settings)};

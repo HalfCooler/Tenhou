@@ -3,7 +3,7 @@
 #include <string>
 
 namespace tenhou {
-    std::optional<TextKey> ActionButtonText(unsigned control, bool hot) {
+    std::optional<TextKey> ActionButtonText(const unsigned control, const bool hot) {
         if (control == 5173) return hot ? TextKey::button_hover_exchange : TextKey::button_normal_exchange;
         constexpr TextKey missing_normal[]{TextKey::button_normal_man, TextKey::button_normal_pin, TextKey::button_normal_sou};
         constexpr TextKey missing_hover[]{TextKey::button_hover_man, TextKey::button_hover_pin, TextKey::button_hover_sou};
@@ -20,11 +20,11 @@ namespace tenhou {
     }
 
     TableRenderFrame BuildOnlineTableRenderFrame(
-        int canvas_width, CanvasRect bounds, const OnlineState &online, HandProjection &hand,
+        const int canvas_width, const CanvasRect bounds, const OnlineState &online, HandProjection &hand,
         const TileGeometryCatalog &geometry, const TablePresentation &presentation,
         const OpeningPresentation *opening, const TableInteraction *interaction,
-        const ActionCaptions *captions, bool settlement_presented, bool relative_scores,
-        bool original_display, bool interactive, double now_anim_ms, unsigned dpi) {
+        const ActionCaptions *captions, const bool settlement_presented, const bool relative_scores,
+        const bool original_display, const bool interactive, const double now_anim_ms, const unsigned dpi) {
         TableRenderFrame frame;
         frame.canvas_width = canvas_width;
         frame.bounds = bounds;
@@ -52,7 +52,7 @@ namespace tenhou {
         }
         frame.state.relative_scores = relative_scores;
 
-        const double unit = double(canvas_width) / 1024.0;
+        const double unit = static_cast<double>(canvas_width) / 1024.0;
         hand.SetRaised(interaction ? interaction->selected : std::vector<int>{});
         const auto &raised = hand.raised();
         const unsigned placed = opening_active ? opening->placed() : static_cast<unsigned>(frame.state.wall.total);
@@ -90,11 +90,11 @@ namespace tenhou {
     }
 
     TableRenderFrame BuildReplayTableRenderFrame(
-        int canvas_width, CanvasRect bounds, const ReplayState &session_state,
+        const int canvas_width, const CanvasRect bounds, const ReplayState &session_state,
         const TileGeometryCatalog &geometry, const TablePresentation &presentation,
         const OpeningPresentation &opening, const ActionCaptions &captions,
-        bool red_tiles, bool original_display, bool animation_enabled, bool relative_scores,
-        unsigned draw_end_ticks, double now_anim_ms, unsigned dpi) {
+        const bool red_tiles, const bool original_display, const bool animation_enabled, const bool relative_scores,
+        const unsigned draw_end_ticks, const double now_anim_ms, const unsigned dpi) {
         TableRenderFrame frame;
         frame.canvas_width = canvas_width;
         frame.bounds = bounds;

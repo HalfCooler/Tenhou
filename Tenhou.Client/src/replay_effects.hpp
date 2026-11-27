@@ -47,9 +47,9 @@ namespace tenhou {
                                            const TileGeometryCatalog *geometry = nullptr, bool red = true);
 
     inline ReplayTransition BuildReplayTransition(const ReplayState &before, const ReplayState &after,
-                                                  const ReplayEvent &event, unsigned duration, int canvas_width,
-                                                  const TileOrigin &origin, bool sort_self,
-                                                  TableArtwork *artwork, bool red = true) {
+                                                  const ReplayEvent &event, const unsigned duration, const int canvas_width,
+                                                  const TileOrigin &origin, const bool sort_self,
+                                                  TableArtwork *artwork, const bool red = true) {
         return BuildReplayTransition(before, after, event, duration, canvas_width, origin, sort_self,
                                      artwork ? &artwork->geometry() : nullptr, red);
     }
@@ -63,8 +63,8 @@ namespace tenhou {
                    const TileGeometryCatalog *geometry = nullptr, bool red = true, unsigned playback_limit = 0);
 
         void Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
-                   unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self,
-                   TableArtwork *artwork, bool red = true, unsigned playback_limit = 0) {
+                   const unsigned duration, const int width, const TileOrigin &origin, const double now, const bool sort_self,
+                   TableArtwork *artwork, const bool red = true, const unsigned playback_limit = 0) {
             Begin(before, after, event, duration, width, origin, now, sort_self,
                   artwork ? &artwork->geometry() : nullptr, red, playback_limit);
         }
@@ -78,7 +78,7 @@ namespace tenhou {
 
         bool Tick(double now);
 
-        void ShiftTime(double delay) { started_ += delay; }
+        void ShiftTime(const double delay) { started_ += delay; }
 
         std::vector<PositionedTile> Frame(double now) const;
 
@@ -97,13 +97,13 @@ namespace tenhou {
     public:
         void Begin(const ReplayState &state, bool wall, const TileGeometryCatalog *geometry = nullptr, bool red = true);
 
-        void Begin(const ReplayState &state, bool wall, TableArtwork *artwork, bool red = true) {
+        void Begin(const ReplayState &state, const bool wall, TableArtwork *artwork, const bool red = true) {
             Begin(state, wall, artwork ? &artwork->geometry() : nullptr, red);
         }
 
         bool Tick(unsigned steps = 1);
         bool Advance(double now);
-        void ResumeClock(double now) { next_step_ = now + kTableTickMs; }
+        void ResumeClock(const double now) { next_step_ = now + kTableTickMs; }
 
         bool Active() const { return active_; }
         void Cancel() { active_ = false; }
@@ -112,7 +112,7 @@ namespace tenhou {
 
         std::vector<PositionedTile> Scene(const TileGeometryCatalog &geometry, bool red = true) const;
 
-        std::vector<PositionedTile> Scene(TableArtwork &artwork, bool red = true) const {
+        std::vector<PositionedTile> Scene(TableArtwork &artwork, const bool red = true) const {
             return Scene(artwork.geometry(), red);
         }
 

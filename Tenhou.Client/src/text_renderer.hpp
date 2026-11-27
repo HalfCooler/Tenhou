@@ -73,8 +73,8 @@ namespace tenhou {
         ~TextRenderer() override;
         TextRenderer(const TextRenderer &) = delete;
         TextRenderer &operator=(const TextRenderer &) = delete;
-        TextLayout Layout(TextKey key);
-        TextLayout Layout(std::string_view utf8_text, TextStyleKey style);
+        TextLayout Layout(TextKey key) const;
+        TextLayout Layout(std::string_view utf8_text, TextStyleKey style) const;
         // All action captions, including completion, share this visual-center anchor.
         SceneTextRun Caption(TextKey key, Gdiplus::PointF center, double scale = 1, double opacity = 1);
         // Conservative physical raster bounds; uses exactly the same geometry as Draw.
@@ -93,7 +93,7 @@ namespace tenhou {
     private:
         struct RasterData;
         std::shared_ptr<const RasterData> GetRaster(const TextRenderContext &context, const SceneTextRun &run,
-                                                     Gdiplus::Rect &device);
+                                                     Gdiplus::Rect &device) const;
         struct Impl;
         std::unique_ptr<Impl> impl_;
     };

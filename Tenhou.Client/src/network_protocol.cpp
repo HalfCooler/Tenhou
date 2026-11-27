@@ -16,16 +16,16 @@ namespace tenhou {
     using protocol_detail::Integer;
     using protocol_detail::Letter;
 
-    std::vector<std::string> LobbySession::Connected(const std::string &identity, char gender, std::uint64_t revision) {
+    std::vector<std::string> LobbySession::Connected(const std::string &identity, const char gender, const std::uint64_t revision) {
         if (match_games && (!interactive_games || observe_games)) Fail(
             "Matchmaking requires local interactive mode without read-only observation");
         // The fixed original accepts NoName or a 19-character registered ID, not arbitrary guest names.
         const bool registered = identity.size() == 19 && identity.compare(0, 2, "ID") == 0 &&
-                                std::all_of(identity.begin(), identity.end(), [](char c) {
+                                std::all_of(identity.begin(), identity.end(), [](const char c) {
                                     return (Letter(c) && c != '_') || Digit(c) || c == '-';
                                 });
         const bool local_account = require_native && identity.size() >= 3 && identity.size() <= 32 && std::all_of(
-                                       identity.begin(), identity.end(), [](char c) {
+                                       identity.begin(), identity.end(), [](const char c) {
                                            return Letter(c) || Digit(c) || c == '-';
                                        });
         if ((identity != "NoName" && !registered && !local_account) || (gender != 'M' && gender != 'F'))
@@ -231,7 +231,7 @@ namespace tenhou {
             if (message.attributes.count("window")) snapshot.native_window = Integer(Attribute(message, "window"));
             if (tag == "SESSION") {
                 const auto token = Attribute(message, "token");
-                if (token.size() != 64 || !std::all_of(token.begin(), token.end(), [](char c) {
+                if (token.size() != 64 || !std::all_of(token.begin(), token.end(), [](const char c) {
                     return Digit(c) || (c >= 'a' && c <= 'f');
                 })) Fail("Invalid native session token");
                 snapshot.native_token = token;
@@ -401,7 +401,7 @@ namespace tenhou {
                 Fail("Unexpected or disabled REJOIN");
             const auto type = Attribute(message, "t");
             if (official) {
-                if (type.empty() || type.size() > 128 || !std::all_of(type.begin(), type.end(), [](unsigned char c) {
+                if (type.empty() || type.size() > 128 || !std::all_of(type.begin(), type.end(), [](const unsigned char c) {
                     return c >= 33 && c <= 126 && c != '"' && c != '\'' && c != '<' && c != '>' && c != '&';
                 })) Fail("Invalid REJOIN t");
             } else {
@@ -637,7 +637,7 @@ namespace tenhou {
     }
 
 
-    std::vector<std::string> LobbySession::SubmitAction(std::uint64_t revision, std::size_t index) {
+    std::vector<std::string> LobbySession::SubmitAction(const std::uint64_t revision, const std::size_t index) {
         if (snapshot.table_paused || snapshot.exit_pending) return {};
         if (snapshot.phase != LobbyPhase::Game) Fail("Action outside game session");
         if (snapshot.variant_active) {
@@ -656,7 +656,7 @@ namespace tenhou {
         return replies;
     }
 
-    std::vector<std::string> LobbySession::ExitGame(int choice) {
+    std::vector<std::string> LobbySession::ExitGame(const int choice) {
         if (official) {
             if (choice >= 0 || !snapshot.exit_allowed || snapshot.recovering || snapshot.phase != LobbyPhase::Game ||
                 official_identity_.empty())
@@ -687,8 +687,9 @@ namespace tenhou {
         };
     }
 
-    std::vector<std::string> LobbySession::ConfigureRoom(std::uint64_t revision,
-                                                         const std::map<std::string, std::string> &settings) {
+    std::vector<std::string> LobbySession::ConfigureRoom(const std::uint64_t revision,
+                                                         const std::map<std::string, std::string> &settings) const
+    {
         if (!match_games || !interactive_games || observe_games || snapshot.phase != LobbyPhase::Lobby || revision !=
             snapshot.lobby_revision)
             Fail("Room configuration requires the current local lobby");
@@ -697,8 +698,8 @@ namespace tenhou {
         for (const auto &item: settings) {
             if (item.first == "room") continue;
             if (item.first.empty() || !std::all_of(item.first.begin(), item.first.end(),
-                                                   [](char c) { return (c >= 'a' && c <= 'z') || c == '_'; }) ||
-                item.second.size() > 32 || !std::all_of(item.second.begin(), item.second.end(), [](char c) {
+                                                   [](const char c) { return (c >= 'a' && c <= 'z') || c == '_'; }) ||
+                item.second.size() > 32 || !std::all_of(item.second.begin(), item.second.end(), [](const char c) {
                     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+';
                 }))
                 Fail("Invalid room setting encoding");

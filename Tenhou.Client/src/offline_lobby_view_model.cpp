@@ -2,7 +2,7 @@
 #include <map>
 
 namespace tenhou {
-    void OfflineLobbyViewModel::SetMode(bool official, bool service_backed) {
+    void OfflineLobbyViewModel::SetMode(const bool official, const bool service_backed) {
         official_ = official;
         service_backed_ = service_backed;
     }
@@ -16,15 +16,15 @@ namespace tenhou {
         if (lobby_.room() != previous_room) move_declined_ = false;
     }
 
-    void OfflineLobbyViewModel::SelectOuterTab(int tab) {
+    void OfflineLobbyViewModel::SelectOuterTab(const int tab) {
         outer_tab_ = tab;
     }
 
-    void OfflineLobbyViewModel::SelectTier(RankedTier tier) {
+    void OfflineLobbyViewModel::SelectTier(const RankedTier tier) {
         tier_ = tier;
     }
 
-    void OfflineLobbyViewModel::SetProfileSelectors(unsigned lifetime, unsigned monthly) {
+    void OfflineLobbyViewModel::SetProfileSelectors(const unsigned lifetime, const unsigned monthly) {
         lifetime_profile_ = lifetime;
         if (ValidMonthlyProfile(monthly)) monthly_profile_ = monthly;
     }
@@ -34,7 +34,7 @@ namespace tenhou {
         if (lobby_.contest()) {
             title = lobby_.Contest() ? lobby_.Contest()->title : "大会室";
         } else if (lobby_.room() == kBroadcastLobby) {
-            title = "公认广播室";
+            title = "广播室";
         } else if (!lobby_.ranked()) {
             title = "个室";
         } else {
@@ -70,8 +70,8 @@ namespace tenhou {
         return status;
     }
 
-    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::RequestMove(std::string_view raw_input,
-                                                                          std::uint64_t now_ms) {
+    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::RequestMove(const std::string_view raw_input,
+                                                                          const std::uint64_t now_ms) {
         const auto normalized = LobbyNumber(std::string(raw_input));
         if (!normalized) {
             move_declined_ = true;
@@ -91,7 +91,7 @@ namespace tenhou {
         return std::nullopt;
     }
 
-    bool OfflineLobbyViewModel::CompleteOfflineMove(std::uint64_t now_ms) {
+    bool OfflineLobbyViewModel::CompleteOfflineMove(const std::uint64_t now_ms) {
         if (!lobby_.pending() || !timing_.MoveReady(now_ms)) return false;
         const std::string target = *lobby_.pending();
         const bool ok = lobby_.ConfirmMove(target);
@@ -102,7 +102,7 @@ namespace tenhou {
         return ok;
     }
 
-    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::ToggleReservation(unsigned slot) {
+    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::ToggleReservation(const unsigned slot) {
         const auto candidate = lobby_.Candidate(tier_, slot);
         if (!candidate.visible) return std::nullopt;
         if (service_backed_) {
@@ -119,7 +119,7 @@ namespace tenhou {
         return std::nullopt;
     }
 
-    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::ContestPrimaryAction(std::uint64_t now_seconds) {
+    std::optional<OfflineLobbyCommand> OfflineLobbyViewModel::ContestPrimaryAction(const std::uint64_t now_seconds) {
         if (!lobby_.contest()) return std::nullopt;
         const auto status = lobby_.ContestAction(now_seconds);
         if (status == ContestStatus::Register || status == ContestStatus::Unregistered) {

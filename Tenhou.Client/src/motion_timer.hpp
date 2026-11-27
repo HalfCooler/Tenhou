@@ -18,7 +18,7 @@ namespace tenhou {
 
         ~MotionTimer() { Stop(); }
 
-        void Start(HWND window, UINT_PTR id, double fixed_period = 0) {
+        void Start(const HWND window, const UINT_PTR id, const double fixed_period = 0) {
             if (window_ == window && id_ == id && fixed_period_ == fixed_period) return;
             Stop();
             timer_ = CreateWaitableTimerExW(nullptr, nullptr, 0x2, TIMER_ALL_ACCESS);
@@ -106,7 +106,7 @@ namespace tenhou {
         }
 
     private:
-        static double PaintPeriod(HWND window) {
+        static double PaintPeriod(const HWND window) {
             static double refresh_at = 0, period = 1000.0 / 60;
             if (AnimationNow() >= refresh_at) {
                 MONITORINFOEXW info{};
@@ -139,7 +139,8 @@ namespace tenhou {
             refresh_at_ = AnimationNow() + 500;
         }
 
-        void Arm(double deadline) {
+        void Arm(const double deadline) const
+        {
             LARGE_INTEGER due{};
             due.QuadPart = -std::max<LONGLONG>(
                 1, static_cast<LONGLONG>(std::ceil((deadline - AnimationNow()) * 10000.0)));

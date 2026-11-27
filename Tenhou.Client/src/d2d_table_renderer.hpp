@@ -36,11 +36,11 @@ namespace tenhou {
         std::size_t PresentedFrames() const;
         std::size_t DeviceGeneration() const;
         bool UsingHardware() const;
-        void SetSyncInterval(unsigned interval);
+        void SetSyncInterval(unsigned interval) const;
         BenchStats Stats() const;
-        void ResetStats();
+        void ResetStats() const;
         // Exercises the same invalidation/retry path used by device removal.
-        void SimulateDeviceLoss();
+        void SimulateDeviceLoss() const;
 
     private:
         struct Impl;

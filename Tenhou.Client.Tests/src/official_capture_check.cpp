@@ -21,7 +21,7 @@
 using namespace tenhou;
 
 namespace {
-    void Require(bool ok, const std::string &message) {
+    void Require(const bool ok, const std::string &message) {
         if (!ok) throw std::runtime_error(message);
     }
 
@@ -152,7 +152,7 @@ namespace {
             connected = true;
         }
 
-        const auto submit_matching = [&](const std::string &wire, int seq, const std::string &kind_hint = {}) {
+        const auto submit_matching = [&](const std::string &wire, const int seq, const std::string &kind_hint = {}) {
             if (session.snapshot.phase != LobbyPhase::Game || !session.snapshot.actions.pending.empty() ||
                 session.snapshot.game.awaiting_context)
                 return;
@@ -591,7 +591,7 @@ namespace {
             }
         }
 
-        bool WaitPeerClosed(unsigned wait_ms) {
+        bool WaitPeerClosed(const unsigned wait_ms) {
             const ULONGLONG deadline = GetTickCount64() + wait_ms;
             while (GetTickCount64() < deadline) {
                 MSG msg{};
@@ -614,7 +614,7 @@ namespace {
             return peer_closed;
         }
 
-        std::vector<std::string> Pump(unsigned wait_ms) {
+        std::vector<std::string> Pump(const unsigned wait_ms) {
             const ULONGLONG deadline = GetTickCount64() + wait_ms;
             std::vector<std::string> out;
             while (GetTickCount64() < deadline) {
@@ -650,7 +650,7 @@ namespace {
         }
     };
 
-    void PumpUiUntil(unsigned wait_ms, const std::function<bool()> &done,
+    void PumpUiUntil(const unsigned wait_ms, const std::function<bool()> &done,
                      const std::function<std::string()> &context = {}) {
         const ULONGLONG deadline = GetTickCount64() + wait_ms;
         while (GetTickCount64() < deadline) {
@@ -677,7 +677,7 @@ namespace {
         WritePrivateProfileStringW(L"OfficialRecovery", session_file.filename().c_str(),
                                    L"928CC0A7-50692F1D", config.c_str());
 
-        auto make_options = [&](unsigned port) {
+        auto make_options = [&](const unsigned port) {
             ConnectionOptions opt;
             opt.host = "127.0.0.1";
             opt.port = port;
@@ -799,7 +799,7 @@ namespace {
         const auto config = temp_dir / "config.ini";
         const auto session_file = temp_dir / "official-session-10080-owari.txt";
 
-        auto make_options = [&](unsigned port) {
+        auto make_options = [&](const unsigned port) {
             ConnectionOptions opt;
             opt.host = "127.0.0.1";
             opt.port = port;
@@ -980,7 +980,7 @@ namespace {
     }
 }
 
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     try {
         Require(argc == 2, "Usage: tenhou_official_capture_check <origin-capture-dir>");
         const std::filesystem::path dir(argv[1]);

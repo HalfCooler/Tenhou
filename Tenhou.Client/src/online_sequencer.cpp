@@ -44,7 +44,7 @@ namespace tenhou {
                (automatic_[1] || automatic_[2] || automatic_[3] || snapshot.game.players[0].reach >= 2);
     }
 
-    bool OnlineTableSequencer::LocalTableInput(const LobbySnapshot &live, bool intro_active) const {
+    bool OnlineTableSequencer::LocalTableInput(const LobbySnapshot &live, const bool intro_active) const {
         if (show_results_ || intro_active || opening_.Active() || start_barrier_) return false;
         const auto &s = Snapshot(live);
         return s.phase == LobbyPhase::Game && s.game.initialized && s.actions.enabled && s.actions.pending.empty() &&
@@ -67,7 +67,7 @@ namespace tenhou {
                             [](const OnlineAction &c) { return c.kind == "ron"; });
     }
 
-    bool OnlineTableSequencer::ActionReady(const LobbySnapshot &live, bool intro_active, bool table_animating) const {
+    bool OnlineTableSequencer::ActionReady(const LobbySnapshot &live, const bool intro_active, const bool table_animating) const {
         const auto &s = Snapshot(live);
         const auto &a = s.actions;
         return !SuppressCallPrompt(live) && !intro_active && !opening_.Active() && !Moving(table_animating) &&
@@ -75,8 +75,8 @@ namespace tenhou {
     }
 
     std::vector<TableActionButton> OnlineTableSequencer::BuildButtons(
-        const LobbySnapshot &live, CanvasRect bounds, int width, int exit_width, int exit_height,
-        int anchor_x, int anchor_y, bool intro_active, bool table_animating) const {
+        const LobbySnapshot &live, const CanvasRect bounds, const int width, const int exit_width, const int exit_height,
+        int anchor_x, int anchor_y, const bool intro_active, const bool table_animating) const {
         const auto &s = Snapshot(live);
         std::vector<TableActionButton> buttons;
         if (!s.game.initialized || show_results_) return buttons;
@@ -86,18 +86,18 @@ namespace tenhou {
         if (tw <= 0 || th <= 0) return buttons;
 
         using Style = TableActionButtonStyle;
-        const auto append = [&](int id, CanvasRect rect, Style style, std::string label) {
+        const auto append = [&](const int id, const CanvasRect rect, const Style style, std::string label) {
             buttons.push_back({id, rect, IsActionButtonEnabled(id, live, intro_active, table_animating),
                                false, false, false, style, std::move(label)});
         };
-        const auto place = [&](int id, CanvasRect rect, Style style, std::string label) {
+        const auto place = [&](const int id, const CanvasRect rect, const Style style, std::string label) {
             const int x = target.left + rect.left * tw / width;
             const int y = target.top + rect.top * th / height;
             append(id, {x, y, x + (rect.right - rect.left) * tw / width,
                          y + (rect.bottom - rect.top) * th / height}, style, std::move(label));
         };
         const auto action_style = original_display_ ? Style::Sprite440 : Style::PushButton;
-        const auto add_action = [&](int id, CanvasRect rect) {
+        const auto add_action = [&](const int id, const CanvasRect rect) {
             const auto key = ActionButtonText(id, false);
             if (key) place(id, rect, action_style, std::string(TextLabel(*key)));
         };
@@ -111,7 +111,7 @@ namespace tenhou {
             const int stride = width == 1440 ? 154 : 110;
             const int bw = width == 1440 ? 140 : 100, bh = width == 1440 ? 50 : 36;
             const int y = anchor_y - (width == 1440 ? 63 : 45);
-            const auto rect = [&](int x) { return CanvasRect{x, y, x + bw, y + bh}; };
+            const auto rect = [&](const int x) { return CanvasRect{x, y, x + bw, y + bh}; };
             if (LocalTableInput(live, intro_active) && !Moving(table_animating)) {
                 if (s.variant.phase == VariantPhase::Missing) {
                     for (int suit = 0; suit < 3; ++suit)
@@ -139,8 +139,8 @@ namespace tenhou {
         return buttons;
     }
 
-    bool OnlineTableSequencer::IsActionButtonEnabled(int control_id, const LobbySnapshot &live,
-                                                     bool intro_active, bool table_animating) const {
+    bool OnlineTableSequencer::IsActionButtonEnabled(const int control_id, const LobbySnapshot &live,
+                                                     const bool intro_active, const bool table_animating) const {
         const auto &s = Snapshot(live);
         const auto &a = s.actions;
         if (control_id >= 5121 && control_id <= 5128) {
@@ -174,7 +174,7 @@ namespace tenhou {
     }
 
     std::string OnlineTableSequencer::FormatCountdown(const LobbySnapshot &snapshot,
-                                                      std::uint64_t now_tick_ms) const {
+                                                      const std::uint64_t now_tick_ms) const {
         if (!clock_active_ || clock_revision_ != snapshot.actions.revision || !snapshot.actions.pending.empty())
             return {};
         if (!clock_deadline_) return "\xE2\x88\x9E+0";
@@ -189,10 +189,10 @@ namespace tenhou {
 
     TableInteraction OnlineTableSequencer::BuildInteraction(const LobbySnapshot &snapshot,
                                                             const LobbySnapshot &live,
-                                                            bool intro_active, bool table_animating,
-                                                            int hovered_button,
+                                                            const bool intro_active, const bool table_animating,
+                                                            const int hovered_button,
                                                             const std::function<int()> &hit_tile,
-                                                            std::uint64_t now_tick_ms) const {
+                                                            const std::uint64_t now_tick_ms) const {
         TableInteraction result;
         result.automatic = automatic_;
         if (snapshot.variant_active && snapshot.variant.Preparing()) {
@@ -279,8 +279,8 @@ namespace tenhou {
         return fx;
     }
 
-    void OnlineTableSequencer::QueueOrEmitSound(unsigned id, OnlineSequencerEffects &fx,
-                                                bool window_visible, bool audio_healthy) {
+    void OnlineTableSequencer::QueueOrEmitSound(const unsigned id, OnlineSequencerEffects &fx,
+                                                const bool window_visible, const bool audio_healthy) {
         if (!EffectsEnabled() || !audio_healthy || !window_visible) return;
         if (opening_.Active() && id != 104 && id != 105 && id != 102 && id != 112) {
             if (deferred_sounds_.size() < 256) deferred_sounds_.push_back(id);
@@ -290,7 +290,7 @@ namespace tenhou {
         fx.play_sounds.push_back(id);
     }
 
-    std::optional<unsigned> OnlineTableSequencer::PopDeferredSound(bool intro_active) {
+    std::optional<unsigned> OnlineTableSequencer::PopDeferredSound(const bool intro_active) {
         if (opening_.Active() || intro_active || start_barrier_ || deferred_sounds_.empty())
             return std::nullopt;
         const auto id = deferred_sounds_.front();
@@ -319,7 +319,7 @@ namespace tenhou {
     }
 
     void OnlineTableSequencer::ReceiveActionClock(const NetworkMessage &message, const LobbySnapshot &snapshot,
-                                                  std::uint64_t now_tick_ms) {
+                                                  const std::uint64_t now_tick_ms) {
         if (message.tag != "CLOCK") return;
         ResetActionClock();
         if (snapshot.phase != LobbyPhase::Game || !snapshot.actions.enabled || snapshot.actions.choices.empty() ||
@@ -364,7 +364,7 @@ namespace tenhou {
         return fx;
     }
 
-    OnlineSequencerEffects OnlineTableSequencer::UpdateActions(const LobbySnapshot &live, bool compact) {
+    OnlineSequencerEffects OnlineTableSequencer::UpdateActions(const LobbySnapshot &live, const bool compact) {
         OnlineSequencerEffects fx;
         const auto &s = Snapshot(live);
         const auto &actions = s.actions;
@@ -396,7 +396,7 @@ namespace tenhou {
     }
 
     OnlineSequencerEffects OnlineTableSequencer::Submit(std::size_t index, const LobbySnapshot &live,
-                                                        const OnlineSequencerContext &ctx, bool table_animating) {
+                                                        const OnlineSequencerContext &ctx, const bool table_animating) {
         OnlineSequencerEffects fx;
         if (live.table_paused || live.exit_pending) return fx;
         const auto &s = Snapshot(live);
@@ -417,7 +417,7 @@ namespace tenhou {
 
     OnlineSequencerEffects OnlineTableSequencer::AutomaticAction(const LobbySnapshot &live,
                                                                  const OnlineSequencerContext &ctx,
-                                                                 bool table_animating) {
+                                                                 const bool table_animating) {
         OnlineSequencerEffects fx;
         const auto &s = Snapshot(live);
         if (s.variant_active && s.variant.Preparing()) return fx;
@@ -465,7 +465,7 @@ namespace tenhou {
         return fx;
     }
 
-    OnlineSequencerEffects OnlineTableSequencer::HandleCommand(int id, const LobbySnapshot &live, bool compact,
+    OnlineSequencerEffects OnlineTableSequencer::HandleCommand(const int id, const LobbySnapshot &live, const bool compact,
                                                                const OnlineSequencerContext &ctx,
                                                                const OnlineMotionCallbacks &motion) {
         OnlineSequencerEffects fx;
@@ -754,7 +754,7 @@ namespace tenhou {
         else if (event.tag == "AGARI") event.kind = ReplayEventKind::Win;
         else if (event.tag == "RYUUKYOKU") event.kind = ReplayEventKind::DrawEnd;
         else if (!event.tag.empty() && std::string("TUVWtuvwDEFGdefg").find(event.tag[0]) != std::string::npos &&
-                 std::all_of(event.tag.begin() + 1, event.tag.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+                 std::all_of(event.tag.begin() + 1, event.tag.end(), [](const char c) { return c >= '0' && c <= '9'; })) {
             const auto found = std::string("TUVWtuvwDEFGdefg").find(event.tag[0]);
             event.kind = found < 8 ? ReplayEventKind::Draw : ReplayEventKind::Discard;
             event.who = static_cast<int>(found % 4);
@@ -924,7 +924,7 @@ namespace tenhou {
             displaying_ = true;
         }
         const bool tile = !tag.empty() && std::string("TUVWtuvwDEFGdefg").find(tag[0]) != std::string::npos &&
-                          std::all_of(tag.begin() + 1, tag.end(), [](char c) { return c >= '0' && c <= '9'; });
+                          std::all_of(tag.begin() + 1, tag.end(), [](const char c) { return c >= '0' && c <= '9'; });
         const bool event = tile || tag == "N" || tag == "DORA" || tag == "REACH" || tag == "FURITEN" ||
                            tag == "AGARI" || tag == "RYUUKYOKU" || tag == "PROF";
         const bool now_anim = motion.animating ? motion.animating() : false;
@@ -1056,7 +1056,7 @@ namespace tenhou {
             fx.Merge(CancelSelection());
         } else if (!paused && paused_at_) {
             const auto delay = ctx.tick_ms - paused_at_;
-            const auto remaining = [&](std::uint64_t deadline) {
+            const auto remaining = [&](const std::uint64_t deadline) {
                 return static_cast<unsigned>(deadline > ctx.tick_ms ? deadline - ctx.tick_ms : 1);
             };
             if (result_deadline_) result_deadline_ += delay;

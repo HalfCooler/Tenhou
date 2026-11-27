@@ -8,15 +8,15 @@
 
 namespace tenhou {
     namespace {
-        std::string Number(double n, bool sign = false) {
+        std::string Number(const double n, const bool sign = false) {
             std::ostringstream s;
             if (sign) s << std::showpos;
             s << std::setprecision(12) << n;
             return s.str();
         }
 
-        void CatalogText(SettlementScene &scene, std::string role, RECT rect,
-                         std::vector<SettlementTextSpan> spans, int align = 0) {
+        void CatalogText(SettlementScene &scene, std::string role, const RECT rect,
+                         std::vector<SettlementTextSpan> spans, const int align = 0) {
             SettlementTextItem item;
             item.role = std::move(role);
             item.rect = rect;
@@ -29,7 +29,7 @@ namespace tenhou {
             scene.text.push_back(std::move(item));
         }
 
-        std::string WithUnit(long long value, TextKey unit) {
+        std::string WithUnit(const long long value, const TextKey unit) {
             return std::to_string(value) + " " + std::string(TextUtf8(unit));
         }
 
@@ -43,7 +43,7 @@ namespace tenhou {
             return count > 10 ? (count + 1) / 2 : count;
         }
 
-        int WinHeight(const SettlementReceipt &r, double scale) {
+        int WinHeight(const SettlementReceipt &r, const double scale) {
             // The native AGARI window adds one resource-height per yaku row and
             // reserves separate room for the visible and hidden indicators.
             const int row_h = scale == 1.0 ? 24 : static_cast<int>(std::lround(34.0 * scale / 1.4));
@@ -57,26 +57,26 @@ namespace tenhou {
             SettlementScene scene;
             scene.width = layout.width;
             scene.height = layout.width * 3 / 4;
-            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (double(layout.width) / 1440.0);
-            const auto px = [&](double n) { return static_cast<int>(n * scale); };
+            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (static_cast<double>(layout.width) / 1440.0);
+            const auto px = [&](const double n) { return static_cast<int>(n * scale); };
             const bool riichi_win = r.who >= 0 && !r.generic;
             const int height = riichi_win ? WinHeight(r, scale) : px(640);
             const int payment_shift = height - px(640);
             const int left = (scene.width - px(660)) / 2, top = (scene.height - height) / 2;
             scene.panel = {left, top, left + px(660), top + height};
-            const auto catalog = [&](std::string role, int x, int y, int w, int h,
-                                     std::vector<SettlementTextSpan> spans, int align = 0) {
+            const auto catalog = [&](std::string role, const int x, const int y, const int w, const int h,
+                                     std::vector<SettlementTextSpan> spans, const int align = 0) {
                 CatalogText(scene, std::move(role), {left + px(x), top + px(y), left + px(x + w), top + px(y + h)},
                             std::move(spans), align);
             };
-            const auto text = [&](const std::string &role, const std::string &value, int x, int y, int w,
-                                  int em = 14, unsigned color = 0xffffffff, int align = 0, bool visible = true) {
+            const auto text = [&](const std::string &role, const std::string &value, const int x, const int y, const int w,
+                                  const int em = 14, const unsigned color = 0xffffffff, const int align = 0, const bool visible = true) {
                 scene.text.push_back({
                     role, value, {left + px(x), top + px(y), left + px(x + w), top + px(y + em + 6)},
                     static_cast<float>(px(em)), color, visible, align
                 });
             };
-            const auto image = [&](unsigned id, int x, int y, double fit = 1) {
+            const auto image = [&](const unsigned id, const int x, const int y, const double fit = 1) {
                 scene.images.push_back({id, x, y, fit});
             };
             const auto bounds = [&](const TableTile &tile) -> RECT {
@@ -203,8 +203,8 @@ namespace tenhou {
                     // Keep normal meld rows in native pixels, including the wider side
                     // sprite. Only exceptional long rows fit the available inset.
                     const double fit = std::min({
-                        1.0, double(px(650)) / (union_rect.right - union_rect.left),
-                        double(px(96)) / (union_rect.bottom - union_rect.top)
+                        1.0, static_cast<double>(px(650)) / (union_rect.right - union_rect.left),
+                        static_cast<double>(px(96)) / (union_rect.bottom - union_rect.top)
                     });
                     const int origin = left + (px(660) - static_cast<int>((union_rect.right - union_rect.left) * fit)) /
                                        2;
@@ -237,7 +237,7 @@ namespace tenhou {
                 const bool two_columns = WinYakuCount(r) > rows;
                 const int yaku_top = r.dora.empty() ? 117 : 185;
                 ura_y = yaku_top + WinRows(r) * pitch + 8;
-                const auto indicators = [&](const std::vector<int> &ids, int y, const char *role, bool reveal) {
+                const auto indicators = [&](const std::vector<int> &ids, const int y, const char *role, const bool reveal) {
                     // Original dora capture consists of n/14,n/13 (backs), followed by
                     // n/(12-i), i=0..4; not just the received indicator count.
                     std::vector<SettlementTileItem> strip;
@@ -370,7 +370,7 @@ namespace tenhou {
                     text("delta", Number(r.delta[seat], true), x + 114, y + 17, 72, 14,
                          r.delta[seat] > 0 ? 0xff00ffff : 0xffff0000, 0, r.delta[seat] != 0);
                     if (r.has_chips) {
-                        const auto chip_str = [](int value) {
+                        const auto chip_str = [](const int value) {
                             return (value > 0 ? "+" : "") + std::to_string(value) + "枚";
                         };
                         if (r.chip_delta[seat] == 0) {
@@ -415,9 +415,9 @@ namespace tenhou {
         }
     }
 
-    RECT SettlementConfirmRect(const SettlementState &s, std::size_t selected, int width) {
-        const double scale = width == 1024 ? 1.0 : 1.4 * (double(width) / 1440.0);
-        const auto px = [&](int n) { return static_cast<int>(n * scale); };
+    RECT SettlementConfirmRect(const SettlementState &s, const std::size_t selected, const int width) {
+        const double scale = width == 1024 ? 1.0 : 1.4 * (static_cast<double>(width) / 1440.0);
+        const auto px = [&](const int n) { return static_cast<int>(n * scale); };
         const bool round = selected < s.receipts.size();
         const int height = !round ? px(480) : s.receipts[selected].who < 0 ? px(300) :
                            s.receipts[selected].generic ? px(640) : WinHeight(s.receipts[selected], scale);
@@ -438,17 +438,17 @@ namespace tenhou {
         SettlementScene scene;
         scene.width = layout.width;
         scene.height = layout.width * 3 / 4;
-        const auto text = [&](std::string role, std::string value, int x, int y, int w, int size = 24,
-                              unsigned color = 0xfff5f3db) {
+        const auto text = [&](std::string role, std::string value, const int x, const int y, const int w, const int size = 24,
+                              const unsigned color = 0xfff5f3db) {
             scene.text.push_back({
                 std::move(role), std::move(value), {x, y, x + w, y + size + 10}, static_cast<float>(size), color
             });
         };
-        const auto name = [&](int seat) { return names[seat].empty() ? "Seat " + std::to_string(seat) : names[seat]; };
+        const auto name = [&](const int seat) { return names[seat].empty() ? "Seat " + std::to_string(seat) : names[seat]; };
         if (selected == s.receipts.size() && s.has_final) {
             // FUN_004aad30 OWARI @004ac129..004ac168: 450 x 480, centered.
-            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (double(layout.width) / 1440.0);
-            const auto px = [&](double v) { return static_cast<int>(v * scale); };
+            const double scale = layout.width == 1024 ? 1.0 : 1.4 * (static_cast<double>(layout.width) / 1440.0);
+            const auto px = [&](const double v) { return static_cast<int>(v * scale); };
             const int left = (scene.width - px(450)) / 2, top = (scene.height - px(480)) / 2, center = scene.width / 2;
             scene.panel = {left, top, left + px(450), top + px(480)};
             scene.confirm = {center - px(28), top + px(430), center + px(28), top + px(451)};
@@ -457,7 +457,7 @@ namespace tenhou {
             std::vector<int> order;
             for (int i = 0; i < 4; ++i) if (SeatPresent(s.seat_mask, i)) order.push_back(i);
             // Original compares the supplied ranking points, retaining seat order on ties.
-            std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
+            std::stable_sort(order.begin(), order.end(), [&](const int a, const int b) {
                 return s.final_points[a] > s.final_points[b];
             });
             std::array<std::string, 4> scores, points, chips, gold;
@@ -496,8 +496,8 @@ namespace tenhou {
             if (s.has_ratio) total_width += gap + gold_width;
             const int start = -total_width / 2;
             const int panel_half = std::max(px(140), total_width / 2 + px(24));
-            const auto label = [&](const char *role, const std::string &value, int x, int y, int width, float em,
-                                   unsigned color, int align) {
+            const auto label = [&](const char *role, const std::string &value, const int x, const int y, const int width, const float em,
+                                   const unsigned color, const int align) {
                 scene.text.push_back({role, value, {x, y, x + width, y + px(24)}, em, color, true, align, true});
             };
             for (int rank = 0; rank < static_cast<int>(order.size()); ++rank) {
@@ -531,7 +531,7 @@ namespace tenhou {
         return scene;
     }
 
-    std::vector<SceneTextRun> LayoutSettlementText(TextRenderer &renderer, const SettlementTextItem &item, bool sd) {
+    std::vector<SceneTextRun> LayoutSettlementText(TextRenderer &renderer, const SettlementTextItem &item, const bool sd) {
         std::vector<SceneTextRun> runs;
         double cursor = 0, left = 0, right = 0, height = 0;
         for (const auto &span: item.spans) {
@@ -579,8 +579,8 @@ namespace tenhou {
     std::vector<std::size_t> SettlementPaintOrder(const SettlementScene &scene) {
         std::vector<std::size_t> order;
         for (std::size_t i = 0; i < scene.tiles.size(); ++i) order.push_back(i);
-        std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-            const auto key = [&](std::size_t index) {
+        std::stable_sort(order.begin(), order.end(), [&](const std::size_t a, const std::size_t b) {
+            const auto key = [&](const std::size_t index) {
                 const auto &rect = scene.tiles[index].rect;
                 return std::pair<LONG, LONG>{rect.bottom, -std::abs(rect.left + rect.right - scene.width)};
             };

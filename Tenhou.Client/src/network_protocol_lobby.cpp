@@ -15,14 +15,14 @@ namespace tenhou {
     using protocol_detail::Integer;
 
     namespace {
-        int ProfileInteger(std::string_view text) {
+        int ProfileInteger(const std::string_view text) {
             int value = 0;
             const auto end = text.data() + text.size();
             const auto parsed = std::from_chars(text.data(), end, value);
             return parsed.ec == std::errc{} && parsed.ptr == end ? value : 0;
         }
 
-        double ProfileDecimal(std::string_view text) {
+        double ProfileDecimal(const std::string_view text) {
             double value = 0;
             const auto end = text.data() + text.size();
             const auto parsed = std::from_chars(text.data(), end, value);
@@ -31,11 +31,11 @@ namespace tenhou {
             return value;
         }
 
-        std::int64_t ProfileScoreTenths(std::string_view text) {
+        std::int64_t ProfileScoreTenths(const std::string_view text) {
             return static_cast<std::int64_t>(10 * ProfileDecimal(text));
         }
 
-        std::vector<std::string_view> ProfileFields(std::string_view text, std::size_t max_fields) {
+        std::vector<std::string_view> ProfileFields(std::string_view text, const std::size_t max_fields) {
             std::vector<std::string_view> fields;
             if (text.empty()) return fields;
             while (fields.size() < max_fields) {
@@ -47,7 +47,7 @@ namespace tenhou {
             return {};
         }
 
-        std::int64_t FillPlacements(LobbyStatistics &stats, const std::array<int, 4> &places, double score_hundredths) {
+        std::int64_t FillPlacements(LobbyStatistics &stats, const std::array<int, 4> &places, const double score_hundredths) {
             stats.place_counts = places;
             const auto games = std::accumulate(places.begin(), places.end(), std::int64_t{0});
             if (!games) return 0;
@@ -60,17 +60,17 @@ namespace tenhou {
             }
             stats.average_place_hundredths = static_cast<int>(100 * weighted_places / games);
             const auto score = score_hundredths / static_cast<double>(games);
-            stats.average_score_hundredths = static_cast<int>(std::clamp(score, -double(max_int), double(max_int)));
+            stats.average_score_hundredths = static_cast<int>(std::clamp(score, -static_cast<double>(max_int), static_cast<double>(max_int)));
             return games;
         }
 
         void FillLifetimeStatistics(LobbyStatistics &stats, const std::vector<std::string_view> &fields,
-                                    std::size_t score_index) {
-            const auto field = [&](std::size_t offset) {
+                                    const std::size_t score_index) {
+            const auto field = [&](const std::size_t offset) {
                 const auto index = score_index + offset;
                 return index < fields.size() ? fields[index] : std::string_view{""};
             };
-            const auto count = [&](std::size_t offset) { return std::max(0, ProfileInteger(field(offset))); };
+            const auto count = [&](const std::size_t offset) { return std::max(0, ProfileInteger(field(offset))); };
             // Origin converts the wire score in points to integer tenths before averaging.
             const auto score_tenths = ProfileScoreTenths(field(0));
             stats.total_score = static_cast<double>(score_tenths) * 0.1;
@@ -85,7 +85,7 @@ namespace tenhou {
             stats.call_count = count(9);
             stats.reach_count = count(10);
             if (stats.hands) {
-                const auto rate = [&](int value) {
+                const auto rate = [&](const int value) {
                     return static_cast<int>(1000LL * std::min(value, stats.hands) / stats.hands);
                 };
                 stats.win_per_mille = rate(stats.win_count);
@@ -131,7 +131,7 @@ namespace tenhou {
             return stats;
         }
 
-        std::vector<int> DecimalList(const std::string &text, std::size_t limit) {
+        std::vector<int> DecimalList(const std::string &text, const std::size_t limit) {
             std::vector<int> values;
             if (text.empty()) return values;
             std::istringstream fields(text);
@@ -176,13 +176,13 @@ namespace tenhou {
         }
     }
 
-    LobbyStatistics ReadPrivateLobbyStatistics(std::string_view text) {
+    LobbyStatistics ReadPrivateLobbyStatistics(const std::string_view text) {
         LobbyStatistics stats{};
         FillLifetimeStatistics(stats, ProfileFields(text, 11), 0);
         return stats;
     }
 
-    std::string LobbySession::RequestOfficialProfile(int type) {
+    std::string LobbySession::RequestOfficialProfile(const int type) {
         official_profile_type_ = type;
         if (snapshot.origin_lobby) snapshot.origin_lobby->profile.monthly.clear();
         return "<PXR V=\"" + std::to_string(type) + "\" />";
@@ -458,8 +458,8 @@ namespace tenhou {
             "\" rid=\"" + std::to_string(++origin_request_) + "\" />"};
     }
 
-    std::vector<std::string> LobbySession::SubmitLobby(std::uint64_t revision, const std::string &command,
-                                                       unsigned value) {
+    std::vector<std::string> LobbySession::SubmitLobby(const std::uint64_t revision, const std::string &command,
+                                                       const unsigned value) {
         if (!match_games || !interactive_games || observe_games) Fail("Local matchmaking is disabled");
         if (revision != snapshot.lobby_revision) Fail("Stale lobby revision");
         if (official && command == "return" && snapshot.phase == LobbyPhase::MatchComplete) {
@@ -473,12 +473,12 @@ namespace tenhou {
             }
             return {};
         }
-        const auto roomName = [](unsigned room) {
+        const auto roomName = [](const unsigned room) {
             std::ostringstream out;
             out << 'L' << std::setw(4) << std::setfill('0') << room;
             return out.str();
         };
-        const auto change = [](unsigned room) { return "<CHAT text=\"%2Flobby%20" + std::to_string(room) + "\" />"; };
+        const auto change = [](const unsigned room) { return "<CHAT text=\"%2Flobby%20" + std::to_string(room) + "\" />"; };
         std::vector<std::string> replies;
         if (command == "change") {
             if (snapshot.phase != LobbyPhase::Lobby) Fail("Lobby change requires ready lobby");
@@ -546,7 +546,7 @@ namespace tenhou {
         return replies;
     }
 
-    std::vector<std::string> LobbySession::NativeRequest(const std::string &command, unsigned value,
+    std::vector<std::string> LobbySession::NativeRequest(const std::string &command, const unsigned value,
                                                          const std::map<std::string, std::string> &settings) {
         if (!snapshot.native_service || snapshot.phase != LobbyPhase::Lobby || !snapshot.native_pending.empty()) Fail(
             "Native room request is not available");
@@ -571,7 +571,7 @@ namespace tenhou {
                 if (item.first == "room" || item.first == "revision" || item.first == "owner" || item.first == "rid" || item.first == "type")
                     continue;
                 if (item.first.empty() || !std::all_of(item.first.begin(), item.first.end(),
-                                                       [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; })) Fail(
+                                                       [](const char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; })) Fail(
                     "Invalid setting key");
                 wire += " " + item.first + "=\"" + Escape(item.second) + "\"";
             }

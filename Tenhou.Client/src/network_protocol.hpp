@@ -39,7 +39,7 @@ namespace tenhou {
     struct ServerRejection : std::runtime_error {
         int code = -1;
         std::string wire_text;
-        ServerRejection(int error_code, std::string text, const std::string &what)
+        ServerRejection(const int error_code, std::string text, const std::string &what)
             : std::runtime_error(what), code(error_code), wire_text(std::move(text)) {}
     };
 
@@ -140,7 +140,7 @@ namespace tenhou {
         std::string OfficialProfilePoll() const;
 
         std::vector<std::string> ConfigureRoom(std::uint64_t revision,
-                                               const std::map<std::string, std::string> &settings);
+                                               const std::map<std::string, std::string> &settings) const;
 
     private:
         std::string RequestOfficialProfile(int type);

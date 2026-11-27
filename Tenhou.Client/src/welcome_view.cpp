@@ -2,7 +2,9 @@
 #include "resource_manager.hpp"
 #include "background.hpp"
 #include "client_preferences.hpp"
+#include "original_display.hpp"
 #include "variant_artwork.hpp"
+#include "window_layout.hpp"
 #include "win32_utf.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -25,19 +27,19 @@ namespace tenhou {
         constexpr const wchar_t *kButton = L"TENHOU_REBUILD_ITEM_BTN";
         constexpr int kServer = 3009;
 
-        std::wstring EditText(HWND edit) {
+        std::wstring EditText(const HWND edit) {
             std::wstring value(static_cast<std::size_t>(GetWindowTextLengthW(edit)) + 1, L'\0');
             value.resize(GetWindowTextW(edit, value.data(), static_cast<int>(value.size())));
             return value;
         }
 
-        void Fill(HDC dc, RECT rectangle, COLORREF color) {
+        void Fill(const HDC dc, const RECT rectangle, const COLORREF color) {
             HBRUSH brush = CreateSolidBrush(color);
             FillRect(dc, &rectangle, brush);
             DeleteObject(brush);
         }
 
-        void ImageAt(HDC dc, const Image &image, int x, int y) {
+        void ImageAt(const HDC dc, const Image &image, const int x, const int y) {
             if (image.bgra.empty()) return;
             Gdiplus::Graphics graphics(dc);
             Gdiplus::Bitmap bitmap(image.width, image.height, image.width * 4, PixelFormat32bppARGB,
@@ -48,7 +50,7 @@ namespace tenhou {
         }
     } // namespace
 
-    WelcomeView::WelcomeView(HWND parent, std::function<void(Action)> action,
+    WelcomeView::WelcomeView(const HWND parent, std::function<void(Action)> action,
                              std::function<void(const std::string &)> log)
         : parent_(parent), action_(std::move(action)), log_(std::move(log)) {
         const auto instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(parent, GWLP_HINSTANCE));
@@ -83,7 +85,7 @@ namespace tenhou {
         SendMessageW(server_, WM_SETFONT, reinterpret_cast<WPARAM>(font_), FALSE);
         SendMessageW(server_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"第三方服务器"));
         SendMessageW(server_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"天凤官方"));
-        const auto field = [&](int id, int x, int y, int width, unsigned limit, DWORD style = 0) {
+        const auto field = [&](const int id, const int x, const int y, const int width, const unsigned limit, const DWORD style = 0) {
             const HWND window = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                 WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL | style, x, y, width, 22, panel_,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), instance, nullptr);
@@ -143,20 +145,17 @@ namespace tenhou {
     }
 
     void WelcomeView::Load(const std::filesystem::path &resources, const std::filesystem::path &config,
-                           int screen_width, int screen_height) {
+                           const int screen_width, const int screen_height) {
         (void) config;
         error_.clear();
         banner_ = {};
         background_ = {};
         try {
-            const auto pack = LoadResourcePack(ResourceManager(resources).Path(AssetId::DisplayPack),
-                [](unsigned id, unsigned metadata) { return id == 591 && metadata != 0; });
-            const auto found = std::find_if(pack.entries.begin(), pack.entries.end(),
-                                            [](const Resource &entry) { return entry.id == 591; });
-            if (found == pack.entries.end()) throw std::runtime_error("Original welcome frame resource 591 is missing");
-            banner_ = DecodeImage(*found);
-            if (banner_.width != 728 || banner_.height != 330) throw std::runtime_error(
-                "Original welcome frame dimensions changed");
+            DisplayArtwork artwork;
+            artwork.Configure(resources, kDefaultClientWidth);
+            banner_ = artwork.Get(591);
+            if (banner_.width <= 0 || banner_.height <= 0 || banner_.bgra.empty())
+                throw std::runtime_error("Original welcome frame resource 591 is missing");
             background_ = BuildBackground(ResourceManager(resources).Path(AssetId::Background), screen_width, screen_height);
             log_("WELCOME frame=591 size=" + std::to_string(banner_.width) + "x" + std::to_string(banner_.height) +
                  " canvas=" + std::to_string(screen_width) + "x" + std::to_string(screen_height));
@@ -187,7 +186,8 @@ namespace tenhou {
         SetServer(vm_.official_server());
     }
 
-    void WelcomeView::Arrange() {
+    void WelcomeView::Arrange() const
+    {
         if (!panel_ || !edit_ || controls_.size() != 6) return;
         const bool official_server = vm_.official_server();
         RECT viewport{};
@@ -215,21 +215,23 @@ namespace tenhou {
                      0, 0, SWP_NOSIZE | SWP_NOZORDER);
     }
 
-    void WelcomeView::Resize(int width, int height) {
+    void WelcomeView::Resize(const int width, const int height) {
         MoveWindow(viewport_, 0, 0, width, height, TRUE);
         Arrange();
     }
 
-    void WelcomeView::Show(bool visible) { ShowWindow(viewport_, visible ? SW_SHOW : SW_HIDE); }
+    void WelcomeView::Show(const bool visible) const { ShowWindow(viewport_, visible ? SW_SHOW : SW_HIDE); }
 
-    void WelcomeView::SetGender(char gender) {
+    void WelcomeView::SetGender(const char gender) const
+    {
         vm_.SetGender(gender);
         if (controls_.size() < 2) return;
         controls_[1]->text = vm_.gender() == 'F' ? L"女" : L"男";
         InvalidateRect(controls_[1]->window, nullptr, FALSE);
     }
 
-    void WelcomeView::Save(const std::filesystem::path &config) {
+    void WelcomeView::Save(const std::filesystem::path &config) const
+    {
         SyncModelFromControls();
         vm_.SavePreferences(config);
     }
@@ -269,12 +271,14 @@ namespace tenhou {
         return Utf8ToWide(vm_.TrimmedOfficialIdentity());
     }
 
-    void WelcomeView::ClearPassword() {
+    void WelcomeView::ClearPassword() const
+    {
         vm_.ClearPassword();
         SetWindowTextW(password_, L"");
     }
 
-    void WelcomeView::SetHiddenId(bool hidden) {
+    void WelcomeView::SetHiddenId(const bool hidden) const
+    {
         SyncModelFromControls();
         vm_.SetHiddenId(hidden);
         SendMessageW(official_id_, EM_SETPASSWORDCHAR, hidden ? L'*' : 0, 0);
@@ -282,7 +286,7 @@ namespace tenhou {
         SetWindowTextW(edit_, Utf8ToWide(vm_.DisplayIdentity()).c_str());
     }
 
-    void WelcomeView::SetServer(bool official) {
+    void WelcomeView::SetServer(const bool official) {
         vm_.SetServer(official);
         SendMessageW(server_, CB_SETCURSEL, official ? 1 : 0, 0);
         for (auto field: {edit_, host_, port_, nickname_, password_, controls_[0]->window, controls_[1]->window})
@@ -292,7 +296,7 @@ namespace tenhou {
         SetLoginState(false, L"");
     }
 
-    void WelcomeView::SetLoginState(bool connecting, const std::wstring &status) {
+    void WelcomeView::SetLoginState(const bool connecting, const std::wstring &status) {
         vm_.SetLoginState(connecting, WideToUtf8(status));
         login_status_ = status;
         for (auto field: {server_, edit_, host_, port_, nickname_, password_, official_id_,
@@ -304,7 +308,7 @@ namespace tenhou {
         InvalidateRect(panel_, nullptr, FALSE);
     }
 
-    void WelcomeView::Command(int id) {
+    void WelcomeView::Command(const int id) {
         const bool official_server = vm_.official_server();
         if (id == 3003) {
             HMENU menu = CreatePopupMenu();
@@ -332,7 +336,7 @@ namespace tenhou {
         }
     }
 
-    void WelcomeView::PaintView(HDC dc) {
+    void WelcomeView::PaintView(const HDC dc) {
         RECT bounds{};
         GetClientRect(viewport_, &bounds);
         Fill(dc, bounds, RGB(30, 40, 50));
@@ -349,7 +353,7 @@ namespace tenhou {
         }
     }
 
-    void WelcomeView::PaintPanel(HDC dc) {
+    void WelcomeView::PaintPanel(const HDC dc) {
         Fill(dc, {0, 0, 728, 330}, RGB(255, 255, 255));
         if (!banner_.bgra.empty() && (banner_.width != 728 || banner_.height != 330)) {
             Gdiplus::Bitmap bmp(banner_.width, banner_.height, banner_.width * 4,
@@ -375,7 +379,7 @@ namespace tenhou {
             const std::wstring message(error_.begin(), error_.end());
             DrawTextW(dc, message.c_str(), -1, &announcement, DT_LEFT | DT_WORDBREAK);
         }
-        const auto label = [&](const wchar_t *text, int top) {
+        const auto label = [&](const wchar_t *text, const int top) {
             RECT rect{115, top, 250, top + 22};
             DrawTextW(dc, text, -1, &rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
         };
@@ -410,7 +414,8 @@ namespace tenhou {
         SelectObject(dc, old_font);
     }
 
-    void WelcomeView::PaintButton(Control &control, HDC dc) {
+    void WelcomeView::PaintButton(Control &control, const HDC dc) const
+    {
         RECT bounds{0, 0, control.width, control.height};
         const bool enabled = IsWindowEnabled(control.window) != FALSE;
         if (control.anchor) Fill(dc, bounds, RGB(255, 255, 255));
@@ -495,7 +500,7 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-LRESULT CALLBACK WelcomeView::ViewProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK WelcomeView::ViewProc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *view = reinterpret_cast<WelcomeView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             view = static_cast<WelcomeView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -520,7 +525,7 @@ LRESULT CALLBACK WelcomeView::ViewProc(HWND window, UINT message, WPARAM wparam,
         return DefWindowProcW(window, message, wparam, lparam);
     }
 
-LRESULT CALLBACK WelcomeView::PanelProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK WelcomeView::PanelProc(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *view = reinterpret_cast<WelcomeView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             view = static_cast<WelcomeView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -553,7 +558,7 @@ LRESULT CALLBACK WelcomeView::PanelProc(HWND window, UINT message, WPARAM wparam
         return DefWindowProcW(window, message, wparam, lparam);
     }
 
-LRESULT CALLBACK WelcomeView::ButtonProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK WelcomeView::ButtonProc(HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *control = reinterpret_cast<Control *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             control = static_cast<Control *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);

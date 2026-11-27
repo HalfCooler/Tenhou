@@ -14,7 +14,7 @@ namespace tenhou {
 
     bool MatchmakingDraft::JoinRoom(std::string_view number) {
         if (request_ || room_ || number.size() != 4 || number[0] < '1' || number[0] > '9' ||
-            !std::all_of(number.begin(), number.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            !std::all_of(number.begin(), number.end(), [](const char c) { return c >= '0' && c <= '9'; }))
             return false;
         room_ = 0;
         for (char c: number) room_ = room_ * 10 + static_cast<unsigned>(c - '0');
@@ -52,7 +52,7 @@ namespace tenhou {
         LeaveRoom();
     }
 
-    void MatchmakingDraft::Confirm(unsigned room, bool owner, std::map<std::string, std::string> settings) {
+    void MatchmakingDraft::Confirm(const unsigned room, const bool owner, std::map<std::string, std::string> settings) {
         request_.reset();
         room_ = room;
         intent_ = room ? (owner ? RoomIntent::Create : RoomIntent::Join) : RoomIntent::None;

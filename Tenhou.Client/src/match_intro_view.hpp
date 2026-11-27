@@ -26,7 +26,7 @@ namespace tenhou {
         bool Active() const { return active_; }
         bool Resuming() const { return active_ && resuming_; }
 
-        void SetPaused(bool paused) {
+        void SetPaused(const bool paused) {
             if (paused && !paused_at_) paused_at_ = GetTickCount64();
             else if (!paused && paused_at_) {
                 deadline_ += GetTickCount64() - paused_at_;
@@ -46,7 +46,7 @@ namespace tenhou {
 
         void Paint(HDC dc);
 
-        void Arrange();
+        void Arrange() const;
 
         void HideSiblings();
 

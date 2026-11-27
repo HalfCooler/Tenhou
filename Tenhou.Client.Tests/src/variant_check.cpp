@@ -11,7 +11,7 @@
 
 using namespace tenhou;
 namespace {
-    void Check(bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
+    void Check(const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
     template<class F> void Reject(F f, const char *message) {
         try { f(); } catch (const std::runtime_error &) { return; }
         throw std::runtime_error(message);

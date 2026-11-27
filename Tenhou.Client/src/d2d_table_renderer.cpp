@@ -27,24 +27,24 @@ namespace tenhou {
 
         struct GraphicsError : std::runtime_error {
             HRESULT status;
-            GraphicsError(HRESULT hr, const char *operation) : std::runtime_error(operation), status(hr) {}
+            GraphicsError(const HRESULT hr, const char *operation) : std::runtime_error(operation), status(hr) {}
         };
 
-        void Check(HRESULT result, const char *operation) {
+        void Check(const HRESULT result, const char *operation) {
             if (FAILED(result)) throw GraphicsError(result, operation);
         }
 
-        bool DeviceLost(HRESULT hr) {
+        bool DeviceLost(const HRESULT hr) {
             return hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
                    hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DEVICE_HUNG;
         }
 
-        D2D1_RECT_F Box(float x, float y, float w, float h) { return {x, y, x + w, y + h}; }
-        D2D1_RECT_F Box(CanvasRect r) { return {float(r.left), float(r.top), float(r.right), float(r.bottom)}; }
+        D2D1_RECT_F Box(const float x, const float y, const float w, const float h) { return {x, y, x + w, y + h}; }
+        D2D1_RECT_F Box(const CanvasRect r) { return {static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right), static_cast<float>(r.bottom)}; }
 
         class AxisClip {
         public:
-            AxisClip(ID2D1DeviceContext &dc, D2D1_RECT_F rect) : dc_(dc) {
+            AxisClip(ID2D1DeviceContext &dc, const D2D1_RECT_F rect) : dc_(dc) {
                 dc_.PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_ALIASED);
             }
             ~AxisClip() { dc_.PopAxisAlignedClip(); }
@@ -52,14 +52,14 @@ namespace tenhou {
             ID2D1DeviceContext &dc_;
         };
 
-        LRESULT CALLBACK SurfaceProc(HWND window, UINT msg, WPARAM wp, LPARAM lp) {
+        LRESULT CALLBACK SurfaceProc(const HWND window, const UINT msg, const WPARAM wp, const LPARAM lp) {
             if (msg == WM_NCHITTEST) return HTTRANSPARENT;
             if (msg == WM_ERASEBKGND) return 1;
             if (msg == WM_PAINT) { ValidateRect(window, nullptr); return 0; }
             return DefWindowProcW(window, msg, wp, lp);
         }
 
-        BITMAPINFO BitmapInfo(int width, int height) {
+        BITMAPINFO BitmapInfo(const int width, const int height) {
             BITMAPINFO info{};
             info.bmiHeader = {sizeof(BITMAPINFOHEADER), width, -height, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
             return info;
@@ -67,7 +67,7 @@ namespace tenhou {
 
         class Dib {
         public:
-            Dib(int width, int height) {
+            Dib(const int width, const int height) {
                 const auto info = BitmapInfo(width, height);
                 dc = CreateCompatibleDC(nullptr);
                 void *data = nullptr;
@@ -85,7 +85,7 @@ namespace tenhou {
             HDC dc = nullptr;
             std::uint8_t *pixels = nullptr;
         private:
-            void Release() {
+            void Release() const {
                 if (old_ && old_ != HGDI_ERROR) SelectObject(dc, old_);
                 if (bitmap_) DeleteObject(bitmap_);
                 if (dc) DeleteDC(dc);
@@ -94,7 +94,7 @@ namespace tenhou {
             HGDIOBJ old_ = nullptr;
         };
 
-        constexpr D2D1_MATRIX_5X4_F Matrix(float r, float g, float b, float dr, float dg, float db) {
+        constexpr D2D1_MATRIX_5X4_F Matrix(const float r, const float g, const float b, const float dr, const float dg, const float db) {
             return {r, 0, 0, 0, 0, g, 0, 0, 0, 0, b, 0, 0, 0, 0, 1, dr, dg, db, 0};
         }
         constexpr D2D1_MATRIX_5X4_F hand_colors[]{
@@ -105,9 +105,9 @@ namespace tenhou {
         };
 
         struct TileKey {
-            std::uint32_t image_key = 0;
-            std::uintptr_t received = 0;
             int shadow_x = 0, shadow_y = 0;
+            std::uintptr_t received = 0;
+            std::uint32_t image_key = 0;
             bool operator==(const TileKey &other) const {
                 return image_key == other.image_key && received == other.received &&
                        shadow_x == other.shadow_x && shadow_y == other.shadow_y;
@@ -137,10 +137,10 @@ namespace tenhou {
         };
 
         struct BoardTileKey {
-            char family = 0;
             int slot = 0, tile = 0, direction = 0, wall_extra = 0, x = 0, y = 0;
             HandColor color = HandColor::Normal;
             bool missing = false;
+            char family = 0;
             bool operator==(const BoardTileKey &o) const {
                 return family == o.family && slot == o.slot && tile == o.tile &&
                        direction == o.direction && wall_extra == o.wall_extra &&
@@ -155,7 +155,7 @@ namespace tenhou {
         struct TileTexture { TileKey key; Bitmap bitmap; std::size_t bytes = 0, used = 0; };
         struct HudSprite { unsigned id; int x, y, w, h; std::array<float, 6> transform; };
 
-        explicit Impl(bool warp) : warp_only(warp) {}
+        explicit Impl(const bool warp) : warp_only(warp) {}
         ~Impl() {
             ResetDevice();
             if (surface && IsWindow(surface)) DestroyWindow(surface);
@@ -286,7 +286,7 @@ namespace tenhou {
             d3d.Reset();
         }
 
-        void CreateDevice(D3D_DRIVER_TYPE driver) {
+        void CreateDevice(const D3D_DRIVER_TYPE driver) {
             Check(D3D11CreateDevice(nullptr, driver, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                                     nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, &immediate),
                   "Cannot create D3D11 device");
@@ -304,7 +304,7 @@ namespace tenhou {
             dc->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
             dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
             Check(dc->CreateSolidColorBrush(D2D1::ColorF(0u), &brush), "Cannot create Direct2D solid brush");
-            const float dashes[]{1.0f, 1.0f};
+            constexpr float dashes[]{1.0f, 1.0f};
             Check(factory->CreateStrokeStyle(
                       D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
                                                   D2D1_LINE_JOIN_MITER, 10.0f, D2D1_DASH_STYLE_CUSTOM, 0.0f),
@@ -366,11 +366,11 @@ namespace tenhou {
                 background = BuildPreferredBackground(directory, config, width, width * 3 / 4, preferences);
         }
 
-        static D2D1_BITMAP_PROPERTIES1 Properties(D2D1_BITMAP_OPTIONS options) {
+        static D2D1_BITMAP_PROPERTIES1 Properties(const D2D1_BITMAP_OPTIONS options) {
             return D2D1::BitmapProperties1(options, D2D1::PixelFormat(format, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
         }
 
-        Bitmap Upload(const std::uint8_t *pixels, int w, int h) {
+        Bitmap Upload(const std::uint8_t *pixels, const int w, const int h) {
             Bitmap bitmap;
             Check(dc->CreateBitmap(D2D1::SizeU(w, h), pixels, static_cast<UINT32>(w * 4),
                                     Properties(D2D1_BITMAP_OPTIONS_NONE), &bitmap), "Cannot upload table texture");
@@ -387,7 +387,7 @@ namespace tenhou {
             return Upload(pixels.data(), image.width, image.height);
         }
 
-        Bitmap SurfaceTarget(IDXGISurface *buffer) {
+        Bitmap SurfaceTarget(IDXGISurface *buffer) const {
             Bitmap target;
             Check(dc->CreateBitmapFromDxgiSurface(buffer,
                     Properties(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW), &target),
@@ -395,27 +395,9 @@ namespace tenhou {
             return target;
         }
 
-        void EnsureReadback(int w, int h) {
-            if (read_width == w && read_height == h) return;
-            D3D11_TEXTURE2D_DESC desc{};
-            desc.Width = w; desc.Height = h;
-            desc.MipLevels = desc.ArraySize = 1;
-            desc.Format = format;
-            desc.SampleDesc.Count = 1;
-            desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-            Check(d3d->CreateTexture2D(&desc, nullptr, &offscreen), "Cannot allocate offscreen table");
-            ComPtr<IDXGISurface> view;
-            Check(offscreen.As(&view), "Cannot query offscreen table DXGI surface");
-            offscreen_target = SurfaceTarget(view.Get());
-            desc.Usage = D3D11_USAGE_STAGING;
-            desc.BindFlags = 0;
-            desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-            Check(d3d->CreateTexture2D(&desc, nullptr, &staging), "Cannot allocate table staging texture");
-            read_pixels.resize(static_cast<std::size_t>(w) * h * 4);
-            read_width = w; read_height = h;
-        }
+        void EnsureReadback(int w, int h);
 
-        void EnsureSwap(HWND parent, CanvasRect bounds) {
+        void EnsureSwap(const HWND parent, const CanvasRect bounds) {
             const int w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
             if (!surface || !IsWindow(surface) || GetParent(surface) != parent) {
                 if (surface && IsWindow(surface)) DestroyWindow(surface);
@@ -438,8 +420,7 @@ namespace tenhou {
                 desc.BufferCount = 2; desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
                 desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
                 desc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
-                HRESULT hr = dxgi->CreateSwapChainForHwnd(d3d.Get(), surface, &desc, nullptr, nullptr, &swap);
-                if (SUCCEEDED(hr)) {
+                if (const HRESULT hr = dxgi->CreateSwapChainForHwnd(d3d.Get(), surface, &desc, nullptr, nullptr, &swap); SUCCEEDED(hr)) {
                     swap_flags = desc.Flags;
                     ComPtr<IDXGISwapChain2> swap2;
                     if (SUCCEEDED(swap.As(&swap2))) {
@@ -487,7 +468,7 @@ namespace tenhou {
             Check(status, "Cannot finish Direct2D table rendering");
         }
 
-        void Blit(HDC target, CanvasRect area) {
+        void Blit(const HDC target, const CanvasRect area) {
             immediate->CopyResource(staging.Get(), offscreen.Get());
             D3D11_MAPPED_SUBRESOURCE mapped{};
             Check(immediate->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Cannot map table readback");
@@ -497,36 +478,36 @@ namespace tenhou {
                 std::memcpy(read_pixels.data() + y * row, source + y * mapped.RowPitch, row);
             immediate->Unmap(staging.Get(), 0);
             const auto info = BitmapInfo(read_width, read_height);
-            // A fully clipped HDC can report zero scanlines.
+            // A fully clipped HDC can report zero scan lines.
             SetDIBitsToDevice(target, area.left, area.top, read_width, read_height, 0, 0, 0,
                               static_cast<UINT>(read_height), read_pixels.data(), &info, DIB_RGB_COLORS);
         }
 
-        void Fill(D2D1_RECT_F r, D2D1_COLOR_F color) {
+        void Fill(const D2D1_RECT_F r, const D2D1_COLOR_F color) const {
             brush->SetColor(color);
             dc->FillRectangle(r, brush.Get());
         }
 
-        void DrawBitmap(ID2D1Bitmap *bitmap, D2D1_RECT_F dest, float opacity = 1,
-                        D2D1_INTERPOLATION_MODE sampling = D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR) {
+        void DrawBitmap(ID2D1Bitmap *bitmap, const D2D1_RECT_F dest, const float opacity = 1,
+                        const D2D1_INTERPOLATION_MODE sampling = D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR) const {
             dc->DrawBitmap(bitmap, dest, opacity, sampling);
         }
 
-        void DrawBitmap(ID2D1Bitmap *bitmap, int x, int y, float opacity = 1) {
+        void DrawBitmap(ID2D1Bitmap *bitmap, const int x, const int y, const float opacity = 1) const
+        {
             const auto size = bitmap->GetPixelSize();
-            DrawBitmap(bitmap, Box(float(x), float(y), float(size.width), float(size.height)), opacity);
+            DrawBitmap(bitmap, Box(static_cast<float>(x), static_cast<float>(y), static_cast<float>(size.width), static_cast<float>(size.height)), opacity);
         }
 
-        ID2D1Bitmap1 *Sprite(unsigned id) {
+        ID2D1Bitmap1 *Sprite(const unsigned id) {
             auto &texture = sprites[id];
             if (!texture) texture = Upload(art.Get(id));
             return texture.Get();
         }
 
-        ID2D1Bitmap1 *Tile(const TableTile &tile, bool red, const ShadowMask *received = nullptr,
-                           int shadow_x = 0, int shadow_y = 0) {
-            const TileKey key{tiles.geometry().ImageKey(tile, red),
-                              reinterpret_cast<std::uintptr_t>(received), shadow_x, shadow_y};
+        ID2D1Bitmap1 *Tile(const TableTile &tile, const bool red, const ShadowMask *received = nullptr,
+                           const int shadow_x = 0, const int shadow_y = 0) {
+            const TileKey key{ shadow_x, shadow_y, reinterpret_cast<std::uintptr_t>(received), tiles.geometry().ImageKey(tile, red) };
             if (const auto it = tile_index.find(key); it != tile_index.end()) {
                 it->second->used = frame_number;
                 tile_lru.splice(tile_lru.begin(), tile_lru, it->second);
@@ -542,10 +523,10 @@ namespace tenhou {
             return tile_lru.front().bitmap.Get();
         }
 
-        void DrawTile(ID2D1Bitmap1 *bitmap, float x, float y, HandColor color) {
+        void DrawTile(ID2D1Bitmap1 *bitmap, const float x, const float y, HandColor color) {
             if (color == HandColor::Normal) {
                 const auto size = bitmap->GetPixelSize();
-                DrawBitmap(bitmap, Box(x, y, float(size.width), float(size.height)));
+                DrawBitmap(bitmap, Box(x, y, static_cast<float>(size.width), static_cast<float>(size.height)));
                 return;
             }
             const auto index = static_cast<unsigned>(color);
@@ -568,15 +549,15 @@ namespace tenhou {
                 entry.first = Glyph(raster.pixels);
                 entry.second = Upload(raster.pixels->bgra.data(), raster.pixels->width, raster.pixels->height);
             }
-            std::optional<AxisClip> clip;
             if (context.device_clip) {
+                std::optional<AxisClip> clip;
                 const auto &r = *context.device_clip;
                 clip.emplace(*dc.Get(), Box(r.X, r.Y, r.Width, r.Height));
             }
-            DrawBitmap(entry.second.Get(), raster.bounds.X, raster.bounds.Y, float(std::clamp(run.opacity, 0.0, 1.0)));
+            DrawBitmap(entry.second.Get(), raster.bounds.X, raster.bounds.Y, static_cast<float>(std::clamp(run.opacity, 0.0, 1.0)));
         }
 
-        void PreResolveTiles(const TableRenderFrame &frame, std::size_t begin, std::size_t end) {
+        void PreResolveTiles(const TableRenderFrame &frame, const std::size_t begin, const std::size_t end) {
             if (resolved_tiles.size() < frame.tiles.size()) resolved_tiles.resize(frame.tiles.size(), nullptr);
             for (std::size_t i = begin; i < end; ++i) {
                 const auto &placed = frame.tiles[i];
@@ -623,9 +604,9 @@ namespace tenhou {
                 const auto bsz = bitmap->GetPixelSize();
                 for (unsigned i = 0; i < flight.count; ++i)
                     DrawBitmap(bitmap,
-                               Box(float(placed.x + flight.offsets[i].x),
-                                   float(placed.y + flight.offsets[i].y),
-                                   float(bsz.width), float(bsz.height)),
+                               Box(static_cast<float>(placed.x + flight.offsets[i].x),
+                                   static_cast<float>(placed.y + flight.offsets[i].y),
+                                   static_cast<float>(bsz.width), static_cast<float>(bsz.height)),
                                flight.opacity);
                 if (!flight.cover_landing) continue;
                 const auto &native_img = tiles.Get(flight.sprite, frame.red_tiles).image;
@@ -635,61 +616,60 @@ namespace tenhou {
                 RECT patch{};
                 if (!IntersectRect(&patch, &landing, &bounds)) continue;
                 AxisClip clip(*dc.Get(),
-                              Box(float(patch.left), float(patch.top),
-                                  float(patch.right - patch.left), float(patch.bottom - patch.top)));
+                              Box(static_cast<float>(patch.left), static_cast<float>(patch.top),
+                                  static_cast<float>(patch.right - patch.left), static_cast<float>(patch.bottom - patch.top)));
                 for (std::size_t i = index + 1; i < frame.tiles.size(); ++i) {
                     const auto &cover = frame.tiles[i];
                     if (cover.flight) continue;
-                    const TileKey ckey{tiles.geometry().ImageKey(cover.tile, frame.red_tiles), 0, 0, 0};
+                    const TileKey ckey{0, 0, 0, tiles.geometry().ImageKey(cover.tile, frame.red_tiles)};
                     const auto cit = tile_index.find(ckey);
                     if (cit == tile_index.end()) continue;
                     auto *face = cit->second->bitmap.Get();
                     const auto &c_native = tiles.Get(cover.tile, frame.red_tiles).image;
                     if (Overlaps(patch, TileBounds(cover, c_native.width, c_native.height))) {
                         const auto fsz = face->GetPixelSize();
-                        DrawBitmap(face, Box(float(cover.x), float(cover.y), float(fsz.width), float(fsz.height)));
+                        DrawBitmap(face, Box(static_cast<float>(cover.x), static_cast<float>(cover.y), static_cast<float>(fsz.width), static_cast<float>(fsz.height)));
                     }
                 }
             }
         }
 
-        void EnsureAutoGradients(int rw, int rh) {
+        void EnsureAutoGradients(const int rw, const int rh) {
             if (auto_gradients[0] && auto_gradient_w == rw && auto_gradient_h == rh) return;
             const D2D1_GRADIENT_STOP stops[]{
                 {0.0f, D2D1::ColorF(0u, 0.0f)},
-                {1.0f, D2D1::ColorF(0u, float(0x22) / 255.0f)},
+                {1.0f, D2D1::ColorF(0u, static_cast<float>(0x22) / 255.0f)},
             };
             ComPtr<ID2D1GradientStopCollection> collection;
             Check(dc->CreateGradientStopCollection(stops, 2, &collection), "Cannot create auto button gradient stops");
             for (int i = 0; i < 4; ++i) {
                 const RECT r = OriginalAutoButtonRect(width, i);
                 auto_gradients[i].Reset();
-                Check(dc->CreateLinearGradientBrush(
-                          D2D1::LinearGradientBrushProperties(D2D1::Point2F(float(r.left), float(r.top)),
-                                                              D2D1::Point2F(float(r.left), float(r.bottom))),
-                          collection.Get(), &auto_gradients[i]),
-                      "Cannot create auto button gradient brush");
+                Check(dc->CreateLinearGradientBrush(D2D1::LinearGradientBrushProperties(
+                    D2D1::Point2F(static_cast<float>(r.left), static_cast<float>(r.top)),
+                    D2D1::Point2F(static_cast<float>(r.left), static_cast<float>(r.bottom))),
+                    collection.Get(), &auto_gradients[i]), "Cannot create auto button gradient brush");
             }
             auto_gradient_w = rw;
             auto_gradient_h = rh;
         }
 
-        void DrawAutoChrome(int hovered, int rw, int rh) {
+        void DrawAutoChrome(const int hovered, const int rw, const int rh) {
             EnsureAutoGradients(rw, rh);
-            const float stroke = width > 1440 ? float(width) / 1440.0f : 1.0f;
+            const float stroke = width > 1440 ? static_cast<float>(width) / 1440.0f : 1.0f;
             for (int i = 0; i < 4; ++i) {
                 const RECT r = OriginalAutoButtonRect(width, i);
-                const float x0 = float(r.left), y0 = float(r.top), x1 = float(r.right), y1 = float(r.bottom);
+                const float x0 = static_cast<float>(r.left), y0 = static_cast<float>(r.top), x1 = static_cast<float>(r.right), y1 = static_cast<float>(r.bottom);
                 dc->FillRectangle(D2D1::RectF(x0, y0, x1, y1), auto_gradients[i].Get());
                 brush->SetColor(hovered == i ? D2D1::ColorF(0xff9933u, 1.0f)
-                                             : D2D1::ColorF(0u, float(0x11) / 255.0f));
+                                             : D2D1::ColorF(0u, static_cast<float>(0x11) / 255.0f));
                 dc->DrawRectangle(D2D1::RectF(x0 + stroke * 0.5f, y0 + stroke * 0.5f,
                                               x1 - stroke * 0.5f, y1 - stroke * 0.5f),
                                   brush.Get(), stroke);
             }
         }
 
-        void PrepareHud(const TableRenderFrame &frame, int rw, int rh, float hud_scale, const std::string &metadata) {
+        void PrepareHud(const TableRenderFrame &frame, const int rw, const int rh, const float hud_scale, const std::string &metadata) {
             if (hud_text && metadata == hud_stamp) { ++hud_hits; return; }
             ++bench_stats.hud_rebuilds;
 
@@ -699,7 +679,10 @@ namespace tenhou {
             g.SetPageUnit(Gdiplus::UnitPixel);
             std::vector<HudSprite> commands;
             art.PaintHudImages(g, frame.state, [&](unsigned id, const Image &im, int x, int y, const auto &t) {
-                commands.push_back({id, x, y, im.width, im.height, t});
+                const auto logical = art.LogicalSize(id);
+                const int lw = logical.width > 0 ? logical.width : im.width;
+                const int lh = logical.height > 0 ? logical.height : im.height;
+                commands.push_back({id, x, y, lw, lh, t});
             }, hud_scale, hud_scale);
             art.PaintNukiCounts(g, frame.state, tiles, hud_scale, hud_scale);
             g.Flush(Gdiplus::FlushIntentionSync);
@@ -709,7 +692,7 @@ namespace tenhou {
         }
 
         template<class Draw>
-        Bitmap RenderOverlayBox(int box_x, int box_y, int box_w, int box_h, Draw draw) {
+        Bitmap RenderOverlayBox(const int box_x, const int box_y, const int box_w, const int box_h, Draw draw) {
             if (box_w <= 0 || box_h <= 0) return {};
             Dib black(box_w, box_h), white(box_w, box_h);
             PatBlt(black.dc, 0, 0, box_w, box_h, BLACKNESS);
@@ -721,18 +704,17 @@ namespace tenhou {
             GdiFlush();
             const auto bytes = static_cast<std::size_t>(box_w) * box_h * 4;
             for (std::size_t i = 0; i < bytes; i += 4)
-                black.pixels[i + 3] = static_cast<std::uint8_t>(
-                    255 - std::clamp(int(white.pixels[i]) - int(black.pixels[i]), 0, 255));
+                black.pixels[i + 3] = static_cast<std::uint8_t>(255 - std::clamp(static_cast<int>(white.pixels[i]) - static_cast<int>(black.pixels[i]), 0, 255));
             return Upload(black.pixels, box_w, box_h);
         }
 
-        void PrepareInteraction(const TableRenderFrame &frame, int h,
+        void PrepareInteraction(const TableRenderFrame &frame, const int h,
                                 std::string &active_hint, std::string &active_countdown) {
             active_hint.clear();
             active_countdown.clear();
             if (!frame.interaction) return;
             const auto &input = *frame.interaction;
-            const double unit = double(width) / 1024.0;
+            const double unit = static_cast<double>(width) / 1024.0;
             if (!input.hint.empty()) {
                 active_hint = input.hint;
                 if (!hint_texture || hint_stamp != active_hint) {
@@ -747,7 +729,7 @@ namespace tenhou {
                     const auto font = CreateFontW(-static_cast<int>(14 * unit), 0, 0, 0, FW_NORMAL,
                                                   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                                   CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"KaiTi");
-                    hint_texture = RenderOverlayBox(bx, by, br - bx, bb - by, [&](HDC hdc) {
+                    hint_texture = RenderOverlayBox(bx, by, br - bx, bb - by, [&](const HDC hdc) {
                         const auto old = SelectObject(hdc, font);
                         SetBkMode(hdc, TRANSPARENT);
                         SetTextColor(hdc, RGB(255, 242, 190));
@@ -781,7 +763,7 @@ namespace tenhou {
                     const auto wide = Utf8ToWide(input.countdown);
                     const int length = static_cast<int>(wide.size());
                     SIZE size{};
-                    if (HDC measure = CreateCompatibleDC(nullptr)) {
+                    if (const HDC measure = CreateCompatibleDC(nullptr)) {
                         const auto old = SelectObject(measure, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
                         GetTextExtentPoint32W(measure, wide.c_str(), length, &size);
                         SelectObject(measure, old);
@@ -793,7 +775,7 @@ namespace tenhou {
                     const int by = std::max(0, top - 2);
                     const int br = std::min(width, x + static_cast<int>(size.cx) + 3);
                     const int bb = std::min(h, top + static_cast<int>(size.cy) + 3);
-                    countdown_texture = RenderOverlayBox(bx, by, br - bx, bb - by, [&](HDC hdc) {
+                    countdown_texture = RenderOverlayBox(bx, by, br - bx, bb - by, [&](const HDC hdc) {
                         const auto old = SelectObject(hdc, clock_font ? clock_font : GetStockObject(DEFAULT_GUI_FONT));
                         SetBkMode(hdc, TRANSPARENT);
                         SetTextColor(hdc, RGB(0, 0, 0));
@@ -812,7 +794,7 @@ namespace tenhou {
             }
         }
 
-        void UpdateShadows(const TableRenderFrame &frame, int h) {
+        void UpdateShadows(const TableRenderFrame &frame, const int h) {
             const auto *pack = preferences.tile_shadow ? ResolveShadowPack(directory, width) : nullptr;
             if (!preferences.tile_shadow || !pack) {
                 if (shadow_valid) {
@@ -878,8 +860,8 @@ namespace tenhou {
             for (std::size_t i = 0; i < frame.tiles.size() && s < cached_shadows.size(); ++i) {
                 const auto &placed = frame.tiles[i];
                 if (placed.flight) continue;
-                const auto &sh = cached_shadows[s].placed;
-                if (sh.tile.family == placed.tile.family && sh.tile.slot == placed.tile.slot &&
+                if (const auto &sh = cached_shadows[s].placed;
+                    sh.tile.family == placed.tile.family && sh.tile.slot == placed.tile.slot &&
                     sh.tile.direction == placed.tile.direction && sh.tile.wall_extra == placed.tile.wall_extra &&
                     sh.x == placed.x && sh.y == placed.y) {
                     tile_shadow_ptrs[i] = &cached_shadows[s];
@@ -888,30 +870,30 @@ namespace tenhou {
             }
         }
 
-        void DrawStationaryRange(const TableRenderFrame &frame, std::size_t begin, std::size_t end) {
+        void DrawStationaryRange(const TableRenderFrame &frame, const std::size_t begin, const std::size_t end) {
             for (std::size_t i = begin; i < end; ++i) {
                 const auto &placed = frame.tiles[i];
                 if (placed.flight) continue;
                 const bool missing = frame.online_mode && std::string_view(placed.tile.role) == "missing_suit";
                 const auto color = i < frame.tile_colors.size() ? frame.tile_colors[i] : HandColor::Normal;
                 auto *bitmap = resolved_tiles[i];
-                const float x = float(placed.x), y = float(placed.y);
+                const float x = static_cast<float>(placed.x), y = static_cast<float>(placed.y);
                 DrawTile(bitmap, x, y, color);
                 if (missing) {
                     const auto size = bitmap->GetPixelSize();
-                    Fill(Box(x, y, float(size.width), float(size.height)),
+                    Fill(Box(x, y, static_cast<float>(size.width), static_cast<float>(size.height)),
                          D2D1::ColorF(0x5a5a5au, 145.f / 255));
                 }
             }
         }
 
-        void EnsureBase(const TableRenderFrame &frame, int h) {
+        void EnsureBase(const TableRenderFrame &frame, const int h) {
             if (!backdrop) backdrop = Upload(background);
             UpdateShadows(frame, h);
 
             const int rw = width, rh = h;
             const int ui_w = UiDesignWidth(width);
-            const float hud_scale = float(rw) / float(ui_w);
+            const float hud_scale = static_cast<float>(rw) / static_cast<float>(ui_w);
 
             bool has_flights = false;
             std::size_t split_idx = frame.tiles.size();
@@ -931,9 +913,9 @@ namespace tenhou {
                 if (placed.flight) continue;
                 const bool missing = frame.online_mode && std::string_view(placed.tile.role) == "missing_suit";
                 const auto color = i < frame.tile_colors.size() ? frame.tile_colors[i] : HandColor::Normal;
-                scratch_static_tiles.push_back({placed.tile.family, placed.tile.slot, placed.tile.tile,
+                scratch_static_tiles.push_back({placed.tile.slot, placed.tile.tile,
                                                 placed.tile.direction, placed.tile.wall_extra,
-                                                placed.x, placed.y, color, missing});
+                                                placed.x, placed.y, color, missing, placed.tile.family});
             }
 
             scratch_tail_tiles.clear();
@@ -943,9 +925,9 @@ namespace tenhou {
                 if (placed.flight) continue;
                 const bool missing = frame.online_mode && std::string_view(placed.tile.role) == "missing_suit";
                 const auto color = i < frame.tile_colors.size() ? frame.tile_colors[i] : HandColor::Normal;
-                scratch_tail_tiles.push_back({placed.tile.family, placed.tile.slot, placed.tile.tile,
+                scratch_tail_tiles.push_back({placed.tile.slot, placed.tile.tile,
                                               placed.tile.direction, placed.tile.wall_extra,
-                                              placed.x, placed.y, color, missing});
+                                              placed.x, placed.y, color, missing, placed.tile.family});
             }
 
             const bool has_shadow = preferences.tile_shadow != 0 && shadow_texture != nullptr;
@@ -1012,30 +994,35 @@ namespace tenhou {
                 DrawBitmap(static_board.Get(), 0, 0);
                 DrawStationaryRange(frame, split_idx, frame.tiles.size());
                 if (has_flights) DrawFlights(frame);
-                const double unit = double(width) / 1024;
+                const double unit = static_cast<double>(width) / 1024;
                 if (!frame.state.wall.known)
                     for (std::size_t i = 0; i < resolved_dora.size(); ++i) {
                         auto *bmp = resolved_dora[i];
                         const auto bsz = bmp->GetPixelSize();
                         DrawBitmap(bmp, Box(static_cast<float>((28 + i * 40) * unit),
                                             static_cast<float>(28 * unit),
-                                            float(bsz.width), float(bsz.height)));
+                                            static_cast<float>(bsz.width), static_cast<float>(bsz.height)));
                     }
                 if (!active_hint.empty() && hint_texture) DrawBitmap(hint_texture.Get(), hint_x, hint_y);
                 if (!active_countdown.empty() && countdown_texture)
                     DrawBitmap(countdown_texture.Get(), countdown_x, countdown_y);
                 for (const auto &sprite: hud_sprites) {
                     const auto &t = sprite.transform;
+                    auto *bmp = Sprite(sprite.id);
+                    const auto bsz = bmp->GetPixelSize();
+                    const bool exact = hud_scale == 1.0f &&
+                                       static_cast<int>(bsz.width) == sprite.w &&
+                                       static_cast<int>(bsz.height) == sprite.h;
                     if (hud_scale != 1.0f) {
                         dc->SetTransform(D2D1::Matrix3x2F(t[0], t[1], t[2], t[3], t[4], t[5]) *
                                          D2D1::Matrix3x2F::Scale(hud_scale, hud_scale));
-                        DrawBitmap(Sprite(sprite.id),
-                                   Box(float(sprite.x), float(sprite.y), float(sprite.w), float(sprite.h)),
-                                   1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                     } else {
                         dc->SetTransform(D2D1::Matrix3x2F(t[0], t[1], t[2], t[3], t[4], t[5]));
-                        DrawBitmap(Sprite(sprite.id), sprite.x, sprite.y);
                     }
+                    DrawBitmap(bmp, Box(static_cast<float>(sprite.x), static_cast<float>(sprite.y),
+                                        static_cast<float>(sprite.w), static_cast<float>(sprite.h)),
+                               1.0f, exact ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+                                           : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
                 }
                 dc->SetTransform(D2D1::Matrix3x2F::Identity());
                 DrawAutoChrome(hovered, rw, rh);
@@ -1085,8 +1072,8 @@ namespace tenhou {
             AxisClip clip(*dc.Get(), Box(r));
             Fill(Box(r), D2D1::ColorF(0u));
             const int offset = button.pressed ? 1 : 0;
-            DrawBitmap(Sprite(440),
-                       Box(float(r.left + offset), float(r.top + offset), float(bw), float(bh)),
+            DrawBitmap(Sprite(440), Box(static_cast<float>(r.left + offset), static_cast<float>(r.top + offset),
+                                        static_cast<float>(bw), static_cast<float>(bh)),
                        1, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             auto &renderer = art.Text();
             SceneTextRun run;
@@ -1096,7 +1083,7 @@ namespace tenhou {
             run.transform[5] = -ink.Y - ink.Height / 2;
             TextRenderContext context;
             context.native_layout_scale = width == 1024 ? 1.0 / 1.4 : 1;
-            context.viewport_scale_x = context.viewport_scale_y = double(bw) / (width == 1024 ? 100 : 140);
+            context.viewport_scale_x = context.viewport_scale_y = static_cast<double>(bw) / (width == 1024 ? 100 : 140);
             context.origin_x = (r.left + r.right) / 2.0 + offset;
             context.origin_y = (r.top + r.bottom) / 2.0 + offset;
             context.dpi = dpi ? dpi : 96;
@@ -1105,21 +1092,21 @@ namespace tenhou {
             if (button.focused && bw > 6 && bh > 6) {
                 brush->SetColor(D2D1::ColorF(0xffffffu));
                 dc->DrawRectangle(
-                    D2D1::RectF(float(r.left) + 3.5f, float(r.top) + 3.5f,
-                                float(r.right) - 3.5f, float(r.bottom) - 3.5f),
+                    D2D1::RectF(static_cast<float>(r.left) + 3.5f, static_cast<float>(r.top) + 3.5f,
+                                static_cast<float>(r.right) - 3.5f, static_cast<float>(r.bottom) - 3.5f),
                     brush.Get(), 1.0f, focus_stroke.Get());
             }
         }
 
-        void DrawLetterboxBackdrop(int aw, int ah, int dl, int dt, int dw, int dh, int h) {
+        void DrawLetterboxBackdrop(const int aw, const int ah, const int dl, const int dt, const int dw, const int dh, const int h) const {
             if (aw <= 0 || ah <= 0) return;
             const int dr = dl + dw, db = dt + dh;
-            const float sx = float(width) / float(aw);
-            const float sy = float(h) / float(ah);
-            auto strip = [&](int x0, int y0, int x1, int y1) {
+            const float sx = static_cast<float>(width) / static_cast<float>(aw);
+            const float sy = static_cast<float>(h) / static_cast<float>(ah);
+            auto strip = [&](const int x0, const int y0, const int x1, const int y1) {
                 if (x1 <= x0 || y1 <= y0) return;
-                const D2D1_RECT_F dst{float(x0), float(y0), float(x1), float(y1)};
-                const D2D1_RECT_F src{float(x0) * sx, float(y0) * sy, float(x1) * sx, float(y1) * sy};
+                const D2D1_RECT_F dst{static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(x1), static_cast<float>(y1)};
+                const D2D1_RECT_F src{static_cast<float>(x0) * sx, static_cast<float>(y0) * sy, static_cast<float>(x1) * sx, static_cast<float>(y1) * sy};
                 dc->DrawBitmap(backdrop.Get(), dst, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR, src);
             };
             const int cx0 = std::clamp(dl, 0, aw), cx1 = std::clamp(dr, 0, aw);
@@ -1148,7 +1135,7 @@ namespace tenhou {
             }
         }
 
-        void Render(ID2D1Bitmap1 *target, const TableRenderFrame &frame, CanvasRect area, bool window) {
+        void Render(ID2D1Bitmap1 *target, const TableRenderFrame &frame, const CanvasRect area, const bool window) {
             const int h = width * 3 / 4;
             const int ui_w = UiDesignWidth(width);
             const int ui_h = ui_w * 3 / 4;
@@ -1168,13 +1155,13 @@ namespace tenhou {
                 } else if (dw < aw || dh < ah) {
                     dc->Clear(D2D1::ColorF(0u));
                 }
-                dc->SetTransform(D2D1::Matrix3x2F::Translation(float(dl), float(dt)));
+                dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(dl), static_cast<float>(dt)));
                 if (dw > 0 && dh > 0) {
                     const auto interpolation = dw == width && dh == h ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR :
                         dw < width || dh < h ? D2D1_INTERPOLATION_MODE_MULTI_SAMPLE_LINEAR :
                                                (using_hardware ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC
                                                                : D2D1_INTERPOLATION_MODE_LINEAR);
-                    DrawBitmap(base.Get(), Box(0, 0, float(dw), float(dh)), 1, interpolation);
+                    DrawBitmap(base.Get(), Box(0, 0, static_cast<float>(dw), static_cast<float>(dh)), 1, interpolation);
                     FinalScene text(art.Text(), width == 1024, frame.dpi ? frame.dpi : 96);
                     art.AppendHud(text, frame.state);
                     art.AppendChrome(text, frame.game_type, frame.interaction ? frame.interaction->automatic :
@@ -1185,7 +1172,7 @@ namespace tenhou {
                         DrawText(renderer, context, run);
                     });
                 }
-                dc->SetTransform(D2D1::Matrix3x2F::Translation(float(-area.left), float(-area.top)));
+                dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(-area.left), static_cast<float>(-area.top)));
                 for (const auto &button: frame.buttons) DrawButton(button, frame.dpi);
             });
             TrimCaches();
@@ -1193,9 +1180,31 @@ namespace tenhou {
     };
 
     D2DTableRenderer::D2DTableRenderer(bool warp) : impl_(std::make_unique<Impl>(warp)) {}
+
+    void D2DTableRenderer::Impl::EnsureReadback(const int w, const int h)
+    {
+        if (read_width == w && read_height == h) return;
+        D3D11_TEXTURE2D_DESC desc{};
+        desc.Width = w; desc.Height = h;
+        desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = format;
+        desc.SampleDesc.Count = 1;
+        desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        Check(d3d->CreateTexture2D(&desc, nullptr, &offscreen), "Cannot allocate offscreen table");
+        ComPtr<IDXGISurface> view;
+        Check(offscreen.As(&view), "Cannot query offscreen table DXGI surface");
+        offscreen_target = SurfaceTarget(view.Get());
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        Check(d3d->CreateTexture2D(&desc, nullptr, &staging), "Cannot allocate table staging texture");
+        read_pixels.resize(static_cast<std::size_t>(w) * h * 4);
+        read_width = w; read_height = h;
+    }
+
     D2DTableRenderer::~D2DTableRenderer() = default;
 
-    void D2DTableRenderer::Configure(const std::filesystem::path &directory, int canvas_width) {
+    void D2DTableRenderer::Configure(const std::filesystem::path &directory, const int canvas_width) {
         impl_->directory = directory;
         impl_->width = canvas_width;
         impl_->tiles = {};
@@ -1207,7 +1216,7 @@ namespace tenhou {
     }
 
     void D2DTableRenderer::SetPreferences(const ClientPreferences &preferences, const std::filesystem::path &config,
-                                          bool rebuild_background) {
+                                          const bool rebuild_background) {
         impl_->preferences = preferences;
         impl_->config = config;
         impl_->tiles.SetColor(preferences.TileColor());
@@ -1233,7 +1242,7 @@ namespace tenhou {
         if (impl_->fallback) impl_->fallback->Invalidate();
     }
 
-    void D2DTableRenderer::SetReferenceRendering(bool enabled) {
+    void D2DTableRenderer::SetReferenceRendering(const bool enabled) {
         impl_->reference = enabled;
         if (impl_->fallback) impl_->fallback->SetReferenceRendering(enabled);
     }
@@ -1248,7 +1257,7 @@ namespace tenhou {
         return impl_->tiles.width() != 0 && !impl_->background.bgra.empty();
     }
 
-    bool D2DTableRenderer::RenderToWindow(HWND parent, const TableRenderFrame &frame) {
+    bool D2DTableRenderer::RenderToWindow(const HWND parent, const TableRenderFrame &frame) {
         const auto area = frame.bounds;
         if (impl_->reference || !frame.original_display || area.right <= area.left || area.bottom <= area.top) {
             HideWindowSurface();
@@ -1271,7 +1280,7 @@ namespace tenhou {
         if (impl_->surface && IsWindow(impl_->surface)) ShowWindow(impl_->surface, SW_HIDE);
     }
 
-    void D2DTableRenderer::RenderToDc(HDC dc, const TableRenderFrame &frame) {
+    void D2DTableRenderer::RenderToDc(const HDC dc, const TableRenderFrame &frame) {
         if (impl_->reference || !frame.original_display) {
             impl_->Fallback().RenderToDc(dc, frame);
             return;
@@ -1304,14 +1313,14 @@ namespace tenhou {
         })) impl_->Fallback().RenderToDc(dc, frame);
     }
 
-    void D2DTableRenderer::RenderButtonToDc(HDC dc, const TableActionButton &button, unsigned dpi) {
+    void D2DTableRenderer::RenderButtonToDc(const HDC dc, const TableActionButton &button, const unsigned dpi) {
         const auto r = button.viewport_rect;
         if (r.right <= r.left || r.bottom <= r.top) return;
         if (!impl_->TryGraphics([&] {
             impl_->EnsureReadback(r.right - r.left, r.bottom - r.top);
             impl_->DrawOn(impl_->offscreen_target.Get(), [&] {
                 impl_->dc->Clear(D2D1::ColorF(0u));
-                impl_->dc->SetTransform(D2D1::Matrix3x2F::Translation(float(-r.left), float(-r.top)));
+                impl_->dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(-r.left), static_cast<float>(-r.top)));
                 impl_->DrawButton(button, dpi);
             });
             impl_->Blit(dc, r);
@@ -1322,8 +1331,8 @@ namespace tenhou {
     std::size_t D2DTableRenderer::PresentedFrames() const { return impl_->presented_frames; }
     std::size_t D2DTableRenderer::DeviceGeneration() const { return impl_->device_generation; }
     bool D2DTableRenderer::UsingHardware() const { return impl_->using_hardware; }
-    void D2DTableRenderer::SetSyncInterval(unsigned interval) { impl_->sync_interval = interval; }
+    void D2DTableRenderer::SetSyncInterval(const unsigned interval) const { impl_->sync_interval = interval; }
     D2DTableRenderer::BenchStats D2DTableRenderer::Stats() const { return impl_->bench_stats; }
-    void D2DTableRenderer::ResetStats() { impl_->bench_stats = {}; }
-    void D2DTableRenderer::SimulateDeviceLoss() { impl_->reset_requested = true; }
+    void D2DTableRenderer::ResetStats() const { impl_->bench_stats = {}; }
+    void D2DTableRenderer::SimulateDeviceLoss() const { impl_->reset_requested = true; }
 } // namespace tenhou

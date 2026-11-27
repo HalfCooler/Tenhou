@@ -114,6 +114,15 @@
      - `Dialog 114`（`assets/dialogs/114.bin`）包含 `0x426`（`画面サイズ`：`自動` / `1024 x 768` / `1440 x 1080`，重建端按授权扩展增加 `1920 x 1440` / `2640 x 1980`）与 `0x429`（`フルスクリーン`：`自動` + 显示器 32bpp 枚举模式）；
      - 持久化键遵循原版 `[STATUS] SCREENSIZE`（`default` / `1024x768` / `1440x1080` / `1920x1440` / `2640x1980`）与 `[STATUS] FULLSCREENSIZE`（`W,H`）。
    - 项目差异（用户明确授权）：`default`（自动）按当前客户区 4:3 适配宽度在 4 档中自动切档（`≤1024 → 1024`、`≤1440 → 1440`、`≤1920 → 1920`、`>1920 → 2640`），修改 `0x426` 立即热切换材质档位与窗口尺寸，无需强制重启应用。
+4. **6 张非文字实用精灵高清替换与逻辑尺寸解耦（2026-11-26 增补）**
+   - 原版取证（`_res2.dat` 7 张保留非文字精灵）：`401`/`402`（`7×13`）、`440`（`140×51`）、`466`（`114×14`，棒身 `x=1..113, y=2..13` 近直角、红点 `cx=56, cy=7` 受顶光内凹着色）、`589`（`244×172`，3D 透视梯形外黑框 + 更大圆角内盘形成四角新月斜面倒角与银灰反光弧，顶边 2 px / 侧边 3.15 px / 底边 4.2 px）、`591`（`728×330`）、`592`（`590×430`）。
+   - 按用户明确授权定案落盘至 `Tenhou.Client/assets/images/sprites/`：
+     - `401.png` / `402.png`（`56×104`，8× 矢量烘焙，2,550 B / 2,428 B）；
+     - `440` 不外置，继续走 `_res2.dat` 原版位图运行时缩放；
+     - `466.png`（`456×56`，4× 8×超采样重建，2,920 B，四角收紧至 `r=0.30 px` + 凹面漆光红点，1× 回缩绿底 `MAE=1.78 / P95=4.0`）；
+     - `589.png`（`976×688`，4× 8×超采样透视拟合重建，35,948 B，还原四角新月银灰倒角并修补原版四角透明漏底，1× 回缩绿底 `MAE=2.72 / P95=9.2`）；
+     - `591.png` / `592.png`（`2912×1320` / `2360×1720`，4× 锐化重建回纹边框，50,195 B / 51,021 B）。
+   - 渲染与硬编码解除：[original_display.hpp](../../Tenhou.Client/src/original_display.hpp) / [original_display.cpp](../../Tenhou.Client/src/original_display.cpp) 新增 `OriginalDisplaySpriteSize`、`DisplayArtwork::LogicalSize` 与分离式预乘 Alpha Area/Box 预缩放（按当前画布档位 `1024/1440/1920/2640` 精确下采样，不放大 1× 图），同步解除 [d2d_table_renderer.cpp](../../Tenhou.Client/src/d2d_table_renderer.cpp)、[welcome_view.cpp](../../Tenhou.Client/src/welcome_view.cpp)、[matchmaking_view.cpp](../../Tenhou.Client/src/matchmaking_view.cpp)、[offline_lobby_view.cpp](../../Tenhou.Client/src/offline_lobby_view.cpp) 与 [settlement_view.cpp](../../Tenhou.Client/src/settlement_view.cpp) 的像素尺寸硬编码假设。
 
 ### Phase C 验收范围
 

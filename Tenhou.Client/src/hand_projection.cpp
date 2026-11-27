@@ -16,24 +16,24 @@ namespace tenhou {
             hand_order_ = hand;
             reordered_draw_ = -1;
             if (drawn >= 0) {
-                const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
-                if (it != hand_order_.end()) hand_order_.erase(it);
+                if (const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
+                    it != hand_order_.end()) hand_order_.erase(it);
             }
             if (!online.variant) UpdateOriginSuitOrder(suit_order_, hand_order_);
             SortOriginHand(hand_order_, suit_order_);
             if (drawn >= 0 && std::find(hand.begin(), hand.end(), drawn) != hand.end())
                 hand_order_.push_back(drawn);
         } else {
-            hand_order_.erase(std::remove_if(hand_order_.begin(), hand_order_.end(), [&](int t) {
+            hand_order_.erase(std::remove_if(hand_order_.begin(), hand_order_.end(), [&](const int t) {
                 return std::find(hand.begin(), hand.end(), t) == hand.end();
             }), hand_order_.end());
             for (int t: hand)
                 if (std::find(hand_order_.begin(), hand_order_.end(), t) == hand_order_.end())
                     hand_order_.push_back(t);
             // Retain the actual visible order, including the separated draw at the end.
-            // Otherwise disabling sort would move a retained low draw back into sorted order.
-            const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
-            if (it != hand_order_.end() && reordered_draw_ < 0) {
+            // Otherwise, disabling sort would move a retained low draw back into sorted order.
+            if (const auto it = std::find(hand_order_.begin(), hand_order_.end(), drawn);
+                it != hand_order_.end() && reordered_draw_ < 0) {
                 hand_order_.erase(it);
                 hand_order_.push_back(drawn);
             }
@@ -48,7 +48,7 @@ namespace tenhou {
         return state;
     }
 
-    bool HandProjection::MoveHandTile(int tile, int target, const OnlineState &online,
+    bool HandProjection::MoveHandTile(const int tile, const int target, const OnlineState &online,
                                       ReplayState *before, ReplayState *after) {
         const auto prior = Project(online);
         const auto from = std::find(hand_order_.begin(), hand_order_.end(), tile);
@@ -65,7 +65,7 @@ namespace tenhou {
         return true;
     }
 
-    bool HandProjection::SetAutoSort(bool enabled, const OnlineState &online,
+    bool HandProjection::SetAutoSort(const bool enabled, const OnlineState &online,
                                      ReplayState *before, ReplayState *after) {
         if (auto_sort_ == enabled) return false;
         const auto prior = Project(online);
@@ -88,8 +88,8 @@ namespace tenhou {
         return anchor;
     }
 
-    int HandProjection::HitTile(CanvasRect bounds, const OnlineState &online, TileGeometryCatalog &geometry,
-                                int x, int y, const std::vector<PositionedTile> *animated_scene) {
+    int HandProjection::HitTile(const CanvasRect bounds, const OnlineState &online, TileGeometryCatalog &geometry,
+                                const int x, const int y, const std::vector<PositionedTile> *animated_scene) {
         if (!geometry.loaded() || !online.initialized) return -1;
         const int w = geometry.width(), h = w * 3 / 4;
         const auto target = FitNativeCanvasBounds(bounds, w);
@@ -118,9 +118,11 @@ namespace tenhou {
         return found;
     }
 
-    HandColor HandProjection::ClassifyTile(const TableTile &tile, bool interactive, bool ended, bool variant,
-                                           int hovered, const std::vector<int> &playable,
-                                           const std::vector<int> &selected, bool selecting, bool restrict_discards) {
+    HandColor HandProjection::ClassifyTile(const TableTile &tile, const bool interactive,
+                                           const bool ended, const bool variant, const int hovered,
+                                           const std::vector<int> &playable,
+                                           const std::vector<int> &selected,
+                                           const bool selecting, const bool restrict_discards) {
         if (!interactive || ended || tile.tile < 0 || tile.direction != 0 || std::string_view(tile.role) != "hand")
             return HandColor::Normal;
         const bool hover = tile.tile == hovered;

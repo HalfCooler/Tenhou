@@ -37,11 +37,11 @@ namespace tenhou {
 
         INT_PTR Message(HWND page, int id, UINT message, WPARAM wparam, LPARAM lparam);
 
-        void InitOther(HWND page);
+        void InitOther(HWND page) const;
 
         void InitSound(HWND page);
 
-        void SoundList(HWND page);
+        void SoundList(HWND page) const;
 
         void Preview(HWND page);
 
@@ -51,7 +51,7 @@ namespace tenhou {
 
         void InitMusic(HWND page);
 
-        void MusicList(HWND page);
+        void MusicList(HWND page) const;
 
         void MusicPreview(HWND page);
 
@@ -63,11 +63,11 @@ namespace tenhou {
 
         void ReplayCommand(HWND page, int command);
 
-        void SaveReplaySettings(HWND page);
+        void SaveReplaySettings(HWND page) const;
 
-        void InitScreen(HWND page);
+        void InitScreen(HWND page) const;
 
-        void ScreenCommand(HWND page, int control);
+        void ScreenCommand(HWND page, int control) const;
 
         void InitAppearance(HWND page, int id);
 

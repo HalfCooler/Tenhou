@@ -25,14 +25,14 @@ namespace tenhou {
             return result;
         }
 
-        void Disabled(HWND page, int id, const wchar_t *text = nullptr) {
+        void Disabled(const HWND page, const int id, const wchar_t *text = nullptr) {
             const auto control = GetDlgItem(page, id);
             EnableWindow(control, FALSE);
             if (text) SetWindowTextW(control, text);
         }
     }
 
-    SettingsView::SettingsView(HWND parent, std::filesystem::path config, std::filesystem::path resources,
+    SettingsView::SettingsView(const HWND parent, std::filesystem::path config, std::filesystem::path resources,
                                std::function<void(PreferenceChange)> changed,
                                std::function<void(const std::string &)> log)
         : parent_(parent), config_(std::move(config)), resources_(std::move(resources)),
@@ -45,8 +45,8 @@ namespace tenhou {
 
     SettingsView::~SettingsView() { if (IsWindow(window_)) DestroyWindow(window_); }
 
-LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id,
-                                              DWORD_PTR data) {
+LRESULT CALLBACK SettingsView::SheetProcedure(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam, const UINT_PTR id,
+                                              const DWORD_PTR data) {
         auto *self = reinterpret_cast<SettingsView *>(data);
         const auto result = DefSubclassProc(window, message, wparam, lparam);
         if (message == WM_NCDESTROY) {
@@ -68,7 +68,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         return result;
     }
 
-    int CALLBACK SettingsView::SheetCallback(HWND window, UINT message, LPARAM) {
+    int CALLBACK SettingsView::SheetCallback(const HWND window, const UINT message, LPARAM) {
         if (message == PSCB_INITIALIZED) {
             // Original common callback 00416ee9..f4 sends WM_CLOSE to IDOK.
             // Removing it also leaves Enter to the active page's UPDATE button.
@@ -130,7 +130,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         log_("SETTINGS OPEN pages=104,105,106,109,110,114,107");
     }
 
-    void SettingsView::InitMusic(HWND page) {
+    void SettingsView::InitMusic(const HWND page) {
         const auto preset = GetDlgItem(page, 0x408);
         SetWindowLongPtrW(preset, GWL_STYLE, (GetWindowLongPtrW(preset, GWL_STYLE) & ~BS_TYPEMASK) | BS_PUSHBUTTON);
         const auto list = GetDlgItem(page, 0x40d);
@@ -156,7 +156,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         SetDlgItemTextW(page, 0x428, label.c_str());
     }
 
-    void SettingsView::MusicList(HWND page) {
+    void SettingsView::MusicList(HWND page) const
+    {
         const wchar_t *names[]{L"人机场大厅", L"C 类大厅", L"东场", L"南场", L"最终局", L"延长局", L"一家立直", L"多家立直", L"最终成绩"};
         const auto list = GetDlgItem(page, 0x40d);
         const int selected = ListView_GetNextItem(list, -1, LVNI_SELECTED);
@@ -182,7 +183,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
                                                  LVIS_SELECTED | LVIS_FOCUSED);
     }
 
-    void SettingsView::MusicPreview(HWND page) {
+    void SettingsView::MusicPreview(const HWND page) {
         const int row = ListView_GetNextItem(GetDlgItem(page, 0x40d), -1, LVNI_SELECTED);
         audio_.Stop();
         if (row < 0) return;
@@ -198,7 +199,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         SetTimer(page, 101, 25, nullptr);
     }
 
-    void SettingsView::MusicCommand(HWND page, int command) {
+    void SettingsView::MusicCommand(const HWND page, const int command) {
         const int row = ListView_GetNextItem(GetDlgItem(page, 0x40d), -1, LVNI_SELECTED);
         if (row < 0) return;
         const auto key = MusicKeys()[row];
@@ -242,7 +243,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         MusicPreview(page);
     }
 
-    void SettingsView::MusicVolume(HWND page, int control) {
+    void SettingsView::MusicVolume(const HWND page, const int control) {
         const int value = static_cast<int>(SendDlgItemMessageW(page, control, TBM_GETPOS, 0, 0));
         if (control == 0x3fa) {
             WritePreferenceInt(config_, "RESOURCE", "BGM_VOL", value);
@@ -260,7 +261,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         MusicPreview(page);
     }
 
-    void SettingsView::InitReplay(HWND page) {
+    void SettingsView::InitReplay(const HWND page) {
         const auto path = PreferenceString(config_, "LOG", "PATH");
         CheckDlgButton(page, 0x420, path.empty() ? BST_UNCHECKED : BST_CHECKED);
         if (!path.empty()) SetDlgItemTextW(page, 0x419, Utf8ToWide(path).c_str());
@@ -268,7 +269,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         for (int id: {0x419, 0x41a, 6, 0x408}) EnableWindow(GetDlgItem(page, id), !path.empty());
     }
 
-    void SettingsView::SaveReplaySettings(HWND page) {
+    void SettingsView::SaveReplaySettings(const HWND page) const
+    {
         wchar_t text[32768]{};
         GetDlgItemTextW(page, 0x419, text, 32768);
         if (IsDlgButtonChecked(page, 0x420) == BST_CHECKED) {
@@ -281,7 +283,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         } else WritePreference(config_, "LOG", "PATH", nullptr);
     }
 
-    void SettingsView::ReplayCommand(HWND page, int command) {
+    void SettingsView::ReplayCommand(const HWND page, const int command) {
         if (command == 0x408) {
             wchar_t docs[MAX_PATH]{};
             if (!SHGetSpecialFolderPathW(page, docs, CSIDL_PERSONAL, TRUE)) throw std::runtime_error("无法读取文档目录");
@@ -305,7 +307,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         if (!initializing_) SaveReplaySettings(page);
     }
 
-    void SettingsView::InitScreen(HWND page) {
+    void SettingsView::InitScreen(const HWND page) const
+    {
         // Original Dialog 114 (FUN_0041d...): 0x426 = ScreenSize, 0x429 = FullscreenSize.
         const auto &presets = SettingsScreenSizePresets();
         const int configured = ParseScreenSizeSetting(SettingsStore(config_).LoadScreenSize());
@@ -349,7 +352,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         SendMessageW(fs_combo, CB_SETCURSEL, fs_selected, 0);
     }
 
-    void SettingsView::ScreenCommand(HWND page, int control) {
+    void SettingsView::ScreenCommand(const HWND page, const int control) const
+    {
         SettingsStore store(config_);
         if (control == 0x426) {
             const auto sel = static_cast<int>(SendDlgItemMessageW(page, 0x426, CB_GETCURSEL, 0, 0));
@@ -385,7 +389,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         return PropSheet_IsDialogMessage(window_, &message) != FALSE;
     }
 
-    void SettingsView::InitOther(HWND page) {
+    void SettingsView::InitOther(const HWND page) const
+    {
         const auto prefs = ClientPreferences::Load(config_);
         CheckDlgButton(page, 0x420, prefs.hidden_id ? BST_CHECKED : BST_UNCHECKED);
         for (const auto &flag: kPreferenceFlags) CheckDlgButton(page, flag.control,
@@ -396,7 +401,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         Disabled(page, 0x421); // chat backend absent
     }
 
-    void SettingsView::InitSound(HWND page) {
+    void SettingsView::InitSound(const HWND page) {
         for (const auto *text: {L"标准", L"以效果音替代语音", L"分别指定各席语音"})
             SendDlgItemMessageW(page, 0x426, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text));
         const int previous = PreferenceInt(config_, "REBUILD", "SoundEffectsOnly", 0) ? 1 : 0;
@@ -422,7 +427,8 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         audio_.SetVolumePercent(prefs.se_volume);
     }
 
-    void SettingsView::SoundList(HWND page) {
+    void SettingsView::SoundList(const HWND page) const
+    {
         const auto list = GetDlgItem(page, 0x40d);
         ListView_DeleteAllItems(list);
         const int mode = static_cast<int>(SendDlgItemMessageW(page, 0x426, CB_GETCURSEL, 0, 0));
@@ -459,7 +465,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         for (int id: {0x408, 0x419, 0x427}) EnableWindow(GetDlgItem(page, id), FALSE);
     }
 
-    unsigned SettingsView::SelectedSound(HWND page) const {
+    unsigned SettingsView::SelectedSound(const HWND page) const {
         const auto list = GetDlgItem(page, 0x40d);
         const int row = ListView_GetNextItem(list, -1, LVNI_SELECTED);
         if (row < 0) return 0;
@@ -469,7 +475,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         return ListView_GetItem(list, &item) ? static_cast<unsigned>(item.lParam) : 0;
     }
 
-    void SettingsView::Preview(HWND page) {
+    void SettingsView::Preview(const HWND page) {
         const unsigned id = SelectedSound(page);
         if (!id) return;
         sounds_.Load(resources_, 1440, config_);
@@ -478,7 +484,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         SetTimer(page, 101, 25, nullptr);
     }
 
-    void SettingsView::SoundOverride(HWND page, int command) {
+    void SettingsView::SoundOverride(const HWND page, const int command) {
         const unsigned id = SelectedSound(page);
         if (!id) return;
         const auto &key = SoundKeys().at(id);
@@ -513,7 +519,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         Preview(page);
     }
 
-    void SettingsView::Volume(HWND page) {
+    void SettingsView::Volume(const HWND page) {
         const int volume = static_cast<int>(SendDlgItemMessageW(page, 0x3fa, TBM_GETPOS, 0, 0));
         if (volume == 100) WritePreference(config_, "RESOURCE", "SE_VOL", nullptr);
         else WritePreferenceInt(config_, "RESOURCE", "SE_VOL", volume);
@@ -526,7 +532,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         SetTimer(page, 101, 25, nullptr);
     }
 
-    void SettingsView::InitAppearance(HWND page, int id) {
+    void SettingsView::InitAppearance(const HWND page, const int id) {
         appearance_ = ClientPreferences::Load(config_);
         // Native original buttons use their own owner draw handler. Use a standard
         // push button for the same command/menu in the reconstruction.
@@ -560,7 +566,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         }
     }
 
-    void SettingsView::BackgroundLayer(HWND page, bool save) {
+    void SettingsView::BackgroundLayer(const HWND page, const bool save) {
         const int edits[]{0x3ed, 0x3ee, 0x3ef}, sliders[]{0x3f7, 0x3f8, 0x3f9};
         for (unsigned i = 0; i < 3; ++i) {
             auto &text = appearance_.background_lhsv[1 + background_layer_ * 3 + i];
@@ -579,7 +585,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         }
     }
 
-    void SettingsView::Appearance(HWND page, int id, int command) {
+    void SettingsView::Appearance(const HWND page, const int id, const int command) {
         SettingsStore store(config_);
         if (id == 104) {
             if (command == 0x408) {
@@ -673,7 +679,7 @@ LRESULT CALLBACK SettingsView::SheetProcedure(HWND window, UINT message, WPARAM 
         }
     }
 
-INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam, LPARAM lparam) {
+INT_PTR CALLBACK SettingsView::Procedure(const HWND page, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *info = reinterpret_cast<Page *>(GetWindowLongPtrW(page, GWLP_USERDATA));
         if (message == WM_INITDIALOG) {
             info = reinterpret_cast<Page *>(reinterpret_cast<PROPSHEETPAGEW *>(lparam)->lParam);
@@ -690,7 +696,7 @@ INT_PTR CALLBACK SettingsView::Procedure(HWND page, UINT message, WPARAM wparam,
         }
     }
 
-    INT_PTR SettingsView::Message(HWND page, int id, UINT message, WPARAM wparam, LPARAM lparam) {
+    INT_PTR SettingsView::Message(const HWND page, const int id, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         if (message == WM_INITDIALOG) {
             initializing_ = true;
             if (id == 107) InitOther(page);

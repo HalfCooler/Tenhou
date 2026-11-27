@@ -11,7 +11,7 @@ namespace tenhou {
         throw std::runtime_error("Unknown original preference control");
     }
 
-    void ClientPreferences::SetChecked(int control, bool checked) {
+    void ClientPreferences::SetChecked(const int control, const bool checked) {
         for (const auto &item: kPreferenceFlags)
             if (item.control == control) {
                 flags = (flags & ~item.mask) | (checked != item.inverted ? item.mask : 0);
@@ -61,26 +61,26 @@ namespace tenhou {
         };
     }
 
-    std::string PreferenceString(const std::filesystem::path &config, std::string_view section,
-                                 std::string_view key, std::string_view fallback) {
+    std::string PreferenceString(const std::filesystem::path &config, const std::string_view section,
+                                 const std::string_view key, const std::string_view fallback) {
         auto result = ReadIniString(config, section, key, fallback);
         if (result.size() >= 32766) throw std::runtime_error("Preference value too long");
         return result;
     }
 
-    int PreferenceInt(const std::filesystem::path &config, std::string_view section,
-                      std::string_view key, int fallback) {
+    int PreferenceInt(const std::filesystem::path &config, const std::string_view section,
+                      const std::string_view key, const int fallback) {
         return ReadIniInt(config, section, key, fallback);
     }
 
-    void WritePreference(const std::filesystem::path &config, std::string_view section,
-                         std::string_view key, const char *value) {
+    void WritePreference(const std::filesystem::path &config, const std::string_view section,
+                         const std::string_view key, const char *value) {
         WriteIniString(config, section, key,
                        value ? std::optional<std::string_view>(value) : std::nullopt);
     }
 
-    void WritePreferenceInt(const std::filesystem::path &config, std::string_view section,
-                            std::string_view key, int value) {
+    void WritePreferenceInt(const std::filesystem::path &config, const std::string_view section,
+                            const std::string_view key, const int value) {
         WriteIniInt(config, section, key, value);
     }
 } // namespace tenhou

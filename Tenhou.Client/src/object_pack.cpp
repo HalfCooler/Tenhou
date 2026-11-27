@@ -8,25 +8,25 @@
 
 namespace tenhou {
     namespace {
-        std::uint32_t U32(const Bytes &bytes, std::size_t offset) {
+        std::uint32_t U32(const Bytes &bytes, const std::size_t offset) {
             if (offset > bytes.size() || bytes.size() - offset < 4) throw std::runtime_error("Truncated object field");
-            return bytes[offset] | (std::uint32_t(bytes[offset + 1]) << 8) |
-                   (std::uint32_t(bytes[offset + 2]) << 16) | (std::uint32_t(bytes[offset + 3]) << 24);
+            return bytes[offset] | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8) |
+                   (static_cast<std::uint32_t>(bytes[offset + 2]) << 16) | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
         }
 
-        int I16(const Bytes &bytes, std::size_t offset) {
+        int I16(const Bytes &bytes, const std::size_t offset) {
             if (offset > bytes.size() || bytes.size() - offset < 2) throw std::runtime_error(
                 "Truncated object coordinate");
-            const unsigned value = bytes[offset] | (unsigned(bytes[offset + 1]) << 8);
-            return value >= 32768 ? int(value) - 65536 : int(value);
+            const unsigned value = bytes[offset] | (static_cast<unsigned>(bytes[offset + 1]) << 8);
+            return value >= 32768 ? static_cast<int>(value) - 65536 : static_cast<int>(value);
         }
 
         std::uint32_t Key(const std::array<std::uint8_t, 4> &key) {
-            return key[0] | (std::uint32_t(key[1]) << 8) | (std::uint32_t(key[2]) << 16) | (
-                       std::uint32_t(key[3]) << 24);
+            return key[0] | (static_cast<std::uint32_t>(key[1]) << 8) | (static_cast<std::uint32_t>(key[2]) << 16) | (
+                       static_cast<std::uint32_t>(key[3]) << 24);
         }
 
-        const ObjectRecord &Find(const ObjectPack &pack, std::array<std::uint8_t, 4> key) {
+        const ObjectRecord &Find(const ObjectPack &pack, const std::array<std::uint8_t, 4> key) {
             const auto found = pack.key_index.find(Key(key));
             if (found == pack.key_index.end()) throw std::runtime_error("Object companion base is missing");
             return pack.entries[found->second];
@@ -39,12 +39,12 @@ namespace tenhou {
             result.image.width = record.width;
             result.image.height = record.height;
             result.image.bgra = InflateObject(pack, record);
-            if (result.image.bgra.size() != std::size_t(record.width) * record.height * 4)
+            if (result.image.bgra.size() != static_cast<std::size_t>(record.width) * record.height * 4)
                 throw std::runtime_error("Object BGRA length mismatch");
             return result;
         }
 
-        ObjectImage ColorBase(const ObjectPack &odd, const ObjectRecord &base, const ObjectPack *even, bool startup,
+        ObjectImage ColorBase(const ObjectPack &odd, const ObjectRecord &base, const ObjectPack *even, const bool startup,
                               const std::array<float, 3> *rgb) {
             auto result = RawImage(odd, base);
             if (!startup) return result;
@@ -64,20 +64,20 @@ namespace tenhou {
             std::memcpy(&reciprocal, &reciprocal_bits, 4);
             for (std::size_t offset = 0; offset < pixels.size(); offset += 4) {
                 if (!(pixels[offset] | pixels[offset + 1] | pixels[offset + 2] | pixels[offset + 3])) continue;
-                const double alpha = pixels[offset + 3] * double(reciprocal);
+                const double alpha = pixels[offset + 3] * static_cast<double>(reciprocal);
                 std::uint32_t channels[3]{};
                 for (unsigned channel = 0; channel < 3; ++channel) {
-                    const double scale = rgb ? double((*rgb)[2 - channel]) : channel == 0 ? double(blue) : 0.0;
+                    const double scale = rgb ? static_cast<double>((*rgb)[2 - channel]) : channel == 0 ? static_cast<double>(blue) : 0.0;
                     // x87 retains precision across this expression; float intermediates
                     // change truncation. Exhaustive alpha/gray tests cover the byte domain.
-                    const int value = int(pixels[offset + 2] * ((1.0 - alpha) + alpha * scale));
+                    const int value = static_cast<int>(pixels[offset + 2] * ((1.0 - alpha) + alpha * scale));
                     channels[channel] = static_cast<std::uint32_t>(value);
                 }
                 // Original integer shifts/OR also define the edit-box-only value 256.
-                const auto packed = (std::uint32_t(result.image.bgra[offset + 3]) << 24) | channels[0] | (
+                const auto packed = (static_cast<std::uint32_t>(result.image.bgra[offset + 3]) << 24) | channels[0] | (
                                         channels[1] << 8) | (channels[2] << 16);
                 for (unsigned channel = 0; channel < 4; ++channel)
-                    result.image.bgra[offset + channel] = std::uint8_t(packed >> (channel * 8));
+                    result.image.bgra[offset + channel] = static_cast<std::uint8_t>(packed >> (channel * 8));
             }
             return result;
         }
@@ -136,8 +136,8 @@ namespace tenhou {
         if (*offsets.begin() != pack.header_bytes) throw std::runtime_error("Gap before first object record");
         for (const auto &record: pack.entries) {
             const auto next = offsets.upper_bound(record.file_offset);
-            const auto expected_end = next != offsets.end() ? std::uint64_t(*next) : std::uint64_t(bytes.size());
-            if (std::uint64_t(record.file_offset) + 20 + record.stored_bytes != expected_end)
+            const auto expected_end = next != offsets.end() ? static_cast<std::uint64_t>(*next) : static_cast<std::uint64_t>(bytes.size());
+            if (static_cast<std::uint64_t>(record.file_offset) + 20 + record.stored_bytes != expected_end)
                 throw std::runtime_error("Object record overlap, gap or trailing bytes");
         }
         pack.file = std::move(bytes);
@@ -145,23 +145,23 @@ namespace tenhou {
     }
 
     Bytes InflateObject(const ObjectPack &pack, const ObjectRecord &record) {
-        const auto begin = std::size_t(record.file_offset) + 20;
+        const auto begin = static_cast<std::size_t>(record.file_offset) + 20;
         if (begin > pack.file.size() || record.stored_bytes > pack.file.size() - begin)
             throw std::runtime_error("Invalid object payload range");
         const Bytes compressed(pack.file.begin() + begin, pack.file.begin() + begin + record.stored_bytes);
         // Delta pixels need one index per pixel plus a small palette; raw needs 4 B/pixel.
-        return InflateZlib(compressed, std::size_t(record.width) * record.height * 4 + 1024);
+        return InflateZlib(compressed, static_cast<std::size_t>(record.width) * record.height * 4 + 1024);
     }
 
     std::string ObjectKey(const ObjectRecord &record) {
         std::ostringstream label;
-        label << char(record.key[0]) << '/' << unsigned(record.key[1]) << '/' << unsigned(record.key[2]) << '/' <<
-                unsigned(record.key[3]);
+        label << static_cast<char>(record.key[0]) << '/' << static_cast<unsigned>(record.key[1]) << '/' << static_cast<unsigned>(record.key[2]) << '/' <<
+                static_cast<unsigned>(record.key[3]);
         return label.str();
     }
 
-    ObjectImage DecodeObject(const ObjectPack &pack, std::size_t index, const ObjectPack *companion,
-                             bool original_color,
+    ObjectImage DecodeObject(const ObjectPack &pack, const std::size_t index, const ObjectPack *companion,
+                             const bool original_color,
                              const std::array<float, 3> *rgb) {
         if (index >= pack.entries.size()) throw std::runtime_error("Object index outside pack");
         const auto &record = pack.entries[index];
@@ -180,19 +180,19 @@ namespace tenhou {
         if (decoded.empty()) throw std::runtime_error("Empty object palette");
         const std::size_t palette_count = decoded[0];
         const std::size_t pixels_offset = 1 + palette_count * 4;
-        if (!palette_count || decoded.size() != pixels_offset + std::size_t(record.width) * record.height)
+        if (!palette_count || decoded.size() != pixels_offset + static_cast<std::size_t>(record.width) * record.height)
             throw std::runtime_error("Object palette/index length mismatch");
         const int left = record.x - base.x, top = record.y - base.y;
         if (left < 0 || top < 0 || left + record.width > base.width || top + record.height > base.height)
             throw std::runtime_error("Delta object exceeds base rectangle");
         for (int y = 0; y < record.height; ++y) {
             for (int x = 0; x < record.width; ++x) {
-                const auto palette_index = decoded[pixels_offset + std::size_t(y) * record.width + x];
+                const auto palette_index = decoded[pixels_offset + static_cast<std::size_t>(y) * record.width + x];
                 if (palette_index >= palette_count) throw std::runtime_error("Object palette index is invalid");
-                const auto value = U32(decoded, 1 + std::size_t(palette_index) * 4);
-                const auto destination = (std::size_t(y + top) * base.width + x + left) * 4;
+                const auto value = U32(decoded, 1 + static_cast<std::size_t>(palette_index) * 4);
+                const auto destination = (static_cast<std::size_t>(y + top) * base.width + x + left) * 4;
                 for (unsigned channel = 0; channel < 4; ++channel)
-                    result.image.bgra[destination + channel] ^= std::uint8_t(value >> (channel * 8));
+                    result.image.bgra[destination + channel] ^= static_cast<std::uint8_t>(value >> (channel * 8));
             }
         }
         return result;

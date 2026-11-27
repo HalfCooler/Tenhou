@@ -38,7 +38,10 @@ namespace {
         } cleanup{fixture};
         const auto png = resources.Read(AssetId::FlowerMei);
         VariantArtwork overrides; overrides.Configure(fixture);
-        DisplayArtwork hd, sd; hd.Configure(fixture, 1440); sd.Configure(fixture, 1024);
+        DisplayArtwork hd, sd, tier1920, tier2640;
+        hd.Configure(fixture, 1440); sd.Configure(fixture, 1024);
+        tier1920.Configure(directory, 1920); tier2640.Configure(directory, 2640);
+        DisplayArtwork bundled_sd; bundled_sd.Configure(directory, 1024);
         for (const auto &sprite : kSpriteAssets) {
             const auto entry = std::find_if(pack.entries.begin(), pack.entries.end(),
                 [&](const Resource &resource) { return resource.id == sprite.id; });
@@ -47,16 +50,34 @@ namespace {
             if ((sprite.id == 591 && (original.width != 728 || original.height != 330)) ||
                 (sprite.id == 592 && (original.width != 590 || original.height != 430)))
                 throw std::runtime_error("Bundled panel dimensions changed for image " + std::to_string(sprite.id));
-            if (!std::filesystem::is_regular_file(resources.Path(sprite.asset)) && bundled.Get(sprite.id).bgra != original.bgra)
+            const bool has_override = std::filesystem::is_regular_file(resources.Path(sprite.asset));
+            if (!has_override && bundled.Get(sprite.id).bgra != original.bgra)
                 throw std::runtime_error("DAT display fallback differs for image " + std::to_string(sprite.id));
+            if (has_override) {
+                const auto hd_sz = OriginalDisplaySpriteSize(sprite.id, 1440);
+                const auto sd_sz = OriginalDisplaySpriteSize(sprite.id, 1024);
+                const auto &img1440 = bundled.Get(sprite.id);
+                const auto &img1024 = bundled_sd.Get(sprite.id);
+                const auto &img1920 = tier1920.Get(sprite.id);
+                const auto &img2640 = tier2640.Get(sprite.id);
+                if (img1440.width != hd_sz.width || img1440.height != hd_sz.height ||
+                    img1024.width != sd_sz.width || img1024.height != sd_sz.height ||
+                    img1920.width <= hd_sz.width || img2640.width <= img1920.width)
+                    throw std::runtime_error("Multi-tier Area downsampling failed for HD sprite " + std::to_string(sprite.id));
+            }
 
             const auto path = fixture / PathFromUtf8(ResourceManager::Info(sprite.asset).path);
             std::filesystem::create_directories(path.parent_path());
             WriteFile(path, png);
             const auto *custom = overrides.GetSprite(sprite.id);
             const auto &full = hd.Get(sprite.id), &scaled = sd.Get(sprite.id);
-            if (!custom || full.bgra != custom->bgra || scaled.width != std::max(1, static_cast<int>(full.width / 1.4)) ||
-                scaled.height != std::max(1, static_cast<int>(full.height / 1.4)))
+            const auto hd_sz = OriginalDisplaySpriteSize(sprite.id, 1440);
+            const auto sd_sz = OriginalDisplaySpriteSize(sprite.id, 1024);
+            if (!custom ||
+                full.width != std::min(custom->width, hd_sz.width) ||
+                full.height != std::min(custom->height, hd_sz.height) ||
+                scaled.width != std::min(custom->width, sd_sz.width) ||
+                scaled.height != std::min(custom->height, sd_sz.height))
                 throw std::runtime_error("HD override or SD scaling failed for image " + std::to_string(sprite.id));
         }
     }
@@ -183,8 +204,8 @@ int main(int argc, char **argv) {
             tenhou::DisplayArtwork d1, d2;
             d1.Configure(argv[1], 1440);
             d2.Configure(argv[1], 1440);
-            (void) d1.Get(589);
-            (void) d2.Get(589);
+            (void) d1.Get(440);
+            (void) d2.Get(440);
             (void) d1.Text();
             (void) d2.Text();
             const auto prefs = tenhou::ClientPreferences::Load(config);

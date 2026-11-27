@@ -37,19 +37,19 @@ namespace tenhou {
         constexpr Label kRankedMonthlyRules[]{
             Label::lobby_no_tanyao, Label::lobby_four_tanyao, Label::lobby_red, Label::lobby_three_red
         };
-        std::string ProfileCaption(Label period, const std::string &category) {
+        std::string ProfileCaption(const Label period, const std::string &category) {
             return std::string("■") + std::string(Text(period)) + " / " + category;
         }
 
         bool Digits(std::string_view text) {
-            return std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
+            return std::all_of(text.begin(), text.end(), [](const char c) { return c >= '0' && c <= '9'; });
         }
 
-        bool EndsWith(std::string_view s, std::string_view suffix) {
+        bool EndsWith(const std::string_view s, const std::string_view suffix) {
             return s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
         }
 
-        bool StartsWith(std::string_view s, std::string_view prefix) {
+        bool StartsWith(const std::string_view s, const std::string_view prefix) {
             return s.size() >= prefix.size() && s.substr(0, prefix.size()) == prefix;
         }
 
@@ -78,7 +78,7 @@ namespace tenhou {
             return s;
         }
 
-        std::size_t Utf8CharLen(unsigned char lead) {
+        std::size_t Utf8CharLen(const unsigned char lead) {
             if ((lead & 0x80) == 0) return 1;
             if ((lead & 0xE0) == 0xC0) return 2;
             if ((lead & 0xF0) == 0xE0) return 3;
@@ -86,7 +86,7 @@ namespace tenhou {
             return 1;
         }
 
-        std::string ReplaceAll(std::string text, std::string_view from, std::string_view to) {
+        std::string ReplaceAll(std::string text, const std::string_view from, const std::string_view to) {
             std::size_t pos = 0;
             while ((pos = text.find(from, pos)) != std::string::npos) {
                 text.replace(pos, from.size(), to);
@@ -114,7 +114,7 @@ namespace tenhou {
         constexpr std::string_view fullwidth_colon = "：";
         constexpr std::string_view honorific = "殿";
 
-        const auto skip_award_ws = [&](std::string_view source, std::size_t pos) {
+        const auto skip_award_ws = [&](const std::string_view source, std::size_t pos) {
             while (pos < source.size()) {
                 const char c = source[pos];
                 if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { ++pos; continue; }
@@ -128,7 +128,7 @@ namespace tenhou {
             return pos;
         };
 
-        const auto award_length = [&](std::string_view source) -> std::size_t {
+        const auto award_length = [&](const std::string_view source) -> std::size_t {
             std::size_t pos = 0;
             for (std::size_t i = 0; i < award.size();) {
                 const std::size_t len = Utf8CharLen(static_cast<unsigned char>(award[i]));
@@ -183,7 +183,7 @@ namespace tenhou {
         return body;
     }
 
-    bool RankedEligible(RankedTier tier, LobbyRank rank, int membership_days) {
+    bool RankedEligible(const RankedTier tier, const LobbyRank rank, const int membership_days) {
         const bool special = rank.code >= 13 && rank.rating >= 1800;
         const bool phoenix = rank.code >= 16 && rank.rating >= 2000;
         switch (tier) {
@@ -195,12 +195,12 @@ namespace tenhou {
         return false;
     }
 
-    unsigned RankedMonthlyProfile(unsigned type, RankedTier tier) {
+    unsigned RankedMonthlyProfile(const unsigned type, RankedTier tier) {
         const auto rule = (type & 0x600) ? (type & 0x8) | 1 : type & 0x1F;
         return rule | kTierMask[static_cast<unsigned>(tier)];
     }
 
-    bool ValidMonthlyProfile(unsigned type) {
+    bool ValidMonthlyProfile(const unsigned type) {
         if (std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), type) != kAmberMonthlyProfiles.end())
             return true;
         const auto rule = type & ~0xA0u;
@@ -223,7 +223,7 @@ namespace tenhou {
             {{four, three}}, {{kDefaultMonthlyProfile, monthly}}, true, {}};
     }
 
-    OfflineLobbyCounts FixtureCounts(const std::string &room, std::uint64_t seconds) {
+    OfflineLobbyCounts FixtureCounts(const std::string &room, const std::uint64_t seconds) {
         OfflineLobbyCounts counts;
         if (room.empty() || room.front() == 'C') return counts;
         const bool ranked = room == kRankedLobby;
@@ -240,7 +240,7 @@ namespace tenhou {
         return counts;
     }
 
-    OfflineContest FixtureContest(unsigned event, std::uint64_t seconds) {
+    OfflineContest FixtureContest(const unsigned event, const std::uint64_t seconds) {
         // Scenario data only. The three IDs are the original menu destinations.
         switch (event) {
             case 0: return {{}, 4, 0x9, 10, false, false, false, seconds, seconds + 300};
@@ -287,7 +287,7 @@ namespace tenhou {
 
     bool OfflineLobby::Reserved(unsigned type) const { return reservations_.count({room_, type}) != 0; }
 
-    LobbyCandidate OfflineLobby::Candidate(RankedTier tier, unsigned slot) const {
+    LobbyCandidate OfflineLobby::Candidate(RankedTier tier, const unsigned slot) const {
         const auto page = static_cast<unsigned>(tier);
         if (slot >= std::size(kSlots) || page >= std::size(kTierMask) || contest()) return {};
         const auto &definition = kSlots[slot];
@@ -301,7 +301,7 @@ namespace tenhou {
                 Reserved(type)};
     }
 
-    bool OfflineLobby::Reserve(RankedTier tier, unsigned slot) {
+    bool OfflineLobby::Reserve(const RankedTier tier, const unsigned slot) {
         const auto candidate = Candidate(tier, slot);
         if (pending_ || !candidate.visible || candidate.reserved) return false;
         return reservations_.emplace(room_, candidate.type).second;
@@ -312,7 +312,7 @@ namespace tenhou {
         return it == contests_.end() ? nullptr : &it->second;
     }
 
-    ContestStatus OfflineLobby::ContestAction(std::uint64_t now) const {
+    ContestStatus OfflineLobby::ContestAction(const std::uint64_t now) const {
         const auto *config = Contest();
         if (!config) return ContestStatus::Loading;
         if (now >= config->end) return ContestStatus::Closed;
@@ -322,23 +322,23 @@ namespace tenhou {
         return now < config->start ? ContestStatus::BeforeStart : ContestStatus::Open;
     }
 
-    bool OfflineLobby::RegisterContest(std::uint64_t now) {
+    bool OfflineLobby::RegisterContest(const std::uint64_t now) {
         if (pending_ || ContestAction(now) != ContestStatus::Register) return false;
         contests_.at(room_).registered = true;
         return true;
     }
 
-    bool OfflineLobby::ReserveContest(std::uint64_t now) {
+    bool OfflineLobby::ReserveContest(const std::uint64_t now) {
         if (pending_ || ContestAction(now) != ContestStatus::Open) return false;
         return reservations_.emplace(room_, Contest()->rule).second;
     }
 
-    std::string AmberProfileLabel(std::size_t index) {
+    std::string AmberProfileLabel(const std::size_t index) {
         const auto length = (index < 3 || index == 6) ? Label::lobby_east : Label::lobby_south;
         return std::string(Text(length)) + " " + std::string(Text(kParlorRows[index < 6 ? index % 3 : 3]));
     }
 
-    std::string LifetimeProfileLabel(unsigned type) {
+    std::string LifetimeProfileLabel(const unsigned type) {
         for (const auto &choice: kLifetimeChoices)
             if (type == choice.type) return std::string(Text(choice.label));
         const auto it = std::find(kAmberLifetimeProfiles.begin(), kAmberLifetimeProfiles.end(), type);
@@ -347,13 +347,13 @@ namespace tenhou {
         return {};
     }
 
-    std::string RankedMonthlyLabel(unsigned type) {
+    std::string RankedMonthlyLabel(const unsigned type) {
         const auto length = (type & 8) ? Label::lobby_south : Label::lobby_east;
         const auto rule = (type & 0x10) ? 3 : (type & 4) ? 0 : (type & 2) ? 1 : 2;
         return std::string(Text(length)) + " " + std::string(Text(kRankedMonthlyRules[rule]));
     }
 
-    std::string MonthlyProfileCaption(unsigned type) {
+    std::string MonthlyProfileCaption(const unsigned type) {
         const auto amber = std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), type);
         if (amber != kAmberMonthlyProfiles.end())
             return ProfileCaption(Label::lobby_month, std::string(Text(Label::lobby_amber)) + " " +
@@ -362,12 +362,12 @@ namespace tenhou {
         return ProfileCaption(Label::lobby_month, std::string(Text(kTiers[tier])) + "桌 " + RankedMonthlyLabel(type));
     }
 
-    std::string LifetimeProfileCaption(unsigned type) {
+    std::string LifetimeProfileCaption(const unsigned type) {
         return ProfileCaption(Label::lobby_lifetime, LifetimeProfileLabel(type));
     }
 
     // Exact FUN_00434290 (tenhou.exe.c:34390): %f -> split '.' -> truncate/pad frac -> optional strip leading '0' & '+' prefix.
-    std::string FormatFixedTrunc(double value, int decimals, bool strip_zero, const char *plus_prefix) {
+    std::string FormatFixedTrunc(const double value, const int decimals, const bool strip_zero, const char *plus_prefix) {
         const float f = static_cast<float>(value);
         char buffer[128]{};
         std::snprintf(buffer, std::size(buffer), "%f", static_cast<double>(f));
@@ -398,7 +398,7 @@ namespace tenhou {
     }
 
     // Exact FUN_00434650 (tenhou.exe.c:34532): signed adaptive decimals (|int|<10 -> 2, <100 -> 1, >=100 -> 0, capped).
-    std::string FormatSignedAdaptive(double value, int max_decimals) {
+    std::string FormatSignedAdaptive(const double value, const int max_decimals) {
         const int abs_int = std::abs(static_cast<int>(static_cast<float>(value)));
         int decimals = abs_int >= 100 ? 0 : abs_int >= 10 ? 1 : 2;
         if (decimals > max_decimals) decimals = max_decimals;
@@ -406,7 +406,7 @@ namespace tenhou {
     }
 
     // Exact FUN_004346b0 (tenhou.exe.c:34557): rate without leading zero (e.g. .279, .000, 1.00).
-    std::string FormatRate(double value, int decimals) {
+    std::string FormatRate(const double value, const int decimals) {
         const float f = static_cast<float>(value);
         return FormatFixedTrunc(f, decimals - (f == 1.0f ? 1 : 0), true, nullptr);
     }
@@ -414,14 +414,14 @@ namespace tenhou {
     // Exact 0042a978..0042a9d0: YYYYMMDD -> YYYY/MM/DD, empty -> ----/--/--.
     std::string FormatExpiry(std::string_view raw) {
         if (raw.empty()) return "----/--/--";
-        if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), [](char c) { return c >= '0' && c <= '9'; }))
+        if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), [](const char c) { return c >= '0' && c <= '9'; }))
             return std::string(raw.substr(0, 4)) + "/" + std::string(raw.substr(4, 2)) + "/" +
                    std::string(raw.substr(6, 2));
         return std::string(raw);
     }
 
     // Exact FUN_004748b0 (0..20 rank grade names in Chinese).
-    std::string RankGradeName(int code) {
+    std::string RankGradeName(const int code) {
         static constexpr const char *kGrades[]{
             "新人", "9级", "8级", "7级", "6级", "5级", "4级", "3级", "2级", "1级",
             "初段", "二段", "三段", "四段", "五段", "六段", "七段", "八段", "九段", "十段", "天凤位"
@@ -430,7 +430,7 @@ namespace tenhou {
         return code > 20 ? "天凤位" : "新人";
     }
 
-    int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, unsigned monthly_type) {
+    int MonthlyCorrespondingRating(const OfflineLobbyProfile &profile, const unsigned monthly_type) {
         if ((monthly_type & 0x600) != 0) {
             const auto it = std::find(kAmberMonthlyProfiles.begin(), kAmberMonthlyProfiles.end(), monthly_type);
             if (it != kAmberMonthlyProfiles.end()) {
@@ -487,7 +487,7 @@ namespace tenhou {
                 : static_cast<double>(all.bust_per_mille) / 1000.0;
             out += std::string(Text(Label::lobby_bust)) + ": " + FormatRate(bust, 3) + "\r\n";
             if (all.hands > 0) {
-                const auto hand_rate = [&](int count, int permille) {
+                const auto hand_rate = [&](const int count, const int permille) {
                     return count > 0 || all.win_count > 0 || all.call_count > 0
                         ? static_cast<double>(count) / static_cast<double>(all.hands)
                         : static_cast<double>(permille) / 1000.0;
@@ -512,7 +512,7 @@ namespace tenhou {
                        std::to_string(p[1]) + "+" + std::to_string(p[2]) + "+" + std::to_string(p[3]) +
                        " = " + std::to_string(m.games) + "\r\n";
             }
-            const auto rank_suffix = [&](std::size_t idx) -> std::string {
+            const auto rank_suffix = [&](const std::size_t idx) -> std::string {
                 if (idx < m.monthly_ranks.size() && m.monthly_ranks[idx] > 0)
                     return " " + std::to_string(m.monthly_ranks[idx]) + std::string(Text(Label::lobby_rank_unit));
                 return {};
@@ -532,7 +532,7 @@ namespace tenhou {
         return out;
     }
 
-    OfflineLobbyTiming::HoverEffect OfflineLobbyTiming::Hover(int slot, std::uint64_t now) {
+    OfflineLobbyTiming::HoverEffect OfflineLobbyTiming::Hover(const int slot, const std::uint64_t now) {
         if (hovered_ == slot) return HoverEffect::None;
         hovered_ = slot;
         rules_at_.reset();
@@ -550,14 +550,14 @@ namespace tenhou {
         hovered_ = rule_slot_ = -1;
     }
 
-    bool OfflineLobbyTiming::AdvanceRules(std::uint64_t now) {
+    bool OfflineLobbyTiming::AdvanceRules(const std::uint64_t now) {
         if (!rules_at_ || now < *rules_at_) return false;
         rules_at_.reset();
         rule_slot_ = hovered_;
         return true;
     }
 
-    void OfflineLobbyTiming::ResetCertificate(std::uint64_t now) {
+    void OfflineLobbyTiming::ResetCertificate(const std::uint64_t now) {
         certificate_start_ = now;
         certificate_close_.reset();
     }
@@ -568,13 +568,13 @@ namespace tenhou {
         return true;
     }
 
-    OfflineLobbyTiming::CertificatePhase OfflineLobbyTiming::CertificateStatus(std::uint64_t now) const {
+    OfflineLobbyTiming::CertificatePhase OfflineLobbyTiming::CertificateStatus(const std::uint64_t now) const {
         if (certificate_close_)
             return now - *certificate_close_ >= 420 ? CertificatePhase::Finished : CertificatePhase::Closing;
         return now - certificate_start_ >= 1980 ? CertificatePhase::Ready : CertificatePhase::Opening;
     }
 
-    std::pair<float, float> OfflineLobbyTiming::CertificateFrame(std::uint64_t now) const {
+    std::pair<float, float> OfflineLobbyTiming::CertificateFrame(const std::uint64_t now) const {
         if (certificate_close_) {
             const float zoom = static_cast<float>(std::pow(.8, (now - *certificate_close_) / kCertificateTick));
             return {zoom, zoom};

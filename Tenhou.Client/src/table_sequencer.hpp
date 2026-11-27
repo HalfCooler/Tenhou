@@ -58,7 +58,7 @@ namespace tenhou {
 
         bool playing() const { return playing_; }
         bool show_results() const { return show_results_; }
-        void set_show_results(bool show) { show_results_ = show; }
+        void set_show_results(const bool show) { show_results_ = show; }
         bool consume_result_pending() {
             const bool pending = result_pending_;
             result_pending_ = false;
@@ -67,27 +67,27 @@ namespace tenhou {
         unsigned draw_end_ticks() const { return draw_end_ticks_; }
 
         bool animation_enabled() const { return animation_enabled_; }
-        void set_animation_enabled(bool enabled) { animation_enabled_ = enabled; }
+        void set_animation_enabled(const bool enabled) { animation_enabled_ = enabled; }
         bool sound_enabled() const { return sound_enabled_; }
-        void set_sound_enabled(bool enabled) { sound_enabled_ = enabled; }
+        void set_sound_enabled(const bool enabled) { sound_enabled_ = enabled; }
         bool effects_muted() const { return effects_muted_; }
-        void set_effects_muted(bool muted) { effects_muted_ = muted; }
+        void set_effects_muted(const bool muted) { effects_muted_ = muted; }
         bool effects_only() const { return effects_only_; }
-        void set_effects_only(bool only) {
+        void set_effects_only(const bool only) {
             effects_only_ = only;
             individual_voices_ = false;
         }
         bool individual_voices() const { return individual_voices_; }
-        void set_voice_mode(int mode) {
+        void set_voice_mode(const int mode) {
             effects_only_ = mode == 1;
             individual_voices_ = mode == 2;
         }
         bool EffectsEnabled() const { return sound_enabled_ && !effects_muted_; }
 
         bool red_tiles() const { return red_tiles_; }
-        void set_red_tiles(bool red) { red_tiles_ = red; }
+        void set_red_tiles(const bool red) { red_tiles_ = red; }
         bool original_display() const { return original_display_; }
-        void set_original_display(bool enabled) { original_display_ = enabled; }
+        void set_original_display(const bool enabled) { original_display_ = enabled; }
 
         ReplaySequencerEffects CancelEffects();
         ReplaySequencerEffects Stop();
@@ -238,13 +238,13 @@ namespace tenhou {
         const std::vector<unsigned> &deferred_sounds() const { return deferred_sounds_; }
 
         bool show_results() const { return show_results_; }
-        void set_show_results(bool show) { show_results_ = show; }
+        void set_show_results(const bool show) { show_results_ = show; }
         std::uint64_t result_deadline() const { return result_deadline_; }
 
         const std::array<bool, 4> &automatic() const { return automatic_; }
-        void set_automatic(int index, bool value) { automatic_[index] = value; }
+        void set_automatic(const int index, const bool value) { automatic_[index] = value; }
         bool sort_refresh_pending() const { return sort_refresh_pending_; }
-        void set_sort_refresh_pending(bool pending) { sort_refresh_pending_ = pending; }
+        void set_sort_refresh_pending(const bool pending) { sort_refresh_pending_ = pending; }
 
         const std::string &action_filter() const { return action_filter_; }
         std::uint64_t action_revision() const { return action_revision_; }
@@ -266,24 +266,24 @@ namespace tenhou {
         void set_hover_point(int x, int y) { hover_point_ = {x, y}; }
 
         bool sound_enabled() const { return sound_enabled_; }
-        void set_sound_enabled(bool enabled) { sound_enabled_ = enabled; }
+        void set_sound_enabled(const bool enabled) { sound_enabled_ = enabled; }
         bool effects_muted() const { return effects_muted_; }
-        void set_effects_muted(bool muted) { effects_muted_ = muted; }
-        void set_effects_only(bool only) {
+        void set_effects_muted(const bool muted) { effects_muted_ = muted; }
+        void set_effects_only(const bool only) {
             effects_only_ = only;
             individual_voices_ = false;
         }
-        void set_voice_mode(int mode) {
+        void set_voice_mode(const int mode) {
             effects_only_ = mode == 1;
             individual_voices_ = mode == 2;
         }
         bool EffectsEnabled() const { return sound_enabled_ && !effects_muted_; }
         bool animation_enabled() const { return animation_enabled_; }
-        void set_animation_enabled(bool enabled) { animation_enabled_ = enabled; }
+        void set_animation_enabled(const bool enabled) { animation_enabled_ = enabled; }
         bool original_display() const { return original_display_; }
-        void set_original_display(bool enabled) { original_display_ = enabled; }
+        void set_original_display(const bool enabled) { original_display_ = enabled; }
 
-        bool Moving(bool table_animating) const {
+        bool Moving(const bool table_animating) const {
             return sort_refresh_pending_ || (animation_enabled_ && table_animating) ||
                    !presentation_queue_.empty() || pause_ticks_ || draw_end_ticks_;
         }

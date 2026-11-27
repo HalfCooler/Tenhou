@@ -49,8 +49,8 @@ namespace tenhou {
     void WritePreference(const std::filesystem::path &config, std::string_view section,
                          std::string_view key, const char *value);
 
-    inline void WritePreference(const std::filesystem::path &config, std::string_view section,
-                                std::string_view key, const std::string &value) {
+    inline void WritePreference(const std::filesystem::path &config, const std::string_view section,
+                                const std::string_view key, const std::string &value) {
         WritePreference(config, section, key, value.c_str());
     }
 

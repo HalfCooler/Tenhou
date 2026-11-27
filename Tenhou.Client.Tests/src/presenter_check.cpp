@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace {
-    void Check(bool ok, const char *message) {
+    void Check(const bool ok, const char *message) {
         if (!ok) throw std::runtime_error(message);
     }
 
@@ -278,7 +278,7 @@ namespace {
             unsigned draw_end_slots = 14;
             OnlineMotionCallbacks motion;
             motion.animating = [&] { return table_animating; };
-            motion.set_draw_end_slots = [&](unsigned slots) { draw_end_slots = slots; };
+            motion.set_draw_end_slots = [&](const unsigned slots) { draw_end_slots = slots; };
             motion.present_settlement = [&] { settlement_scores_presented = true; };
 
             LobbySession session;
@@ -412,7 +412,7 @@ namespace {
     }
 } // namespace
 
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     try {
         if (argc != 2) throw std::runtime_error("Usage: tenhou_presenter_check RESOURCES");
         CheckTileGeometryAndHandProjection(argv[1]);

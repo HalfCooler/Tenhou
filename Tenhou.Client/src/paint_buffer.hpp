@@ -25,7 +25,7 @@ namespace tenhou {
         template<class Draw>
         void Store(HDC target, int width, int height, Draw draw) { Compose(target, width, height, draw); }
 
-        void CopyTo(HDC target, RECT region) const {
+        void CopyTo(const HDC target, const RECT region) const {
             if (!BitBlt(target, region.left, region.top, region.right - region.left, region.bottom - region.top,
                         memory_, region.left, region.top, SRCCOPY))
                 throw std::runtime_error("Cannot restore retained background");
@@ -34,7 +34,7 @@ namespace tenhou {
         // Caller supplies conservative object-level invalidation. No full native
         // comparison or snapshot copy; the complete cached frame still serves print/exposure.
         template<class Draw>
-        void RenderDirtyScaled(HDC target, int width, int height, RECT destination,
+        void RenderDirtyScaled(HDC target, int width, int height, const RECT destination,
                                const std::vector<RECT> &requested, Draw draw, const FinalScene *final_scene = nullptr) {
             if (width <= 0 || height <= 0 || IsRectEmpty(&destination)) return;
 
@@ -62,11 +62,11 @@ namespace tenhou {
                 for (const auto &rect: dirty) {
                     const RECT clip{
                         std::max(0L, (rect.left - 2) * dw / width - 2), std::max(0L, (rect.top - 2) * dh / height - 2),
-                        std::min(LONG(dw), (rect.right + 2) * dw / width + 3),
-                        std::min(LONG(dh), (rect.bottom + 2) * dh / height + 3)
+                        std::min(static_cast<LONG>(dw), (rect.right + 2) * dw / width + 3),
+                        std::min(static_cast<LONG>(dh), (rect.bottom + 2) * dh / height + 3)
                     };
                     device_dirty.push_back(clip);
-                    scaled_->Compose(target, dw, dh, [&](HDC dc) {
+                    scaled_->Compose(target, dw, dh, [&](const HDC dc) {
                         IntersectClipRect(dc, clip.left, clip.top, clip.right, clip.bottom);
                         SetStretchBltMode(dc, HALFTONE);
                         SetBrushOrgEx(dc, -destination.left, -destination.top, nullptr);
@@ -84,7 +84,7 @@ namespace tenhou {
         }
 
         template<class Draw>
-        void Render(HDC target, int width, int height, Draw draw) {
+        void Render(const HDC target, const int width, const int height, Draw draw) {
             if (width <= 0 || height <= 0) return;
 
             Ensure(target, width, height);
@@ -103,7 +103,7 @@ namespace tenhou {
         }
 
         template<class Draw>
-        void RenderScaled(HDC target, int width, int height, RECT destination, Draw draw,
+        void RenderScaled(HDC target, int width, int height, const RECT destination, Draw draw,
                           const FinalScene *final_scene = nullptr) {
             if (width <= 0 || height <= 0 || destination.right <= destination.left || destination.bottom <= destination.
                 top) return;
@@ -151,7 +151,7 @@ namespace tenhou {
                 };
                 device_dirty.push_back(clip);
                 try {
-                    scaled_->Compose(target, dw, dh, [&](HDC scaled) {
+                    scaled_->Compose(target, dw, dh, [&](const HDC scaled) {
                         IntersectClipRect(scaled, clip.left, clip.top, clip.right, clip.bottom);
                         SetStretchBltMode(scaled, HALFTONE);
                         SetBrushOrgEx(scaled, -destination.left, -destination.top, nullptr);
@@ -172,7 +172,7 @@ namespace tenhou {
         }
 
         template<class Draw>
-        void Paint(HWND window, Draw draw) {
+        void Paint(const HWND window, Draw draw) {
             PAINTSTRUCT paint{};
             const HDC target = BeginPaint(window, &paint);
             try {
@@ -189,8 +189,8 @@ namespace tenhou {
     private:
         // scaled_ always contains the clean image base. The final buffer is restored
         // from it before replaying commands, so alpha/effects never accumulate.
-        void PresentFinal(HDC target, int width, int height, RECT destination,
-                          const std::vector<RECT> &base_dirty, bool resize, const FinalScene *scene) {
+        void PresentFinal(const HDC target, const int width, const int height, const RECT destination,
+                          const std::vector<RECT> &base_dirty, const bool resize, const FinalScene *scene) {
             const int dw = destination.right - destination.left, dh = destination.bottom - destination.top;
             if (!scene && !final_composite_) {
                 if (!BitBlt(target, destination.left, destination.top, dw, dh, scaled_->memory_, 0, 0, SRCCOPY))
@@ -201,7 +201,7 @@ namespace tenhou {
             const int ui_h = width > 1440 ? ui_w * 3 / 4 : height;
             auto current = scene ? scene->Snapshot(ui_w, ui_h, dw, dh) : std::vector<FinalSceneStamp>{};
             RECT dirty{};
-            const auto add = [&](RECT r) {
+            const auto add = [&](const RECT r) {
                 if (IsRectEmpty(&r)) return;
                 if (IsRectEmpty(&dirty)) dirty = r;
                 else { RECT united{}; UnionRect(&united, &dirty, &r); dirty = united; }
@@ -227,7 +227,7 @@ namespace tenhou {
             } while (expanded);
             try {
                 if (resize || !final_composite_) final_composite_ = std::make_unique<PaintBuffer>();
-                if (!IsRectEmpty(&dirty)) final_composite_->Compose(target, dw, dh, [&](HDC dc) {
+                if (!IsRectEmpty(&dirty)) final_composite_->Compose(target, dw, dh, [&](const HDC dc) {
                     IntersectClipRect(dc, dirty.left, dirty.top, dirty.right, dirty.bottom);
                     scaled_->CopyTo(dc, dirty);
                     if (scene) scene->Paint(dc, ui_w, ui_h, dw, dh, dirty);
@@ -242,7 +242,7 @@ namespace tenhou {
         }
 
         template<class Draw>
-        void Compose(HDC target, int width, int height, Draw draw) {
+        void Compose(const HDC target, const int width, const int height, Draw draw) {
             Ensure(target, width, height);
             const int saved = SaveDC(memory_);
             if (!saved) throw std::runtime_error("Cannot save buffered paint context");
@@ -271,7 +271,7 @@ namespace tenhou {
             retained_valid_ = false;
         }
 
-        void Ensure(HDC target, int width, int height) {
+        void Ensure(const HDC target, const int width, const int height) {
             if (memory_ && width_ == width && height_ == height) return;
             const HDC memory = CreateCompatibleDC(target);
             // Keep a CPU-accessible 32-bit surface: GDI+ otherwise repeatedly

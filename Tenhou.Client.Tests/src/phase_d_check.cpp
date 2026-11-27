@@ -16,7 +16,7 @@
 #include <vector>
 
 namespace {
-    void Check(bool condition, const char *message) {
+    void Check(const bool condition, const char *message) {
         if (!condition) throw std::runtime_error(message);
     }
 
@@ -29,13 +29,13 @@ namespace {
     // Portable mock verifying ITextRasterizer can be implemented with zero Win32/GDI+ headers.
     class MockTextRasterizer final : public tenhou::ITextRasterizer {
     public:
-        tenhou::PortableTextLayout LayoutPortable(tenhou::TextKey key) override {
+        tenhou::PortableTextLayout LayoutPortable(const tenhou::TextKey key) override {
             const auto *def = tenhou::FindText(key);
             return LayoutPortable(def ? def->label : std::string_view{},
                                   def ? def->style : tenhou::TextStyleKey::action_caption);
         }
 
-        tenhou::PortableTextLayout LayoutPortable(std::string_view utf8_text, tenhou::TextStyleKey) override {
+        tenhou::PortableTextLayout LayoutPortable(const std::string_view utf8_text, tenhou::TextStyleKey) override {
             ++stats_.layouts;
             ++stats_.layout_builds;
             tenhou::PortableTextLayout layout;
@@ -381,7 +381,7 @@ namespace {
     }
 } // namespace
 
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     try {
         Check(argc >= 2, "Usage: tenhou_phase_d_check <assets-dir>");
         const std::filesystem::path assets_root = std::filesystem::u8path(argv[1]);

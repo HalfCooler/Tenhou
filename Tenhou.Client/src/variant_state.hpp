@@ -29,7 +29,7 @@ namespace tenhou {
         SettlementState settlement;
         std::string rule, direction, result, history;
         std::array<VariantPlayer, 4> players;
-        int Relative(int absolute) const { return (absolute - local + 4) % 4; }
+        int Relative(const int absolute) const { return (absolute - local + 4) % 4; }
         bool Preparing() const { return phase == VariantPhase::Exchange || phase == VariantPhase::Missing; }
         bool Sichuan() const { return rule == "sichuan-bloodbattle"; }
     };

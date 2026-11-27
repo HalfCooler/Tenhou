@@ -32,7 +32,7 @@ namespace tenhou {
             using std::runtime_error::runtime_error;
         };
 
-        std::runtime_error SocketError(const char *action, int code = WSAGetLastError()) {
+        std::runtime_error SocketError(const char *action, const int code = WSAGetLastError()) {
             return std::runtime_error(std::string(action) + " failed; Winsock error=" + std::to_string(code));
         }
 
@@ -145,7 +145,7 @@ namespace tenhou {
             SOCKET wake_sock = INVALID_SOCKET;
             std::thread thread;
 
-            Worker(std::uint64_t gen, std::shared_ptr<NotifyHub> h)
+            Worker(const std::uint64_t gen, std::shared_ptr<NotifyHub> h)
                 : generation(gen), hub(std::move(h)), wake_sock(CreateWakeSocket()) {}
 
             ~Worker() { Stop(); }
@@ -192,7 +192,7 @@ namespace tenhou {
             }
         };
 
-        void DrainWake(SOCKET wake_sock) {
+        void DrainWake(const SOCKET wake_sock) {
             if (wake_sock == INVALID_SOCKET) return;
             char sink[64];
             while (::recv(wake_sock, sink, sizeof(sink), 0) > 0) {}
@@ -215,7 +215,7 @@ namespace tenhou {
             }
         }
 
-        void RunTcpWorker(std::shared_ptr<Worker> worker, std::string host, unsigned port, bool require_loopback) {
+        void RunTcpWorker(std::shared_ptr<Worker> worker, std::string host, const unsigned port, const bool require_loopback) {
             SOCKET sock = INVALID_SOCKET;
             auto cleanup = [&]() noexcept {
                 if (sock != INVALID_SOCKET) {
@@ -479,9 +479,9 @@ namespace tenhou {
 
         const LobbySnapshot &Snapshot() const { return reconnect_view ? *reconnect_view : session.snapshot; }
 
-        void Notify() { changed(Snapshot()); }
+        void Notify() const { changed(Snapshot()); }
 
-        void Phase(LobbyPhase phase) {
+        void Phase(const LobbyPhase phase) {
             session.snapshot.phase = phase;
             phase_start = MonotonicMs();
             log(std::string("NETWORK state=") + LobbyPhaseName(phase));
@@ -547,8 +547,8 @@ namespace tenhou {
             return true;
         }
 
-        void Error(const std::string &error, bool transport = false, int server_code = -1,
-                   const std::string &server_text = {}, bool server_rejected = false) {
+        void Error(const std::string &error, const bool transport = false, const int server_code = -1,
+                   const std::string &server_text = {}, const bool server_rejected = false) {
             log("NETWORK error=" + error);
             if (transport && options.auto_reconnect && options.recover_games && ScheduleReconnect()) return;
             const bool available = transport && options.recover_games &&
@@ -626,7 +626,7 @@ namespace tenhou {
                     std::ifstream file(options.session_file, std::ios::binary);
                     native_token.assign(std::istreambuf_iterator<char>(file), {});
                     if (native_token.size() != 64 || !std::all_of(native_token.begin(), native_token.end(),
-                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+                        [](const char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
                         native_token.clear(); // A damaged recovery hint must not block login.
                 }
                 if (options.official && !resume && !options.session_file.empty()) {
@@ -653,7 +653,7 @@ namespace tenhou {
                 validation.require_native = options.native_service;
                 (void) validation.Connected(options.identity, options.gender);
                 if (options.host.empty() || options.host.size() > 253 || options.host.front() == '-' ||
-                    !std::all_of(options.host.begin(), options.host.end(), [](unsigned char c) {
+                    !std::all_of(options.host.begin(), options.host.end(), [](const unsigned char c) {
                         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
                                c == '.' || c == ':';
                     }) || options.port < 1 || options.port > 65535)
@@ -676,7 +676,7 @@ namespace tenhou {
         }
 
         static bool ValidGameId(const std::string &value) {
-            return !value.empty() && value.size() < 80 && std::all_of(value.begin(), value.end(), [](unsigned char c) {
+            return !value.empty() && value.size() < 80 && std::all_of(value.begin(), value.end(), [](const unsigned char c) {
                 return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
                        c == '_' || c == '-';
             });
@@ -695,7 +695,8 @@ namespace tenhou {
             }
         }
 
-        void AccumulatePrivateProfile(const NetworkMessage &message) {
+        void AccumulatePrivateProfile(const NetworkMessage &message) const
+        {
             // Origin tenhou.exe.c:92620-92706 accumulates non-zero lobby PROF add=11 fields into [STATUS] PFPV3/PFPV4.
             if (options.config_file.empty()) return;
             const auto lobby_it = message.attributes.find("lobby");
@@ -774,7 +775,7 @@ namespace tenhou {
             log("NETWORK send tag=" + tag);
         }
 
-        void ProcessBytes(const std::string &bytes, std::uint64_t ev_gen) {
+        void ProcessBytes(const std::string &bytes, const std::uint64_t ev_gen) {
             const bool was_pending = framer.pending();
             const auto messages = framer.Feed(bytes.data(), bytes.size());
             if (framer.pending()) {
@@ -881,7 +882,7 @@ namespace tenhou {
             if (close_after_owari) Close();
         }
 
-        void SubmitAction(std::uint64_t revision, std::size_t index) {
+        void SubmitAction(const std::uint64_t revision, const std::size_t index) {
             // Invalid/stale UI requests are rejected without tearing down a healthy connection.
             const auto replies = session.SubmitAction(revision, index);
             try {
@@ -955,7 +956,7 @@ namespace tenhou {
             }
         }
 
-        void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
+        void SubmitLobby(const std::uint64_t revision, const std::string &command, const unsigned value) {
             if (reconnect_view) return;
             const auto phase = session.snapshot.phase;
             if (options.official && command == "return" && phase == LobbyPhase::MatchComplete) {
@@ -1022,7 +1023,7 @@ namespace tenhou {
             }
         }
 
-        static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+        static LRESULT CALLBACK Procedure(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
             auto *self = reinterpret_cast<Impl *>(GetWindowLongPtrW(window, GWLP_USERDATA));
             if (message == WM_NCCREATE) {
                 self = static_cast<Impl *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -1041,35 +1042,41 @@ namespace tenhou {
 
     NetworkClient::~NetworkClient() = default;
 
-    void NetworkClient::Connect(const ConnectionOptions &options) { impl_->Connect(options); }
-    void NetworkClient::Disconnect() { impl_->Disconnect(); }
-    void NetworkClient::Reconnect(const ConnectionOptions &options) { impl_->Reconnect(options); }
+    void NetworkClient::Connect(const ConnectionOptions &options) const { impl_->Connect(options); }
+    void NetworkClient::Disconnect() const { impl_->Disconnect(); }
+    void NetworkClient::Reconnect(const ConnectionOptions &options) const { impl_->Reconnect(options); }
 
-    void NetworkClient::SubmitAction(std::uint64_t revision, std::size_t index) {
+    void NetworkClient::SubmitAction(const std::uint64_t revision, const std::size_t index) const
+    {
         impl_->SubmitAction(revision, index);
     }
 
-    void NetworkClient::SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value) {
+    void NetworkClient::SubmitLobby(const std::uint64_t revision, const std::string &command, const unsigned value) const
+    {
         impl_->SubmitLobby(revision, command, value);
     }
 
-    void NetworkClient::SubmitOriginLobby(const std::string &command, const std::string &value) {
+    void NetworkClient::SubmitOriginLobby(const std::string &command, const std::string &value) const
+    {
         impl_->SendLobbyReplies(impl_->session.SubmitOriginLobby(command, value));
     }
 
-    void NetworkClient::ConfigureRoom(std::uint64_t revision, const std::map<std::string, std::string> &settings) {
+    void NetworkClient::ConfigureRoom(const std::uint64_t revision, const std::map<std::string, std::string> &settings) const
+    {
         const auto replies = impl_->session.ConfigureRoom(revision, settings);
         for (const auto &reply : replies) impl_->Queue(reply);
     }
 
-    void NetworkClient::NativeRequest(const std::string &command, unsigned value,
-                                      const std::map<std::string, std::string> &settings) {
+    void NetworkClient::NativeRequest(const std::string &command, const unsigned value,
+                                      const std::map<std::string, std::string> &settings) const
+    {
         const auto replies = impl_->session.NativeRequest(command, value, settings);
         for (const auto &reply : replies) impl_->Queue(reply);
         impl_->Notify();
     }
 
-    void NetworkClient::ConfirmMatchStart() {
+    void NetworkClient::ConfirmMatchStart() const
+    {
         if (impl_->local_prepare && impl_->Active()) {
             impl_->local_prepare = false;
             if (impl_->options.official) impl_->action_start = MonotonicMs();
@@ -1078,7 +1085,8 @@ namespace tenhou {
         }
     }
 
-    void NetworkClient::ExitGame(int choice) {
+    void NetworkClient::ExitGame(const int choice) const
+    {
         const auto replies = impl_->session.ExitGame(choice);
         if (impl_->options.official && !replies.empty()) {
             impl_->local_prepare = false;

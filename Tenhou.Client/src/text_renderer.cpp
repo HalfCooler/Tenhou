@@ -16,18 +16,18 @@ namespace tenhou {
         using namespace Gdiplus;
         constexpr double kPt = 96.0 / 72.0;
         constexpr std::size_t kLayoutLimit = 256, kRasterLimit = 64, kRasterBytes = 32 * 1024 * 1024;
-        void Check(Status status, const char *message) {
+        void Check(const Status status, const char *message) {
             if (status != Ok) throw std::runtime_error(message);
         }
-        REAL Real(double value) { return static_cast<REAL>(value); }
-        std::uint16_t U16(const Bytes &b, std::size_t p) {
+        REAL Real(const double value) { return static_cast<REAL>(value); }
+        std::uint16_t U16(const Bytes &b, const std::size_t p) {
             if (p > b.size() || b.size() - p < 2) throw std::runtime_error("Truncated font cmap");
             return static_cast<std::uint16_t>((b[p] << 8) | b[p + 1]);
         }
-        std::uint32_t U32(const Bytes &b, std::size_t p) {
+        std::uint32_t U32(const Bytes &b, const std::size_t p) {
             return (static_cast<std::uint32_t>(U16(b, p)) << 16) | U16(b, p + 2);
         }
-        Bytes FontTable(const Bytes &font, std::uint32_t tag) {
+        Bytes FontTable(const Bytes &font, const std::uint32_t tag) {
             const auto count = U16(font, 4);
             for (std::size_t i = 0; i < count; ++i) {
                 const auto p = 12 + i * 16;
@@ -38,7 +38,7 @@ namespace tenhou {
             }
             throw std::runtime_error("Missing font table");
         }
-        bool HasGlyph(const Bytes &cmap, std::uint32_t scalar) {
+        bool HasGlyph(const Bytes &cmap, const std::uint32_t scalar) {
             const auto count = U16(cmap, 2);
             for (std::size_t i = 0; i < count; ++i) {
                 const auto record = 4 + i * 8;
@@ -69,7 +69,7 @@ namespace tenhou {
             }
             return false;
         }
-        std::vector<std::size_t> Clusters(std::wstring_view text) {
+        std::vector<std::size_t> Clusters(const std::wstring_view text) {
             std::vector<std::size_t> result{0};
             if (text.empty()) return result;
             SCRIPT_STRING_ANALYSIS analysis = nullptr;
@@ -94,7 +94,7 @@ namespace tenhou {
             result.push_back(text.size());
             return result;
         }
-        RectF Union(RectF a, const RectF &b) {
+        RectF Union(const RectF a, const RectF &b) {
             if (a.Width <= 0 || a.Height <= 0) return b;
             if (b.Width <= 0 || b.Height <= 0) return a;
             RectF result; RectF::Union(result, a, b); return result;
@@ -105,11 +105,11 @@ namespace tenhou {
             const auto c = kTextPalette[index].rgba;
             return Color(c.a, c.r, c.g, c.b);
         }
-        void Gradient(Graphics &g, RectF rect, const TextGradientStop *stops, std::size_t count, double alpha,
-                      bool highlight = false) {
+        void Gradient(Graphics &g, const RectF rect, const TextGradientStop *stops, const std::size_t count, const double alpha,
+                      const bool highlight = false) {
             std::vector<Color> colors;
             std::vector<REAL> positions;
-            const auto interpolate = [](double position, const auto *nodes, std::size_t size, auto value) {
+            const auto interpolate = [](double position, const auto *nodes, const std::size_t size, auto value) {
                 for (std::size_t i = 1; i < size; ++i) {
                     if (position > nodes[i].position) continue;
                     const auto t = (position - nodes[i - 1].position) / (nodes[i].position - nodes[i - 1].position);
@@ -124,7 +124,7 @@ namespace tenhou {
             // preserves the original gray nodes between stops.
             for (unsigned i = 0; i <= 256; ++i) {
                 const double position = i / 256.0;
-                const auto gray = interpolate(position, stops, count, [](const auto &stop) { return double(stop.gray); });
+                const auto gray = interpolate(position, stops, count, [](const auto &stop) { return static_cast<double>(stop.gray); });
                 double coverage = (255 - gray) / 255;
                 double channel = 0;
                 if (highlight) {
@@ -141,7 +141,7 @@ namespace tenhou {
             Check(g.FillRectangle(&brush, rect), "Cannot fill Info gradient");
         }
         // Three separable box passes approximate a Gaussian. The mask is generated at final device size.
-        void Blur(Bitmap &bitmap, int radius) {
+        void Blur(Bitmap &bitmap, const int radius) {
             if (radius <= 0) return;
             const int width = static_cast<int>(bitmap.GetWidth()), height = static_cast<int>(bitmap.GetHeight());
             BitmapData lock{};
@@ -203,7 +203,7 @@ namespace tenhou {
         bool read = size != GDI_ERROR && size > 0;
         if (read) { impl_->cmap.resize(size); read = GetFontData(dc, 0x70616d63, 0, impl_->cmap.data(), size) == size; }
         SelectObject(dc, previous); DeleteObject(font);
-        EnumFontFamiliesExW(dc, &description, [](const LOGFONTW *face, const TEXTMETRICW *, DWORD, LPARAM state) -> int {
+        EnumFontFamiliesExW(dc, &description, [](const LOGFONTW *face, const TEXTMETRICW *, DWORD, const LPARAM state) -> int {
             if (face->lfWeight >= FW_BOLD) *reinterpret_cast<bool *>(state) = true;
             return 1;
         }, reinterpret_cast<LPARAM>(&impl_->bold), 0);
@@ -228,7 +228,7 @@ namespace tenhou {
     const FontFamily &TextFontService::family() const { return *impl_->family; }
     bool TextFontService::native_bold() const { return impl_->bold; }
     bool TextFontService::private_font() const { return impl_->private_source; }
-    std::vector<std::uint32_t> TextFontService::MissingGlyphs(std::string_view utf8_text) const {
+    std::vector<std::uint32_t> TextFontService::MissingGlyphs(const std::string_view utf8_text) const {
         const auto text = Utf8ToWide(utf8_text);
         std::set<std::uint32_t> missing;
         for (std::size_t i = 0; i < text.size(); ++i) {
@@ -253,7 +253,7 @@ namespace tenhou {
         TextRasterPixels pixels;
         mutable Bitmap bitmap;
 
-        RasterData(int width, int height)
+        RasterData(const int width, const int height)
             : pixels{width, height, Bytes(static_cast<std::size_t>(width) * height * 4)},
               bitmap(width, height, width * 4, PixelFormat32bppPARGB, pixels.bgra.data()) {}
     };
@@ -292,7 +292,7 @@ namespace tenhou {
         };
         struct RasterKeyHash {
             std::size_t operator()(const RasterKey &k) const noexcept {
-                auto mix = [](std::size_t &h, std::size_t v) {
+                auto mix = [](std::size_t &h, const std::size_t v) {
                     h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
                 };
                 std::size_t h = std::hash<const void *>{}(k.layout);
@@ -333,7 +333,7 @@ namespace tenhou {
                 p.info_rule_height_pt <= 0) throw std::runtime_error("Invalid text alpha or gradient row height");
         }
 
-        double AddText(GraphicsPath &path, std::wstring_view text, const TextStyle &style, double x = 0, double y = 0) {
+        double AddText(GraphicsPath &path, const std::wstring_view text, const TextStyle &style, const double x = 0, const double y = 0) {
             if (text.empty()) return 0;
             const auto em = Real(style.size_pt * kPt);
             const int face = style.bold && font.native_bold() ? FontStyleBold : FontStyleRegular;
@@ -444,8 +444,8 @@ namespace tenhou {
         }
     };
 
-    TextRenderContext TextRenderContext::Viewport(double native_width, double native_height,
-                                                  const RectF &destination, bool sd, unsigned dpi) {
+    TextRenderContext TextRenderContext::Viewport(const double native_width, const double native_height,
+                                                  const RectF &destination, const bool sd, const unsigned dpi) {
         if (native_width <= 0 || native_height <= 0 || destination.Width <= 0 || destination.Height <= 0)
             throw std::runtime_error("Invalid text viewport");
         TextRenderContext result;
@@ -458,16 +458,18 @@ namespace tenhou {
     }
     TextRenderer::TextRenderer(const TextFontService &font, TextRenderProfile profile) : impl_(std::make_unique<Impl>(font, profile)) {}
     TextRenderer::~TextRenderer() = default;
-    TextLayout TextRenderer::Layout(TextKey key) {
+    TextLayout TextRenderer::Layout(const TextKey key) const
+    {
         const auto *text = FindText(key);
         if (!text) throw std::runtime_error("Invalid text key");
         return impl_->Layout(text->label, text->style, text->composition);
     }
-    TextLayout TextRenderer::Layout(std::string_view utf8_text, TextStyleKey style) {
+    TextLayout TextRenderer::Layout(const std::string_view utf8_text, const TextStyleKey style) const
+    {
         return impl_->Layout(utf8_text, style, TextComposition::plain);
     }
 
-    SceneTextRun TextRenderer::Caption(TextKey key, PointF center, double scale, double opacity) {
+    SceneTextRun TextRenderer::Caption(const TextKey key, PointF center, const double scale, const double opacity) {
         const auto *definition = FindText(key);
         if (!definition || definition->category != TextCategory::Caption)
             throw std::runtime_error("Caption requires a caption text key");
@@ -523,7 +525,8 @@ namespace tenhou {
         return RectF(Real(device.X), Real(device.Y), Real(device.Width), Real(device.Height));
     }
     std::shared_ptr<const TextRenderer::RasterData> TextRenderer::GetRaster(
-        const TextRenderContext &context, const SceneTextRun &run, Rect &device) {
+        const TextRenderContext &context, const SceneTextRun &run, Rect &device) const
+    {
         auto geometry = TextGeometry(context, run);
         device = geometry.device;
         if (device.IsEmptyArea()) return {};
@@ -671,11 +674,11 @@ namespace tenhou {
         }
     } // namespace
 
-    PortableTextLayout TextRenderer::LayoutPortable(TextKey key) {
+    PortableTextLayout TextRenderer::LayoutPortable(const TextKey key) {
         return ToPortable(Layout(key));
     }
 
-    PortableTextLayout TextRenderer::LayoutPortable(std::string_view utf8_text, TextStyleKey style) {
+    PortableTextLayout TextRenderer::LayoutPortable(const std::string_view utf8_text, const TextStyleKey style) {
         return ToPortable(Layout(utf8_text, style));
     }
 

@@ -37,25 +37,25 @@ namespace tenhou {
 
         NetworkClient &operator=(const NetworkClient &) = delete;
 
-        void Connect(const ConnectionOptions &options);
+        void Connect(const ConnectionOptions &options) const;
 
-        void Disconnect();
+        void Disconnect() const;
 
-        void Reconnect(const ConnectionOptions &options);
+        void Reconnect(const ConnectionOptions &options) const;
 
-        void SubmitAction(std::uint64_t revision, std::size_t index);
+        void SubmitAction(std::uint64_t revision, std::size_t index) const;
 
-        void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0);
-        void SubmitOriginLobby(const std::string &command, const std::string &value);
+        void SubmitLobby(std::uint64_t revision, const std::string &command, unsigned value = 0) const;
+        void SubmitOriginLobby(const std::string &command, const std::string &value) const;
 
-        void ConfirmMatchStart();
+        void ConfirmMatchStart() const;
 
-        void ExitGame(int choice = -1);
+        void ExitGame(int choice = -1) const;
 
-        void ConfigureRoom(std::uint64_t revision, const std::map<std::string, std::string> &settings);
+        void ConfigureRoom(std::uint64_t revision, const std::map<std::string, std::string> &settings) const;
 
         void NativeRequest(const std::string &command, unsigned value = 0,
-                           const std::map<std::string, std::string> &settings = {});
+                           const std::map<std::string, std::string> &settings = {}) const;
 
         const LobbySnapshot &snapshot() const;
 

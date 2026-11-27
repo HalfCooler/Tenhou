@@ -3,7 +3,7 @@
 #include <array>
 
 namespace tenhou {
-    unsigned WallStackOrder(const WallState &wall, int seat, int stack) {
+    unsigned WallStackOrder(const WallState &wall, const int seat, const int stack) {
         unsigned index = 0;
         for (int side = 0; side < 4; ++side) {
             const int stacks = wall.SideTiles(side) / 2;
@@ -12,7 +12,7 @@ namespace tenhou {
         return index;
     }
 
-    TableTile WallTile(const WallState &wall, int seat, int stack, bool stacked) {
+    TableTile WallTile(const WallState &wall, const int seat, const int stack, const bool stacked) {
         const int stacks = wall.SideTiles(seat) / 2;
         const int resource = std::min(stack, 16) + (stacks < 17 ? (17 - stacks) / 2 : 0);
         TableTile tile{'y', resource + (stacked ? 0 : 17), -1, seat};
@@ -23,7 +23,7 @@ namespace tenhou {
         return tile;
     }
 
-    std::vector<TableTile> BuildWallScene(const ReplayState &state, unsigned placed) {
+    std::vector<TableTile> BuildWallScene(const ReplayState &state, const unsigned placed) {
         std::vector<TableTile> scene;
         const auto &wall = state.wall;
         if (!state.initialized || !wall.known) return scene;
@@ -34,7 +34,7 @@ namespace tenhou {
                 alive[seat][stack * 2] = order + 1 < placed;
                 alive[seat][stack * 2 + 1] = order < placed;
             }
-        const auto remove = [&](int index) {
+        const auto remove = [&](const int index) {
             const auto p = wall.Position(index);
             alive[p.first][p.second] = false;
         };
@@ -72,7 +72,7 @@ namespace tenhou {
     }
 
     void InsertNearWall(std::vector<PositionedTile> &scene, const TileGeometryCatalog &geometry,
-                        const ReplayState &state, bool red, unsigned placed, bool include_far) {
+                        const ReplayState &state, const bool red, const unsigned placed, const bool include_far) {
         std::vector<PositionedTile> near_wall;
         if (include_far) {
             std::vector<PositionedTile> far_wall;

@@ -66,7 +66,7 @@ namespace tenhou {
         void UpdateAudioMeter();
         void PaintAudioMeter(const DRAWITEMSTRUCT &item) const;
         void ShowAudioMenu();
-        void SetupSystemMenu();
+        void SetupSystemMenu() const;
         void SyncSystemMenu() const;
         void UpdateWindowTitle() const;
         void ApplyClientSizePreset(int client_width, int client_height);

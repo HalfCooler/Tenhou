@@ -106,7 +106,8 @@ namespace tenhou {
         return out.str();
     }
 
-    std::shared_ptr<const ObjectPack> SharedAssetStore::GetObjectPack(const std::filesystem::path &path) {
+    std::shared_ptr<const ObjectPack> SharedAssetStore::GetObjectPack(const std::filesystem::path &path) const
+    {
         const auto norm = NormalizePath(path);
         const auto key = PathToUtf8(norm);
         const auto stamp = ReadFileStamp(norm);
@@ -125,7 +126,8 @@ namespace tenhou {
         return loaded;
     }
 
-    std::shared_ptr<const ResourcePack> SharedAssetStore::GetDisplayPack(const std::filesystem::path &path, int width) {
+    std::shared_ptr<const ResourcePack> SharedAssetStore::GetDisplayPack(const std::filesystem::path &path, int width) const
+    {
         const auto norm = NormalizePath(path);
         const auto key = std::make_pair(PathToUtf8(norm), width);
         const auto stamp = ReadFileStamp(norm);
@@ -138,7 +140,7 @@ namespace tenhou {
             }
         }
         auto pack = std::make_shared<ResourcePack>(LoadResourcePack(norm,
-            [](unsigned id, unsigned metadata) { return metadata && FindTextImageByOrigin(id); }));
+            [](const unsigned id, const unsigned metadata) { return metadata && FindTextImageByOrigin(id); }));
         if (pack->signature != "res2" && !(width == 1024 && pack->signature == "res0"))
             throw std::runtime_error("Original display pack has the wrong canvas signature");
         std::lock_guard lock(impl_->mutex);
@@ -147,7 +149,8 @@ namespace tenhou {
         return pack;
     }
 
-    std::shared_ptr<const TextFontService> SharedAssetStore::GetTextFont(const std::filesystem::path &resources_dir) {
+    std::shared_ptr<const TextFontService> SharedAssetStore::GetTextFont(const std::filesystem::path &resources_dir) const
+    {
         ResourceManager manager(resources_dir);
         const auto font_path = NormalizePath(manager.Path(AssetId::TextFont));
         const auto key = PathToUtf8(font_path);
@@ -168,8 +171,9 @@ namespace tenhou {
 
     std::shared_ptr<const Image> SharedAssetStore::GetBackground(
         const std::filesystem::path &directory, const std::filesystem::path &config,
-        int width, int height, const ClientPreferences &preferences,
-        const std::function<Image()> &builder) {
+        const int width, const int height, const ClientPreferences &preferences,
+        const std::function<Image()> &builder) const
+    {
         BackgroundCacheKey key;
         key.width = width;
         key.height = height;
@@ -207,7 +211,8 @@ namespace tenhou {
     }
 
     std::shared_ptr<const SharedSoundBank> SharedAssetStore::GetSoundBank(
-        const std::string &fingerprint, const std::function<SharedSoundBank()> &loader) {
+        const std::string &fingerprint, const std::function<SharedSoundBank()> &loader) const
+    {
         {
             std::lock_guard lock(impl_->mutex);
             for (auto it = impl_->sound_banks.begin(); it != impl_->sound_banks.end(); ++it) {
@@ -231,12 +236,14 @@ namespace tenhou {
         return impl_->stats;
     }
 
-    void SharedAssetStore::ResetStats() {
+    void SharedAssetStore::ResetStats() const
+    {
         std::lock_guard lock(impl_->mutex);
         impl_->stats = {};
     }
 
-    void SharedAssetStore::Clear() {
+    void SharedAssetStore::Clear() const
+    {
         std::lock_guard lock(impl_->mutex);
         impl_->object_packs.clear();
         impl_->display_packs.clear();

@@ -9,7 +9,7 @@
 using namespace tenhou;
 using namespace Gdiplus;
 namespace {
-    void Require(bool ok, const std::string &message) { if (!ok) throw std::runtime_error(message); }
+    void Require(const bool ok, const std::string &message) { if (!ok) throw std::runtime_error(message); }
     struct Session {
         ULONG_PTR token = 0;
         Session() { GdiplusStartupInput input; Require(GdiplusStartup(&token, &input, nullptr) == Ok, "GDI+ startup"); }
@@ -21,7 +21,7 @@ namespace {
         HGDIOBJ previous = nullptr;
         std::uint32_t *pixels = nullptr;
         int width, height;
-        Surface(int w, int h) : width(w), height(h) {
+        Surface(const int w, const int h) : width(w), height(h) {
             BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
             info.bmiHeader.biWidth = w; info.bmiHeader.biHeight = -h;
             info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
@@ -60,7 +60,7 @@ namespace {
             throw std::runtime_error(label + " differs at " + std::to_string(index % a.width) + "," + std::to_string(index / a.width));
         }
     }
-    void Base(HDC dc, int width, int version) {
+    void Base(const HDC dc, const int width, const int version) {
         Graphics g(dc);
         SolidBrush dark(Color(255, 25, 64, static_cast<BYTE>(70 + version * 30)));
         g.FillRectangle(&dark, 0, 0, width, width * 3 / 4);
@@ -70,13 +70,13 @@ namespace {
             for (int x = 0; x < width; x += step)
                 if ((x / step + y / step) % 2) g.FillRectangle(&light, x, y, step, step);
     }
-    void Foreground(HDC dc, int width, int value) {
+    void Foreground(const HDC dc, const int width, const int value) {
         Graphics g(dc); const float s = width == 1440 ? 1.0f : 1.0f / 1.4f;
         g.ScaleTransform(s, s);
         SolidBrush plate(Color(255, static_cast<BYTE>(70 + value * 45), 40, 25));
         g.FillRectangle(&plate, 480, 440, 440, 230);
     }
-    FinalScene Scene(TextRenderer &renderer, CachedHud &hud, int native, int stage, unsigned dpi, int &image_draws) {
+    FinalScene Scene(TextRenderer &renderer, CachedHud &hud, const int native, const int stage, const unsigned dpi, int &image_draws) {
         FinalScene scene(renderer, native == 1024, dpi);
         if (stage >= 14) return scene;
         hud.AppendText(scene, "fixed", [&] {
@@ -108,19 +108,19 @@ namespace {
         scene.Text({renderer.Layout(TextId(481)), {90, 740}}, RectF(110, 730, 180, 55));
         return scene;
     }
-    void Composition(TextRenderer &renderer, int native, int device, const std::filesystem::path &output) {
+    void Composition(TextRenderer &renderer, const int native, int device, const std::filesystem::path &output) {
         Surface cached(device + 34, device * 3 / 4 + 26), full(cached.width, cached.height);
         RetainedScene retained, reference; reference.SetReferenceRendering(true);
         TableArtwork artwork; CachedHud hud; int image_draws = 0;
         std::vector<PositionedTile> tiles;
-        const auto render = [&](RetainedScene &buffer, Surface &target, const FinalScene *scene, int stage, int dest_width) {
+        const auto render = [&](RetainedScene &buffer, Surface &target, const FinalScene *scene, const int stage, const int dest_width) {
             const int base = stage >= 4 ? 1 : 0;
             const double s = native == 1440 ? 1 : 1 / 1.4;
             const RECT plate{static_cast<LONG>(478 * s), static_cast<LONG>(438 * s),
                              static_cast<LONG>(922 * s), static_cast<LONG>(672 * s)};
             buffer.Render(target.dc, native, {17, 13, 17 + dest_width, 13 + dest_width * 3 / 4}, tiles, artwork, false,
-                "base", std::to_string(base), [&](HDC dc) { Base(dc, native, 0); },
-                [&](HDC dc, RECT) { Foreground(dc, native, base); }, {}, {},
+                "base", std::to_string(base), [&](const HDC dc) { Base(dc, native, 0); },
+                [&](const HDC dc, RECT) { Foreground(dc, native, base); }, {}, {},
                 {plate}, {}, {}, scene);
         };
         for (int stage = 0; stage <= 15; ++stage) {
@@ -163,14 +163,14 @@ namespace {
             FinalScene scene(renderer);
             if (i != 3) scene.Text(renderer.Caption(TextId(594), {720, 550}, 1, i == 2 ? .2 : 1));
             const RECT dest{11, 7, 888, 665};
-            cached.RenderScaled(a.dc, 1440, 1080, dest, [&](HDC dc) { Base(dc, 1440, i == 1 ? 1 : 0); }, &scene);
+            cached.RenderScaled(a.dc, 1440, 1080, dest, [&](const HDC dc) { Base(dc, 1440, i == 1 ? 1 : 0); }, &scene);
             PaintBuffer fresh;
-            fresh.RenderScaled(b.dc, 1440, 1080, dest, [&](HDC dc) { Base(dc, 1440, i == 1 ? 1 : 0); }, &scene);
+            fresh.RenderScaled(b.dc, 1440, 1080, dest, [&](const HDC dc) { Base(dc, 1440, i == 1 ? 1 : 0); }, &scene);
             Equal(a, b, "RenderScaled final layer");
         }
         // Deliberately occlude the same text with an opaque image, then reverse order.
         const auto layout = renderer.Layout(TextId(481));
-        const auto draw = [&](Surface &surface, bool image_last) {
+        const auto draw = [&](Surface &surface, const bool image_last) {
             FinalScene scene(renderer);
             const auto text = [&] { scene.Text({layout, {100, 100}}); };
             const auto image = [&] { scene.Image("opaque", {0, 0, 1440, 1080}, [](Graphics &g) {
@@ -178,7 +178,7 @@ namespace {
             }); };
             if (image_last) { text(); image(); } else { image(); text(); }
             PaintBuffer buffer;
-            buffer.RenderScaled(surface.dc, 1440, 1080, {0, 0, 900, 675}, [&](HDC dc) { Base(dc, 1440, 0); }, &scene);
+            buffer.RenderScaled(surface.dc, 1440, 1080, {0, 0, 900, 675}, [&](const HDC dc) { Base(dc, 1440, 0); }, &scene);
         };
         draw(a, true); draw(b, false);
         Require(a.Pixels() != b.Pixels(), "Image/text ordering was flattened");
@@ -199,7 +199,7 @@ namespace {
         const RECT dest{11, 7, 888, 665};
         const auto run = renderer.Caption(TextId(594), {720, 550}, .93, .65);
         FinalScene scene(renderer); scene.Text(run);
-        const auto background = [&](HDC dc) { Base(dc, 1440, 0); };
+        const auto background = [&](const HDC dc) { Base(dc, 1440, 0); };
         buffer.RenderScaled(final.dc, 1440, 1080, dest, background, &scene);
         base.RenderScaled(direct.dc, 1440, 1080, dest, background);
         const auto context = TextRenderContext::Viewport(1440, 1080, RectF(11, 7, 877, 658), false);
@@ -207,7 +207,7 @@ namespace {
             Graphics g(direct.dc); renderer.Draw(g, context, run);
         }
         Equal(final, direct, "Independent final-device raster oracle");
-        native.RenderScaled(legacy.dc, 1440, 1080, dest, [&](HDC dc) {
+        native.RenderScaled(legacy.dc, 1440, 1080, dest, [&](const HDC dc) {
             background(dc); Graphics g(dc); renderer.Draw(g, {}, run);
         });
         Require(final.Pixels() != legacy.Pixels(), "Text was rasterized before scaling");
@@ -218,16 +218,16 @@ namespace {
         auto invalid = run; invalid.transform[0] = std::numeric_limits<double>::quiet_NaN();
         FinalScene bad(renderer); bad.Text(invalid);
         bool failed = false;
-        try { buffer.RenderScaled(final.dc, 1440, 1080, dest, [&](HDC dc) { Base(dc, 1440, 1); }, &bad); }
+        try { buffer.RenderScaled(final.dc, 1440, 1080, dest, [&](const HDC dc) { Base(dc, 1440, 1); }, &bad); }
         catch (const std::runtime_error &) { failed = true; }
         Require(failed, "Invalid transform did not fail explicitly");
-        buffer.RenderScaled(final.dc, 1440, 1080, dest, [&](HDC dc) { Base(dc, 1440, 1); }, &scene);
+        buffer.RenderScaled(final.dc, 1440, 1080, dest, [&](const HDC dc) { Base(dc, 1440, 1); }, &scene);
         PaintBuffer fresh;
-        fresh.RenderScaled(direct.dc, 1440, 1080, dest, [&](HDC dc) { Base(dc, 1440, 1); }, &scene);
+        fresh.RenderScaled(direct.dc, 1440, 1080, dest, [&](const HDC dc) { Base(dc, 1440, 1); }, &scene);
         Equal(final, direct, "Failed final frame recovery");
     }
 }
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     try {
         Require(argc == 2 || argc == 3, "Usage: tenhou_text_composition_check RESOURCES [OUTPUT]");
         Session session; ResourceManager resources(argv[1]); TextFontService font(resources); TextRenderer renderer(font);

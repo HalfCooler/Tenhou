@@ -11,14 +11,14 @@ namespace tenhou {
         int initial_removed = 0, replacement_limit = 4, indicator_index = 130;
         const char *unavailable = "snapshot lacks draw history";
 
-        void InitVariant(int tiles, int head, int end, int opening) {
+        void InitVariant(const int tiles, const int head, const int end, const int opening) {
             *this = {};
             total = tiles; front = head; tail = end; offset = opening;
             dead_wall = false; known = true; unavailable = "";
             replacement_limit = 0;
         }
 
-        void Init(int dealer, int die0, int die1, unsigned type = 0) {
+        void Init(const int dealer, const int die0, const int die1, const unsigned type = 0) {
             *this = {};
             // seed dice are zero based. The original special (6,0) mode has a
             // different per-seat wall and is deliberately outside this four-wall model.
@@ -54,7 +54,7 @@ namespace tenhou {
         }
 
         // Original FUN_0048f140: return direction and individual (top/bottom) slot.
-        std::pair<int, int> Position(int index) const {
+        std::pair<int, int> Position(const int index) const {
             if (!dead_wall) {
                 int p = (offset + index) % total;
                 for (int side = 0; side < 4; ++side) {
@@ -69,6 +69,6 @@ namespace tenhou {
             return {(4 - (p / 34) % 4) % 4, (33 - p % 34) ^ 1};
         }
 
-        int SideTiles(int side) const { return total == 108 ? (side % 2 ? 26 : 28) : total / 4; }
+        int SideTiles(const int side) const { return total == 108 ? (side % 2 ? 26 : 28) : total / 4; }
     };
 } // namespace tenhou

@@ -10,12 +10,12 @@ namespace tenhou {
         constexpr unsigned kDealPacketTicks = 1 + 6; // Dispatch, then event 100.
         constexpr unsigned kDealTailTicks = 9;
 
-        float SpeedForSteps(int dx, int dy, unsigned steps) {
-            const double factor = steps == 12 ? double(0.083333336f) : 1.0 / steps;
+        float SpeedForSteps(const int dx, const int dy, const unsigned steps) {
+            const double factor = steps == 12 ? static_cast<double>(0.083333336f) : 1.0 / steps;
             return static_cast<float>(std::hypot(dx, dy) * factor);
         }
 
-        TableTile WallOrigin(const WallState &wall, int index, const std::vector<TableTile> &visible_wall) {
+        TableTile WallOrigin(const WallState &wall, const int index, const std::vector<TableTile> &visible_wall) {
             const auto position = wall.Position(index);
             auto source = WallTile(wall, position.first, position.second / 2, position.second % 2 == 0);
             const auto stack = std::find_if(visible_wall.begin(), visible_wall.end(), [&](const TableTile &visible) {
@@ -40,8 +40,8 @@ namespace tenhou {
         }
 
         std::pair<int, int> HandFlightLanding(const TableTile &tile, const TableTile &back,
-                                              std::pair<int, int> target, const TileGeometryCatalog &geometry,
-                                              bool red) {
+                                              const std::pair<int, int> target, const TileGeometryCatalog &geometry,
+                                              const bool red) {
             const auto back_image = geometry.Bounds(back, red);
             const auto face_image = geometry.Bounds(tile, red);
             if (tile.direction == 0 && tile.tile >= 0) {
@@ -54,8 +54,8 @@ namespace tenhou {
         unsigned CompactSteps(int dx, int dy) {
             unsigned steps = 0;
             while (dx || dy) {
-                dx = static_cast<int>(dx * double(.3f));
-                dy = static_cast<int>(dy * double(.3f));
+                dx = static_cast<int>(dx * static_cast<double>(.3f));
+                dy = static_cast<int>(dy * static_cast<double>(.3f));
                 ++steps;
             }
             return steps;
@@ -64,18 +64,18 @@ namespace tenhou {
         bool IsHand(const TableTile &tile) { return std::string_view(tile.role) == "hand"; }
     }
 
-    TileFlight::TileFlight(const TableTile &sprite, int x, int y, int from_x, int from_y, float speed,
-                           unsigned copies, float opacity, bool cover_landing) {
+    TileFlight::TileFlight(const TableTile &sprite, const int x, const int y, const int from_x, const int from_y, const float speed,
+                           const unsigned copies, const float opacity, const bool cover_landing) {
         const int dx = from_x - x, dy = from_y - y;
         if ((!dx && !dy) || speed <= 0) return;
         const double length = std::hypot(dx, dy);
         const double step_y = -dy / length * speed;
         step_x_ = static_cast<float>(-dx / length * speed);
         step_y_ = static_cast<float>(step_y);
-        const auto advances = static_cast<unsigned>(1 - (dx ? dx / double(step_x_) : dy / step_y)) - 1;
+        const auto advances = static_cast<unsigned>(1 - (dx ? dx / static_cast<double>(step_x_) : dy / step_y)) - 1;
         ticks = advances + 2; // The residual reaches zero before the count-zero frame.
-        residual_x_ = static_cast<float>(-double(advances) * step_x_);
-        residual_y_ = static_cast<float>(-double(advances) * step_y);
+        residual_x_ = static_cast<float>(-static_cast<double>(advances) * step_x_);
+        residual_y_ = static_cast<float>(-static_cast<double>(advances) * step_y);
         image_.sprite = sprite;
         image_.landing_x = x;
         image_.landing_y = y;
@@ -85,7 +85,7 @@ namespace tenhou {
         // The original places the copies in positive coordinates within a single
         // bitmap. Truncate there before translating the bitmap back to the anchor.
         const double reach = (copies - 1) * .5;
-        const auto offset = [reach](float step, double distance) {
+        const auto offset = [reach](const float step, const double distance) {
             const int inset = static_cast<int>(std::max(0.f, step) * reach);
             return static_cast<int>(inset - step * distance) - inset;
         };
@@ -95,7 +95,7 @@ namespace tenhou {
         }
     }
 
-    void TileFlight::Place(PositionedTile &tile, unsigned tick) const {
+    void TileFlight::Place(PositionedTile &tile, const unsigned tick) const {
         if (tick >= ticks) return;
         tile.flight = image_;
         tile.x = image_.landing_x;
@@ -106,11 +106,11 @@ namespace tenhou {
             rx += step_x_;
             ry += step_y_;
         }
-        tile.x = static_cast<int>(tile.x + double(rx));
-        tile.y = static_cast<int>(tile.y + double(ry));
+        tile.x = static_cast<int>(tile.x + static_cast<double>(rx));
+        tile.y = static_cast<int>(tile.y + static_cast<double>(ry));
     }
 
-    std::vector<PositionedTile> ReplayTransition::Frame(double elapsed) const {
+    std::vector<PositionedTile> ReplayTransition::Frame(const double elapsed) const {
         std::vector<PositionedTile> result;
         result.reserve(tiles.size());
         for (const auto &item: tiles) {
@@ -126,7 +126,7 @@ namespace tenhou {
                 const unsigned steps = static_cast<unsigned>(manual ? age * 60 / 1000 : age / kTableTickMs);
                 auto compact = [steps](int residual) {
                     for (unsigned i = 0; i < steps && residual; ++i)
-                        residual = static_cast<int>(residual * double(.3f));
+                        residual = static_cast<int>(residual * static_cast<double>(.3f));
                     return residual;
                 };
                 placed.x += compact(item.from_x - item.to_x);
@@ -305,17 +305,17 @@ namespace tenhou {
     }
 
     void TablePresentation::Begin(const ReplayState &before, const ReplayState &after, const ReplayEvent &event,
-                                  unsigned duration, int width, const TileOrigin &origin, double now, bool sort_self,
-                                  const TileGeometryCatalog *geometry, bool red, unsigned playback_limit) {
+                                  const unsigned duration, const int width, const TileOrigin &origin, const double now, const bool sort_self,
+                                  const TileGeometryCatalog *geometry, const bool red, const unsigned playback_limit) {
         Cancel();
         transition_ = BuildReplayTransition(before, after, event, duration, width, origin, sort_self, geometry, red);
         started_ = now;
         playback_scale_ = playback_limit && transition_.duration > playback_limit
-            ? double(transition_.duration) / playback_limit : 1;
+            ? static_cast<double>(transition_.duration) / playback_limit : 1;
     }
 
-    void TablePresentation::BeginManual(const ReplayState &before, const ReplayState &after, int width,
-                                        const TileOrigin &origin, double now) {
+    void TablePresentation::BeginManual(const ReplayState &before, const ReplayState &after, const int width,
+                                        const TileOrigin &origin, const double now) {
         const auto visible = Active() ? Frame(now) : std::vector<PositionedTile>{};
         ReplayEvent event;
         event.tag = "MANUAL";
@@ -341,8 +341,8 @@ namespace tenhou {
             int dx = tile.from_x - tile.to_x, dy = tile.from_y - tile.to_y;
             unsigned count = 0;
             while (dx || dy) {
-                dx = static_cast<int>(dx * double(.3f));
-                dy = static_cast<int>(dy * double(.3f));
+                dx = static_cast<int>(dx * static_cast<double>(.3f));
+                dy = static_cast<int>(dy * static_cast<double>(.3f));
                 ++count;
             }
             steps = std::max(steps, count);
@@ -351,14 +351,14 @@ namespace tenhou {
         transition_.duration = static_cast<unsigned>(std::ceil(steps * 1000.0 / 60));
     }
 
-    bool TablePresentation::Tick(double now) {
+    bool TablePresentation::Tick(const double now) {
         if (!Active() || now < started_ || (now - started_) * playback_scale_ < transition_.duration) return false;
         Cancel();
         return true;
     }
 
-    std::vector<PositionedTile> TablePresentation::Frame(double now) const {
-        return transition_.Frame(std::min(now < started_ ? 0 : (now - started_) * playback_scale_, double(transition_.duration)));
+    std::vector<PositionedTile> TablePresentation::Frame(const double now) const {
+        return transition_.Frame(std::min(now < started_ ? 0 : (now - started_) * playback_scale_, static_cast<double>(transition_.duration)));
     }
 
     void OpeningPresentation::Begin(const ReplayState &state, bool wall, const TileGeometryCatalog *geometry, bool red) {
@@ -451,7 +451,7 @@ namespace tenhou {
         active_ = wall_tiles_ || !packets_.empty();
     }
 
-    bool OpeningPresentation::Tick(unsigned steps) {
+    bool OpeningPresentation::Tick(const unsigned steps) {
         if (!active_ || !steps) return false;
         const auto total = static_cast<unsigned>(hands_.size());
         const unsigned finish = progress_ + std::min(steps, total - progress_);
@@ -464,12 +464,12 @@ namespace tenhou {
         return true;
     }
 
-    bool OpeningPresentation::Advance(double now) {
+    bool OpeningPresentation::Advance(const double now) {
         if (!active_) return false;
         if (!next_step_) next_step_ = now;
         if (now < next_step_) return false;
         const unsigned steps = static_cast<unsigned>(std::min(1 + std::floor((now - next_step_) / kTableTickMs),
-                                                               double(hands_.size() - progress_)));
+                                                               static_cast<double>(hands_.size() - progress_)));
         next_step_ += steps * kTableTickMs;
         return Tick(steps);
     }
@@ -552,7 +552,7 @@ namespace tenhou {
         return 0;
     }
 
-    unsigned DrawEndChangedSeats(const ReplayState &state, unsigned slot) {
+    unsigned DrawEndChangedSeats(const ReplayState &state, const unsigned slot) {
         if (slot >= 14) return 0;
         auto before = state, after = state;
         before.draw_end_slots = slot;
@@ -569,10 +569,10 @@ namespace tenhou {
         return changed;
     }
 
-    std::vector<unsigned> ReplaySounds(const ReplayEvent &event, char gender, bool effects_only,
+    std::vector<unsigned> ReplaySounds(const ReplayEvent &event, char gender, const bool effects_only,
                                        bool individual_voices) {
         if (effects_only) gender = '?';
-        const auto voice = [gender,individual_voices,&event](unsigned neutral, unsigned male, unsigned female) {
+        const auto voice = [gender,individual_voices,&event](const unsigned neutral, const unsigned male, const unsigned female) {
             const unsigned seat = individual_voices && event.who >= 0 && event.who < 4
                                       ? static_cast<unsigned>(event.who)
                                       : 0;
@@ -624,7 +624,7 @@ namespace tenhou {
         }
     }
 
-    unsigned DefaultSoundResource(unsigned id) {
+    unsigned DefaultSoundResource(const unsigned id) {
         if (id == 0x70) return 0x6f;
         if (id == 0x7f) return 0x88;
         for (unsigned base: {0x77u, 0x7bu, 0x80u, 0x84u, 0x89u, 0x8du, 0x92u, 0x96u, 0x9bu, 0x9fu, 0xa4u, 0xa8u})

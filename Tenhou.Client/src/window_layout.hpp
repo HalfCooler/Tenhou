@@ -15,21 +15,21 @@ namespace tenhou {
     inline constexpr int kMinClientWidth = 640;
     inline constexpr int kMinClientHeight = 480;
 
-    inline bool IsSupportedTableWidth(int width) {
+    inline bool IsSupportedTableWidth(const int width) {
         return width == 1024 || width == 1440 || width == 1920 || width == 2640;
     }
 
     // Legacy 1024 uses SD UI metrics; 1440/1920/2640 share the 1440 HD UI design space
     // scaled linearly by width / 1440.0.
-    inline int UiDesignWidth(int table_width) {
+    inline int UiDesignWidth(const int table_width) {
         return table_width == 1024 ? 1024 : 1440;
     }
 
-    inline double UiDesignScale(int table_width) {
-        return table_width == 1024 ? 1.0 : 1.4 * (double(table_width) / 1440.0);
+    inline double UiDesignScale(const int table_width) {
+        return table_width == 1024 ? 1.0 : 1.4 * (static_cast<double>(table_width) / 1440.0);
     }
 
-    inline int SelectAutoTableWidth(int target_width, int target_height) {
+    inline int SelectAutoTableWidth(const int target_width, const int target_height) {
         const int fit_w = std::min(target_width, target_height * 4 / 3);
         if (fit_w <= 1024) return 1024;
         if (fit_w <= 1440) return 1440;
@@ -39,7 +39,7 @@ namespace tenhou {
 
     // Parses original [STATUS] SCREENSIZE values ("default", "1024x768", "1440x1080", "1920x1440", "2640x1980").
     // Returns 0 for "default" / empty / unrecognized (automatic selection).
-    inline int ParseScreenSizeSetting(std::string_view value) {
+    inline int ParseScreenSizeSetting(const std::string_view value) {
         if (value == "1024x768") return 1024;
         if (value == "1440x1080") return 1440;
         if (value == "1920x1440") return 1920;
@@ -47,7 +47,7 @@ namespace tenhou {
         return 0;
     }
 
-    inline const char *FormatScreenSizeSetting(int table_width) {
+    inline const char *FormatScreenSizeSetting(const int table_width) {
         switch (table_width) {
             case 1024: return "1024x768";
             case 1440: return "1440x1080";

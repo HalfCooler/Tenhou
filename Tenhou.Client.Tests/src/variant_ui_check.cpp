@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
                     result.Configure(resources, 1440); result.Move({0, 0, 1200, 850}); result.SetContext(game.dealer, -1, -1);
                     std::array<std::string, 4> names;
                     for (int i = 0; i < 4; ++i) names[i] = game.players[i].name;
-                    result.SetBackgroundPainter([&](HDC target, RECT bounds) { table.Paint(target, bounds, game, false); });
+                    result.SetBackgroundPainter([&](const HDC target, const RECT bounds) { table.Paint(target, bounds, game, false); });
                     result.Set(game.settlement, names, false);
                     result.SetAnimationEnabled(false); result.Show(true);
                     if (std::string(argv[4]).rfind("--settlement-page=", 0) == 0) {

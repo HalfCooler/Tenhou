@@ -19,11 +19,11 @@ namespace tenhou {
 
         void Show(bool visible);
 
-        void Move(RECT bounds);
+        void Move(RECT bounds) const;
 
         void Configure(const std::filesystem::path &directory, int width);
 
-        void Capture(HDC dc);
+        void Capture(HDC dc) const;
 
         void SetSoundPlayer(std::function<void(unsigned)> play) { play_sound_ = std::move(play); }
         void SetSoundStopper(std::function<void()> stop) { stop_sound_ = std::move(stop); }
@@ -43,7 +43,7 @@ namespace tenhou {
 
         bool HandleKey(UINT key);
 
-        void SetPaused(bool paused) { sequencer_.SetPaused(paused, GetTickCount64()); }
+        void SetPaused(const bool paused) { sequencer_.SetPaused(paused, GetTickCount64()); }
 
         void SetContext(int dealer, int honba, int sticks);
 
@@ -84,7 +84,7 @@ namespace tenhou {
 
         void ConfirmTick();
 
-        void UpdateText();
+        void UpdateText() const;
 
         void Confirm();
 

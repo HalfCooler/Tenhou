@@ -54,19 +54,19 @@ namespace tenhou {
             return table[static_cast<std::size_t>(label)].c_str();
         }
 
-        void Draw(HDC dc, std::wstring_view text, RECT rect, UINT flags = DT_LEFT, COLORREF color = kInk) {
+        void Draw(const HDC dc, const std::wstring_view text, RECT rect, const UINT flags = DT_LEFT, const COLORREF color = kInk) {
             SetTextColor(dc, color);
             DrawTextW(dc, text.data(), static_cast<int>(text.size()), &rect,
                       DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS | flags);
         }
 
-        void Draw(HDC dc, std::string_view text, RECT rect, UINT flags = DT_LEFT, COLORREF color = kInk) {
+        void Draw(const HDC dc, const std::string_view text, const RECT rect, const UINT flags = DT_LEFT, const COLORREF color = kInk) {
             Draw(dc, Utf8ToWide(text), rect, flags, color);
         }
 
-        void Line(HDC dc, RECT rect) { FillRect(dc, &rect, GetSysColorBrush(COLOR_3DLIGHT)); }
+        void Line(const HDC dc, const RECT rect) { FillRect(dc, &rect, GetSysColorBrush(COLOR_3DLIGHT)); }
 
-        void ProfileLine(HDC dc, int x1, int y1, int x2, int y2, COLORREF color = kProfileLine) {
+        void ProfileLine(const HDC dc, const int x1, const int y1, const int x2, const int y2, const COLORREF color = kProfileLine) {
             const HPEN pen = CreatePen(PS_SOLID, 1, color);
             const auto old = SelectObject(dc, pen);
             MoveToEx(dc, x1, y1, nullptr);
@@ -90,7 +90,7 @@ namespace tenhou {
             return false;
         }
 
-        void ImageAt(HDC dc, const Image &image, int x, int y) {
+        void ImageAt(const HDC dc, const Image &image, const int x, const int y) {
             if (image.bgra.empty()) return;
             Gdiplus::Graphics graphics(dc);
             Gdiplus::Bitmap bitmap(image.width, image.height, image.width * 4, PixelFormat32bppARGB,
@@ -99,25 +99,25 @@ namespace tenhou {
                 throw std::runtime_error("Cannot draw offline lobby artwork");
         }
 
-        RECT QueueBounds(unsigned slot) {
+        RECT QueueBounds(const unsigned slot) {
             constexpr int row_y[]{52, 79, 106, 133, 165, 192};
             const int x = slot % 2 == 0 ? 130 : 220;
             const int y = 120 + row_y[slot / 2];
             return {x, y, x + 40, y + 20};
         }
 
-        std::wstring Decimal(int value, std::size_t decimals) {
+        std::wstring Decimal(const int value, const std::size_t decimals) {
             auto digits = std::to_wstring(std::abs(value));
             if (digits.size() <= decimals) digits.insert(0, decimals + 1 - digits.size(), L'0');
             digits.insert(digits.size() - decimals, 1, L'.');
             return value < 0 ? L"-" + digits : digits;
         }
 
-        void MenuItem(HMENU menu, UINT id, Label label, UINT flags = MF_ENABLED) {
+        void MenuItem(const HMENU menu, const UINT id, const Label label, const UINT flags = MF_ENABLED) {
             AppendMenuW(menu, MF_STRING | flags, id, Text(label));
         }
 
-        UINT Popup(HMENU menu, HWND button, HWND owner) {
+        UINT Popup(const HMENU menu, const HWND button, const HWND owner) {
             RECT anchor{};
             GetWindowRect(button, &anchor);
             const auto command = TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN,
@@ -129,11 +129,11 @@ namespace tenhou {
         struct RoomNumberDialog {
             std::string result;
 
-            static INT_PTR CALLBACK Procedure(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
+            static INT_PTR CALLBACK Procedure(const HWND dialog, const UINT message, const WPARAM wparam, const LPARAM lparam) {
                 constexpr int kEdit = 100, kPrompt = 101;
                 if (message == WM_INITDIALOG) {
                     SetWindowLongPtrW(dialog, DWLP_USER, lparam);
-                    const auto add = [&](const wchar_t *type, Label label, int id, DWORD style, RECT bounds) {
+                    const auto add = [&](const wchar_t *type, const Label label, const int id, const DWORD style, RECT bounds) {
                         MapDialogRect(dialog, &bounds);
                         const HWND child = CreateWindowExW(0, type, id == kEdit ? L"" : Text(label),
                             WS_CHILD | WS_VISIBLE | style, bounds.left, bounds.top,
@@ -172,7 +172,7 @@ namespace tenhou {
                 return TRUE;
             }
 
-            static std::string Show(HWND owner) {
+            static std::string Show(const HWND owner) {
                 RoomNumberDialog state;
                 const std::wstring title = Text(Label::lobby_enter_number), font = kOriginalUiFace;
                 DLGTEMPLATE header{};
@@ -195,7 +195,7 @@ namespace tenhou {
         };
     }
 
-    OfflineLobbyView::OfflineLobbyView(HWND parent, std::filesystem::path config, std::function<void(Action)> action,
+    OfflineLobbyView::OfflineLobbyView(const HWND parent, std::filesystem::path config, std::function<void(Action)> action,
                                        std::function<void(const std::string &)> log, Submit submit)
         : config_(std::move(config)), action_(std::move(action)), log_(std::move(log)),
           submit_(std::move(submit)), parent_(parent) {
@@ -261,7 +261,7 @@ namespace tenhou {
         DeleteObject(font_);
     }
 
-    void OfflineLobbyView::AddButton(unsigned id, RECT bounds, Label label) {
+    void OfflineLobbyView::AddButton(unsigned id, const RECT bounds, const Label label) {
         const HWND button = CreateWindowExW(0, L"BUTTON", Text(label), WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
             bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top, panel_,
             reinterpret_cast<HMENU>(static_cast<UINT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
@@ -271,7 +271,7 @@ namespace tenhou {
         buttons_.emplace(id, button);
     }
 
-    void OfflineLobbyView::ConfigureArtwork(const std::filesystem::path &resources, int canvas_width) {
+    void OfflineLobbyView::ConfigureArtwork(const std::filesystem::path &resources, const int canvas_width) {
         certificate_scale_ = canvas_width == 1024 ? 1.f : 1.4f;
         certificate_width_ = static_cast<int>(580 * certificate_scale_);
         certificate_height_ = static_cast<int>(470 * certificate_scale_);
@@ -281,16 +281,17 @@ namespace tenhou {
         Resize(client.right, client.bottom);
         artwork_.Configure(resources, kDefaultClientWidth);
         const auto &frame = artwork_.Get(592);
-        if (frame.width != kPanelWidth || frame.height != kPanelHeight)
+        if (frame.width <= 0 || frame.height <= 0 || frame.bgra.empty())
             throw std::runtime_error("Original lobby frame dimensions changed");
         background_ = BuildPreferredBackground(resources, config_, kDefaultClientWidth, kDefaultClientHeight,
                                                ClientPreferences::Load(config_));
-        log_("OFFLINE LOBBY frame=592 size=590x430");
+        log_("OFFLINE LOBBY frame=592 size=" + std::to_string(frame.width) + "x" + std::to_string(frame.height));
         InvalidateRect(viewport_, nullptr, FALSE);
         InvalidateRect(panel_, nullptr, FALSE);
     }
 
-    void OfflineLobbyView::Resize(int width, int height) {
+    void OfflineLobbyView::Resize(const int width, const int height) const
+    {
         MoveWindow(viewport_, 0, 0, width, height, TRUE);
         SetWindowPos(certificate_, HWND_TOP, (width - certificate_width_) / 2, (height - certificate_height_) / 2,
                      certificate_width_, certificate_height_, SWP_NOACTIVATE);
@@ -307,7 +308,7 @@ namespace tenhou {
         MoveWindow(panel_, (width - kPanelWidth) / 2, (height - kPanelHeight) / 2, kPanelWidth, kPanelHeight, TRUE);
     }
 
-    void OfflineLobbyView::Show(bool visible) {
+    void OfflineLobbyView::Show(const bool visible) {
         if (visible_ == visible) return;
         visible_ = visible;
         if (visible) {
@@ -329,7 +330,7 @@ namespace tenhou {
         }
     }
 
-    bool OfflineLobbyView::HandleKey(UINT key) {
+    bool OfflineLobbyView::HandleKey(const UINT key) {
         if (visible_ && IsWindowVisible(certificate_)) {
             if (key == VK_RETURN || key == VK_SPACE) ConfirmCertification();
             return true;
@@ -365,7 +366,7 @@ namespace tenhou {
         const HWND old_focus = GetFocus();
         const bool pending = state_.pending().has_value() || !service_pending_.empty() || (submit_ && !service_ready_);
         const bool busy = pending || state_.reservations() != 0;
-        const auto control = [&](unsigned id, bool show, bool enable) {
+        const auto control = [&](const unsigned id, const bool show, const bool enable) {
             const HWND button = buttons_.at(id);
             if ((IsWindowEnabled(button) != FALSE) != enable) EnableWindow(button, enable);
             if (((GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE) != 0) != show)
@@ -466,7 +467,7 @@ namespace tenhou {
         Refresh();
     }
 
-    void OfflineLobbyView::Hover(int slot) {
+    void OfflineLobbyView::Hover(const int slot) {
         if (timing_.hovered() == slot) return;
         KillTimer(panel_, kRulesTimer);
         switch (timing_.Hover(slot, MonotonicMs())) {
@@ -486,7 +487,7 @@ namespace tenhou {
         timing_.ClearRules();
     }
 
-    void OfflineLobbyView::Command(unsigned id) {
+    void OfflineLobbyView::Command(const unsigned id) {
         const auto found = buttons_.find(id);
         if (found == buttons_.end() || !IsWindowEnabled(found->second) || !IsWindowVisible(found->second)) return;
         if (id >= kOuter && id < kOuter + std::size(kTabs)) {
@@ -574,7 +575,8 @@ namespace tenhou {
         else if (pick == logout) action_(Action::Logout);
     }
 
-    void OfflineLobbyView::ShowPractice() {
+    void OfflineLobbyView::ShowPractice() const
+    {
         const auto menu = CreatePopupMenu();
         for (auto label: {Label::lobby_practice_riichi_fast, Label::lobby_practice_riichi, Label::lobby_practice_riichi_three})
             MenuItem(menu, 0, label, MF_GRAYED);
@@ -602,7 +604,8 @@ namespace tenhou {
         else if (pick == kSaveImage) SaveProfileImage();
     }
 
-    void OfflineLobbyView::CopyProfileText() {
+    void OfflineLobbyView::CopyProfileText() const
+    {
         SYSTEMTIME now{};
         GetLocalTime(&now);
         char timestamp[64]{};
@@ -667,15 +670,15 @@ namespace tenhou {
         image.Save(path, &png, nullptr);
     }
 
-    void OfflineLobbyView::ChooseProfile(bool monthly) {
+    void OfflineLobbyView::ChooseProfile(const bool monthly) {
         constexpr UINT help = 3000;
         const auto menu = CreatePopupMenu();
-        const auto append = [&](HMENU target, unsigned type, std::string_view label) {
+        const auto append = [&](const HMENU target, const unsigned type, const std::string_view label) {
             const bool selected = type == (monthly ? monthly_ : lifetime_);
             AppendMenuW(target, MF_STRING | (selected ? MF_CHECKED : 0), type, Utf8ToWide(label).c_str());
         };
-        const auto separator = [](HMENU target) { AppendMenuW(target, MF_SEPARATOR, 0, nullptr); };
-        const auto submenu = [&](HMENU child, const std::wstring &label, bool selected) {
+        const auto separator = [](const HMENU target) { AppendMenuW(target, MF_SEPARATOR, 0, nullptr); };
+        const auto submenu = [&](HMENU child, const std::wstring &label, const bool selected) {
             AppendMenuW(menu, MF_POPUP | (selected ? MF_CHECKED : 0),
                         reinterpret_cast<UINT_PTR>(child), label.c_str());
         };
@@ -752,7 +755,7 @@ namespace tenhou {
             private_lifetime_[i] = ReadPrivateLobbyStatistics(PreferenceString(config_, "STATUS", kPrivateProfileKeys[i]));
     }
 
-    void OfflineLobbyView::SetMonthlyProfile(unsigned type) {
+    void OfflineLobbyView::SetMonthlyProfile(const unsigned type) {
         if (monthly_ != type) {
             monthly_ = type;
             SetWindowTextW(buttons_.at(kMonthly), Utf8ToWide(MonthlyProfileCaption(type)).c_str());
@@ -761,7 +764,7 @@ namespace tenhou {
         if (official_ && submit_) submit_("monthly-profile", std::to_string(type));
     }
 
-    void OfflineLobbyView::SetCertificationVisible(bool show) {
+    void OfflineLobbyView::SetCertificationVisible(const bool show) {
         KillTimer(certificate_, kCertificateTimer);
         if (timing_.certificate_closing()) {
             certificate_body_.clear();
@@ -797,7 +800,7 @@ namespace tenhou {
             auto image = std::make_unique<Bitmap>(w, h, PixelFormat32bppPARGB);
             Graphics g(image.get());
             g.Clear(Color(0xdd000000));
-            const auto edge = [&](ARGB color, int x, int y, int right, int bottom) {
+            const auto edge = [&](const ARGB color, const int x, const int y, const int right, const int bottom) {
                 Pen pen(Color(color), 1);
                 g.DrawLine(&pen, x, y, right, bottom);
             };
@@ -851,7 +854,7 @@ namespace tenhou {
                     UnitPixel, &attributes);
     }
 
-    void OfflineLobbyView::PaintViewport(HDC dc) {
+    void OfflineLobbyView::PaintViewport(const HDC dc) {
         RECT client{};
         GetClientRect(viewport_, &client);
         FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
@@ -886,7 +889,7 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-    void OfflineLobbyView::PaintLobby(HDC dc) {
+    void OfflineLobbyView::PaintLobby(const HDC dc) {
         PaintViewport(dc);
         RECT bounds{};
         GetWindowRect(panel_, &bounds);
@@ -905,11 +908,11 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-    void OfflineLobbyView::PaintPanel(HDC dc) {
+    void OfflineLobbyView::PaintPanel(const HDC dc) {
         const RECT panel{0, 0, kPanelWidth, kPanelHeight};
         FillRect(dc, &panel, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
-        const auto &frame = artwork_.Get(592);
-        ImageAt(dc, frame, 0, 0);
+        Gdiplus::Graphics graphics(dc);
+        artwork_.Sprite(graphics, 592, 0, 0);
         SetBkMode(dc, TRANSPARENT);
         SelectObject(dc, font_);
         std::wstring title = Text(Label::lobby_title);
@@ -961,7 +964,7 @@ namespace tenhou {
         else PaintRules(dc);
     }
 
-    void OfflineLobbyView::PaintCandidates(HDC dc) {
+    void OfflineLobbyView::PaintCandidates(const HDC dc) {
         if (outer_ == 0) {
             const bool guest = state_.ranked() && !state_.profile.ranked_allowed;
             const auto requirement = guest ? Label::lobby_service_account :
@@ -988,7 +991,8 @@ namespace tenhou {
         }
     }
 
-    void OfflineLobbyView::PaintContest(HDC dc) {
+    void OfflineLobbyView::PaintContest(const HDC dc) const
+    {
         const auto *contest = state_.Contest();
         if (!contest) {
             Draw(dc, Text(Label::lobby_contest_loading), {50, 158, 308, 180}, DT_CENTER, kMuted);
@@ -1018,7 +1022,8 @@ namespace tenhou {
         }
     }
 
-    void OfflineLobbyView::PaintProfile(HDC dc) {
+    void OfflineLobbyView::PaintProfile(HDC dc) const
+    {
         const auto &profile = state_.profile;
         SIZE unit{};
         GetTextExtentPoint32W(dc, L"a", 1, &unit);
@@ -1103,11 +1108,11 @@ namespace tenhou {
             const bool have_hand_rates = all.hands > 0 || (!submit_ && have_games);
             const int raw_places_sum = std::accumulate(all.place_counts.begin(), all.place_counts.end(), 0);
             const bool use_raw_places = have_games && raw_places_sum == all.games;
-            const auto place_rate = [&](int idx) {
+            const auto place_rate = [&](const int idx) {
                 return use_raw_places ? static_cast<double>(all.place_counts[idx]) / static_cast<double>(all.games)
                                       : static_cast<double>(all.place_per_mille[idx]) / 1000.0;
             };
-            const auto hand_rate = [&](int raw_count, int permille) {
+            const auto hand_rate = [&](const int raw_count, const int permille) {
                 return all.hands > 0 && (raw_count > 0 || all.win_count > 0 || all.deal_in_count > 0 ||
                                          all.call_count > 0 || all.reach_count > 0)
                     ? static_cast<double>(raw_count) / static_cast<double>(all.hands)
@@ -1176,14 +1181,14 @@ namespace tenhou {
         const int mp_sum = std::accumulate(mp.begin(), mp.end(), 0);
         const bool m_raw = m_games && mp_sum == ms.games;
 
-        const auto rank_text = [&](std::size_t idx, bool enabled = true) -> std::wstring {
+        const auto rank_text = [&](const std::size_t idx, const bool enabled = true) -> std::wstring {
             if (!enabled || idx >= ms.monthly_ranks.size() || ms.monthly_ranks[idx] <= 0) return L"-";
             return std::to_wstring(ms.monthly_ranks[idx]) + Text(Label::lobby_rank_unit);
         };
 
-        const auto draw_monthly_cell = [&](int x_off, int y, int width, int mid_right,
+        const auto draw_monthly_cell = [&](const int x_off, const int y, const int width, const int mid_right,
                                            const wchar_t *label, const std::wstring &right_text,
-                                           const std::wstring &mid_text, bool grayed, bool dot) {
+                                           const std::wstring &mid_text, const bool grayed, const bool dot) {
             const int x = 335 + x_off;
             ProfileLine(dc, x, y + cy, x + width, y + cy);
             SetTextColor(dc, grayed ? kProfileDisabled : kProfileInk);
@@ -1307,7 +1312,7 @@ namespace tenhou {
                           rank_text(7), m_games ? Utf8ToWide(FormatRate(last_rate, 3)) : L"-", false, false);
     }
 
-    void OfflineLobbyView::PaintRules(HDC dc) {
+    void OfflineLobbyView::PaintRules(const HDC dc) {
         const unsigned index = static_cast<unsigned>(timing_.rule_slot());
         const auto candidate = state_.Candidate(tier_, index);
         const auto type = candidate.type;
@@ -1385,8 +1390,8 @@ namespace tenhou {
         }
     }
 
-    LRESULT CALLBACK OfflineLobbyView::ButtonProcedure(HWND window, UINT msg, WPARAM wparam, LPARAM lparam,
-                                                        UINT_PTR subclass, DWORD_PTR context) {
+    LRESULT CALLBACK OfflineLobbyView::ButtonProcedure(const HWND window, const UINT msg, const WPARAM wparam, const LPARAM lparam,
+                                                        const UINT_PTR subclass, const DWORD_PTR context) {
         auto &self = *reinterpret_cast<OfflineLobbyView *>(context);
         const auto id = static_cast<unsigned>(GetDlgCtrlID(window));
         const int slot = static_cast<int>(id) - static_cast<int>(kQueue);
@@ -1403,7 +1408,7 @@ namespace tenhou {
         return DefSubclassProc(window, msg, wparam, lparam);
     }
 
-    LRESULT CALLBACK OfflineLobbyView::Procedure(HWND window, UINT msg, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK OfflineLobbyView::Procedure(const HWND window, const UINT msg, const WPARAM wparam, const LPARAM lparam) {
         if (msg == WM_NCCREATE) {
             auto *create = reinterpret_cast<CREATESTRUCTW *>(lparam);
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
@@ -1415,7 +1420,7 @@ namespace tenhou {
                 switch (msg) {
                     case WM_ERASEBKGND: return 1;
                     case WM_PAINT:
-                        self->certificate_buffer_.Paint(window, [&](HDC dc) { self->PaintCertification(dc); });
+                        self->certificate_buffer_.Paint(window, [&](const HDC dc) { self->PaintCertification(dc); });
                         return 0;
                     case WM_DRAWITEM:
                         PaintOriginalButton(*reinterpret_cast<DRAWITEMSTRUCT *>(lparam), self->font_, L"确定");
@@ -1446,8 +1451,8 @@ namespace tenhou {
             switch (msg) {
                 case WM_ERASEBKGND: return 1;
                 case WM_PAINT:
-                    if (panel) self->panel_buffer_.Paint(window, [&](HDC dc) { self->PaintPanel(dc); });
-                    else self->viewport_buffer_.Paint(window, [&](HDC dc) { self->PaintViewport(dc); });
+                    if (panel) self->panel_buffer_.Paint(window, [&](const HDC dc) { self->PaintPanel(dc); });
+                    else self->viewport_buffer_.Paint(window, [&](const HDC dc) { self->PaintViewport(dc); });
                     return 0;
                 case WM_PRINTCLIENT:
                     if (panel) self->PaintPanel(reinterpret_cast<HDC>(wparam));

@@ -48,7 +48,7 @@ namespace tenhou {
             const auto &hex = field("data");
             if (id_.empty() || std::stoull(field("offset")) != data_.size() || hex.size() % 2 || hex.size() > 3000 ||
                 data_.size() + hex.size() / 2 > expected_) throw std::runtime_error("牌谱分块顺序或大小错误");
-            auto digit = [](char c) -> int {
+            auto digit = [](const char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
                 if (c >= 'a' && c <= 'f') return c - 'a' + 10;
                 throw std::runtime_error("牌谱编码错误");
@@ -60,7 +60,7 @@ namespace tenhou {
         if (m.tag != "REPLAYEND") return;
         if (id_.empty() || field("table") != id_ || data_.size() != expected_ || id_.size() != 32 || !std::all_of(
                 id_.begin(), id_.end(),
-                [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) throw std::runtime_error(
+                [](const char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) throw std::runtime_error(
             "牌谱不完整");
         ReplaySession verification(ReplayLog::Parse(data_, id_));
         while (verification.Step()) {

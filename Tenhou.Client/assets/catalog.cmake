@@ -41,7 +41,8 @@ tenhou_asset(FlowerXia images/variants/flowers/夏.png FILE 0 REQUIRED -)
 tenhou_asset(FlowerQiu images/variants/flowers/秋.png FILE 0 REQUIRED -)
 tenhou_asset(FlowerDong images/variants/flowers/冬.png FILE 0 REQUIRED -)
 
-# Optional PNG overrides for the seven non-text original display images.
+# Non-text original display images: 401/402 (8x) and 466/589/591/592 (4x) ship as HD PNG overrides;
+# 440 stays on bundled _res2.dat runtime scaling unless an optional 440.png override is provided.
 set(display_sprite_ids 401 402 440 466 589 591 592)
 foreach(sprite_id IN LISTS display_sprite_ids)
     tenhou_sprite(${sprite_id})

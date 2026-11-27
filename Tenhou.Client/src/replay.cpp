@@ -12,9 +12,9 @@ namespace tenhou {
         constexpr std::size_t kMaximumBytes = 16 * 1024 * 1024;
         constexpr std::size_t kMaximumEvents = 100000;
         [[noreturn]] void Fail(const std::string &message) { throw std::runtime_error(message); }
-        bool Space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+        bool Space(const char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
 
-        bool NameChar(char c) {
+        bool NameChar(const char c) {
             return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
                    (c >= '0' && c <= '9') || c == '_' || c == ':' || c == '-' || c == '.';
         }
@@ -54,7 +54,7 @@ namespace tenhou {
             }
         }
 
-        int Number(const std::string &value, const std::string &what, int low, int high) {
+        int Number(const std::string &value, const std::string &what, const int low, const int high) {
             int result = 0;
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
             if (value.empty() || parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() ||
@@ -63,18 +63,18 @@ namespace tenhou {
             return result;
         }
 
-        std::string Attribute(const ReplayEvent &event, const std::string &name, bool required = true) {
+        std::string Attribute(const ReplayEvent &event, const std::string &name, const bool required = true) {
             const auto found = event.attributes.find(name);
             if (found != event.attributes.end()) return found->second;
             if (required) Fail("Missing " + name + " attribute");
             return {};
         }
 
-        int Integer(const ReplayEvent &event, const std::string &name, int low, int high) {
+        int Integer(const ReplayEvent &event, const std::string &name, const int low, const int high) {
             return Number(Attribute(event, name), name, low, high);
         }
 
-        std::vector<int> Numbers(const std::string &text, const std::string &name, int low, int high) {
+        std::vector<int> Numbers(const std::string &text, const std::string &name, const int low, const int high) {
             std::vector<int> result;
             std::size_t start = 0;
             do {
@@ -87,7 +87,7 @@ namespace tenhou {
             return result;
         }
 
-        void Utf8Append(std::string &out, unsigned code) {
+        void Utf8Append(std::string &out, const unsigned code) {
             if ((code < 32 && code != 9 && code != 10 && code != 13) || code > 0x10ffff ||
                 (code >= 0xd800 && code <= 0xdfff) || code == 0xfffe || code == 0xffff)
                 Fail("Invalid XML character entity");
@@ -244,7 +244,7 @@ namespace tenhou {
                 return xml_.substr(start, position_ - start);
             }
 
-            void Expect(char c) {
+            void Expect(const char c) {
                 if (position_ >= xml_.size() || xml_[position_++] != c) Fail(std::string("Expected '") + c + "'");
             }
 
@@ -253,13 +253,13 @@ namespace tenhou {
             bool declaration_ = false, root_seen_ = false;
         };
 
-        void ValidateTile(int tile) { if (tile < 0 || tile >= 136) Fail("Tile ID outside 0..135"); }
+        void ValidateTile(const int tile) { if (tile < 0 || tile >= 136) Fail("Tile ID outside 0..135"); }
 
-        bool HasTile(const std::vector<int> &tiles, int tile) {
+        bool HasTile(const std::vector<int> &tiles, const int tile) {
             return std::find(tiles.begin(), tiles.end(), tile) != tiles.end();
         }
 
-        bool VisibleTile(const ReplayState &state, int tile) {
+        bool VisibleTile(const ReplayState &state, const int tile) {
             if (HasTile(state.dora_indicators, tile)) return true;
             for (const auto &player: state.players) {
                 if (HasTile(player.hand, tile)) return true;
@@ -270,7 +270,7 @@ namespace tenhou {
             return false;
         }
 
-        void RemoveTile(ReplayPlayer &player, int tile) {
+        void RemoveTile(ReplayPlayer &player, const int tile) {
             const auto found = std::find(player.hand.begin(), player.hand.end(), tile);
             if (found == player.hand.end()) Fail("Tile " + std::to_string(tile) + " is not in actor's hand");
             player.hand.erase(found);
@@ -575,7 +575,7 @@ namespace tenhou {
         return ranks;
     }
 
-    const char *SeatRankLabel(int rank) {
+    const char *SeatRankLabel(const int rank) {
         constexpr const char *labels[]{
             "新人", "９級", "８級", "７級", "６級", "５級", "４級", "３級", "２級", "１級",
             "初段", "二段", "三段", "四段", "五段", "六段", "七段", "八段", "九段", "十段", "天鳳位"
@@ -583,7 +583,7 @@ namespace tenhou {
         return rank >= 0 && rank <= 20 ? labels[rank] : "";
     }
 
-    char SoundGender(const std::string &seats, int who) {
+    char SoundGender(const std::string &seats, const int who) {
         // UN sx is normally comma separated; tolerate a compact four-seat string.
         if (who < 0 || who > 3) return '?';
         std::string value;
@@ -604,7 +604,7 @@ namespace tenhou {
         return value == "M" ? 'M' : value == "F" ? 'F' : '?';
     }
 
-    ReplayMeld DecodeReplayMeld(std::uint32_t encoded, int who) {
+    ReplayMeld DecodeReplayMeld(const std::uint32_t encoded, const int who) {
         if (who < 0 || who > 3 || encoded > 65535) Fail("Invalid meld actor or 16-bit encoding");
         ReplayMeld result;
         result.encoded = encoded;
@@ -753,7 +753,7 @@ namespace tenhou {
         position_ = 0;
     }
 
-    void ReplaySession::Seek(std::size_t applied_events) {
+    void ReplaySession::Seek(const std::size_t applied_events) {
         if (applied_events > log_.events.size()) Fail("Replay seek exceeds event count");
         ReplaySession next(log_);
         while (next.position() < applied_events) next.Step();
@@ -761,7 +761,7 @@ namespace tenhou {
         position_ = next.position_;
     }
 
-    std::string TileLabel(int tile) {
+    std::string TileLabel(const int tile) {
         if (tile < 0 || tile >= 136) return "?";
         const int type = tile / 4;
         if (type < 27)
@@ -771,7 +771,7 @@ namespace tenhou {
         return honors[type - 27];
     }
 
-    const char *MeldKindName(MeldKind kind) {
+    const char *MeldKindName(const MeldKind kind) {
         switch (kind) {
             case MeldKind::Chi: return "chi";
             case MeldKind::Pon: return "pon";

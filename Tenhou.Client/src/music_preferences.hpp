@@ -10,7 +10,7 @@
 #include <string_view>
 
 namespace tenhou {
-    inline bool AsciiCaseEqual(std::string_view a, std::string_view b) {
+    inline bool AsciiCaseEqual(const std::string_view a, const std::string_view b) {
         if (a.size() != b.size()) return false;
         for (std::size_t i = 0; i < a.size(); ++i) {
             const auto ca = static_cast<unsigned char>(a[i]);
@@ -28,10 +28,10 @@ namespace tenhou {
         return keys;
     }
 
-    inline std::string MusicOption(std::string_view key) { return std::string(key) + "OPT"; }
+    inline std::string MusicOption(const std::string_view key) { return std::string(key) + "OPT"; }
 
     inline std::filesystem::path MusicPath(const std::filesystem::path &resources, const std::filesystem::path &config,
-                                           std::string_view key, bool third_party_lobby = false) {
+                                           const std::string_view key, const bool third_party_lobby = false) {
         const auto source = PreferenceString(config, "RESOURCE", key, "default");
         if (AsciiCaseEqual(source, "none")) return {};
         if (third_party_lobby && key == "BGM_LOBBY0") return ResourceManager(resources).Path(AssetId::LobbyMusic);

@@ -13,7 +13,7 @@ namespace tenhou {
         return CreateFontIndirectW(&font);
     }
 
-    inline void PaintOriginalButton(const DRAWITEMSTRUCT &item, HFONT font, const wchar_t *label) {
+    inline void PaintOriginalButton(const DRAWITEMSTRUCT &item, const HFONT font, const wchar_t *label) {
         // WC_ITEM_BTN (004a7920): white upper half, gray lower gradient,
         // disabled gray, text extent +16/+8.
         const auto r = item.rcItem;

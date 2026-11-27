@@ -20,7 +20,7 @@ namespace tenhou {
         const ITableCanvasRenderer &Renderer() const { return *renderer_; }
 
         std::size_t HudCacheHits() const { return renderer_->HudCacheHits(); }
-        void SetReferenceRendering(bool enabled) { renderer_->SetReferenceRendering(enabled); }
+        void SetReferenceRendering(const bool enabled) const { renderer_->SetReferenceRendering(enabled); }
 
         POINT ActionAnchor(const OnlineState &online);
 
@@ -31,7 +31,7 @@ namespace tenhou {
         bool ManualAnimation() const { return presentation_.Manual(); }
         bool Tick() { return presentation_.Tick(AnimationNow()); }
 
-        void SetPaused(bool paused) {
+        void SetPaused(const bool paused) {
             if (paused && !paused_at_) paused_at_ = AnimationNow();
             else if (!paused && paused_at_) {
                 presentation_.ShiftTime(AnimationNow() - paused_at_);
@@ -39,17 +39,18 @@ namespace tenhou {
             }
         }
 
-        void SetDrawEndSlots(unsigned slots) { hand_.SetDrawEndSlots(slots); }
+        void SetDrawEndSlots(const unsigned slots) { hand_.SetDrawEndSlots(slots); }
         void PresentSettlement() { settlement_presented_ = true; }
 
         void Configure(const std::filesystem::path &directory, int width);
 
         void SetPreferences(const ClientPreferences &preferences, const std::filesystem::path &config,
-                            bool rebuild = true);
+                            bool rebuild = true) const;
 
-        void Prepare();
+        void Prepare() const;
 
-        void BeginOpening(OpeningPresentation &opening, const OnlineState &state, bool wall) {
+        void BeginOpening(OpeningPresentation &opening, const OnlineState &state, const bool wall) const
+        {
             Prepare();
             auto &geometry = renderer_->EnsureGeometry(state.red_tiles);
             opening.Begin(OnlineTableState(state), wall, &geometry, (state.type & 2) == 0);
@@ -67,13 +68,13 @@ namespace tenhou {
 
         int HitTile(RECT bounds, const OnlineState &state, int x, int y);
 
-        void SetOriginalDisplay(bool enabled) { original_display_ = enabled; }
+        void SetOriginalDisplay(const bool enabled) { original_display_ = enabled; }
 
         void SetAutoSort(bool enabled, const OnlineState &state);
 
         bool MoveHandTile(int tile, int target, const OnlineState &state);
 
-        void SetRelativeScores(bool relative) { relative_scores_ = relative; }
+        void SetRelativeScores(const bool relative) { relative_scores_ = relative; }
 
     private:
         ReplayState Project(const OnlineState &state) { return hand_.Project(state); }

@@ -8,7 +8,7 @@
 #include <gdiplus.h>
 
 namespace tenhou {
-    void TableArtwork::Load(const std::filesystem::path &directory, int width) {
+    void TableArtwork::Load(const std::filesystem::path &directory, const int width) {
         if (!IsSupportedTableWidth(width)) throw std::runtime_error("Unsupported table canvas");
         const AssetId even_id = width == 1024 ? AssetId::TablePackSd :
                                 width == 1440 ? AssetId::TablePack :
@@ -52,7 +52,7 @@ namespace tenhou {
         ++frame_;
     }
 
-    const ObjectImage &TableArtwork::Get(const TableTile &tile, bool red) {
+    const ObjectImage &TableArtwork::Get(const TableTile &tile, const bool red) {
         const auto key = ImageKey(tile, red);
         const unsigned variant = (key >> 16) & 0xff;
         const bool flower = variant >= 40;
@@ -105,7 +105,7 @@ namespace tenhou {
         return lru_.front().image;
     }
 
-    const ObjectImage &TableArtwork::GetFlight(const TileFlightImage &flight, bool red) {
+    const ObjectImage &TableArtwork::GetFlight(const TileFlightImage &flight, const bool red) {
         std::array<int, 8> offsets{};
         int left = 0, top = 0, right = 0, bottom = 0;
         for (unsigned i = 0; i < flight.count; ++i) {
@@ -123,7 +123,7 @@ namespace tenhou {
 
         const auto &source = Get(flight.sprite, red).image;
         const int width = source.width + right - left, height = source.height + bottom - top;
-        ObjectImage combined{left, top, {width, height, Bytes(std::size_t(width) * height * 4)}};
+        ObjectImage combined{left, top, {width, height, Bytes(static_cast<std::size_t>(width) * height * 4)}};
         Gdiplus::Bitmap surface(width, height, width * 4, PixelFormat32bppARGB, combined.image.bgra.data());
         Gdiplus::Bitmap sprite(source.width, source.height, source.width * 4, PixelFormat32bppARGB,
                                const_cast<BYTE *>(source.bgra.data()));

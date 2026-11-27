@@ -7,7 +7,6 @@
 #include "matchmaking_view.hpp"
 #include "preference_actions.hpp"
 #include "replay_effects.hpp"
-#include "text_catalog.hpp"
 #include "monotonic_clock.hpp"
 #include "win32_utf.hpp"
 #include <objidl.h>
@@ -18,7 +17,7 @@
 
 namespace tenhou {
     namespace {
-        enum LobbyTimerId : UINT_PTR {
+        enum LobbyTimerId : uint8_t {
             kTimerDeferredAudio = 2,
             kTimerActionClock = 3,
             kTimerAutoAction = 4,
@@ -32,7 +31,7 @@ namespace tenhou {
             kOpeningTimer = 12,
         };
 
-        enum LobbyAppMessage : UINT {
+        enum LobbyAppMessage : uint16_t {
             kMsgRefreshActions = WM_APP + 16,
             kMsgApplyAutoSort = WM_APP + 17,
             kMsgUpdateLobbyMusic = WM_APP + 18,
@@ -58,15 +57,15 @@ namespace tenhou {
 
     OnlineMotionCallbacks LobbyView::MakeMotion() {
         OnlineMotionCallbacks motion;
-        motion.accept = [this](const OnlineState &game, const ReplayEvent &event, bool animate, double now) {
+        motion.accept = [this](const OnlineState &game, const ReplayEvent &event, const bool animate, const double now) {
             table_.Accept(game, event, animate, now);
             if (table_.Animating()) motion_timer_.Start(window_, kTimerMotionTick, kTableTickMs);
             else motion_timer_.Stop();
         };
-        motion.begin_opening = [this](OpeningPresentation &opening, const OnlineState &game, bool wall) {
+        motion.begin_opening = [this](OpeningPresentation &opening, const OnlineState &game, const bool wall) {
             table_.BeginOpening(opening, game, wall);
         };
-        motion.set_auto_sort = [this](bool enabled, const OnlineState &game) {
+        motion.set_auto_sort = [this](const bool enabled, const OnlineState &game) {
             table_.SetAutoSort(enabled, game);
             if (sequencer_.animation_enabled() && table_.Animating()) motion_timer_.Start(window_, kTimerMotionTick);
             else {
@@ -74,8 +73,8 @@ namespace tenhou {
                 motion_timer_.Stop();
             }
         };
-        motion.set_draw_end_slots = [this](unsigned slots) { table_.SetDrawEndSlots(slots); };
-        motion.set_paused = [this](bool paused) {
+        motion.set_draw_end_slots = [this](const unsigned slots) { table_.SetDrawEndSlots(slots); };
+        motion.set_paused = [this](const bool paused) {
             table_.SetPaused(paused);
             if (settlement_view_) settlement_view_->SetPaused(paused);
             if (match_intro_) match_intro_->SetPaused(paused);
@@ -97,29 +96,29 @@ namespace tenhou {
         if (sequencer_.opening().Active()) opening_timer_.Start(window_, kOpeningTimer, kTableTickMs);
         else opening_timer_.Stop();
 
-        const bool queue_needed = sequencer_.QueueTimerNeeded();
-        if (queue_needed && !queue_timer_) queue_timer_ = SetTimer(window_, kTimerPresentationQueue, 15, nullptr) != 0;
+        if (const bool queue_needed = sequencer_.QueueTimerNeeded();
+            queue_needed && !queue_timer_) queue_timer_ = SetTimer(window_, kTimerPresentationQueue, 15, nullptr) != 0;
         else if (!queue_needed && queue_timer_) {
             KillTimer(window_, kTimerPresentationQueue);
             queue_timer_ = false;
         }
 
-        const bool clock_needed = sequencer_.ClockTimerNeeded();
-        if (clock_needed && !clock_timer_) clock_timer_ = SetTimer(window_, kTimerActionClock, 100, nullptr) != 0;
+        if (const bool clock_needed = sequencer_.ClockTimerNeeded();
+            clock_needed && !clock_timer_) clock_timer_ = SetTimer(window_, kTimerActionClock, 100, nullptr) != 0;
         else if (!clock_needed && clock_timer_) {
             KillTimer(window_, kTimerActionClock);
             clock_timer_ = false;
         }
 
-        const bool auto_needed = sequencer_.AutoTimerNeeded(client_->snapshot());
-        if (auto_needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, kTimerAutoAction, 100, nullptr) != 0;
+        if (const bool auto_needed = sequencer_.AutoTimerNeeded(client_->snapshot());
+            auto_needed && !automatic_timer_) automatic_timer_ = SetTimer(window_, kTimerAutoAction, 100, nullptr) != 0;
         else if (!auto_needed && automatic_timer_) {
             KillTimer(window_, kTimerAutoAction);
             automatic_timer_ = false;
         }
 
-        const bool caption_needed = sequencer_.captions().Active();
-        if (caption_needed && !caption_timer_) caption_timer_ = SetTimer(window_, kTimerActionCaption, 15, nullptr) != 0;
+        if (const bool caption_needed = sequencer_.captions().Active();
+            caption_needed && !caption_timer_) caption_timer_ = SetTimer(window_, kTimerActionCaption, 15, nullptr) != 0;
         else if (!caption_needed && caption_timer_) {
             KillTimer(window_, kTimerActionCaption);
             caption_timer_ = false;
@@ -220,7 +219,7 @@ namespace tenhou {
         if (fx.notified_snapshot && connection_changed_) connection_changed_(*fx.notified_snapshot);
     }
 
-    void LobbyView::ApplyPreferences(const ClientPreferences &preferences, PreferenceChange change) {
+    void LobbyView::ApplyPreferences(const ClientPreferences &preferences, const PreferenceChange change) {
         if (change == PreferenceChange::MusicPreviewBegin || change == PreferenceChange::MusicPreviewEnd) {
             music_preview_ = change == PreferenceChange::MusicPreviewBegin;
             if (music_preview_) lobby_music_.Stop();
@@ -254,8 +253,8 @@ namespace tenhou {
         }
     }
 
-    LobbyView::LobbyView(HWND parent, const std::filesystem::path &config, std::function<void(const std::string &)> log)
-        : parent_(parent), config_(config), log_(std::move(log)), audio_(log_), lobby_music_(log_) {
+    LobbyView::LobbyView(const HWND parent, std::filesystem::path config, std::function<void(const std::string &)> log)
+        : parent_(parent), config_(std::move(config)), log_(std::move(log)), audio_(log_), lobby_music_(log_) {
         WNDCLASSEXW wc{sizeof(wc)};
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.lpfnWndProc = Procedure;
@@ -283,8 +282,7 @@ namespace tenhou {
         exit_vote_ = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, vote_class.lpszClassName, L"投票退出对局",
                                      WS_POPUP | WS_CAPTION, 0, 0, vote_bounds.right - vote_bounds.left,
                                      vote_bounds.bottom - vote_bounds.top, parent_, nullptr, wc.hInstance, this);
-        const auto vote_control = [&](const wchar_t *type, const wchar_t *text, int id, int x, int y, int w, int h,
-                                      DWORD style) {
+        const auto vote_control = [&](const wchar_t *type, const wchar_t *text, const int id, const int x, const int y, const int w, const int h, const DWORD style) {
             const auto child = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, exit_vote_,
                                                reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), wc.hInstance,
                                                nullptr);
@@ -306,7 +304,7 @@ namespace tenhou {
         exit_no_ = vote_control(L"BUTTON", L"继续对局", 5164, 225, 135, 130, 30, WS_TABSTOP | BS_DEFPUSHBUTTON);
         sequencer_.set_animation_enabled(PreferenceInt(config_, "REBUILD", "NetworkAnimation", 1) != 0);
         settlement_view_ = std::make_unique<SettlementView>(window_);
-        settlement_view_->SetBackgroundPainter([this](HDC dc, RECT r) {
+        settlement_view_->SetBackgroundPainter([this](const HDC dc, const RECT r) {
             if (client_ && Snapshot().game.initialized)
                 table_.Paint(dc, r, Snapshot().game, false);
         });
@@ -324,7 +322,7 @@ namespace tenhou {
             }
         });
         action_view_ = std::make_unique<ActionSelectionView>(
-            window_, [this](std::uint64_t revision, std::size_t index) {
+            window_, [this](const std::uint64_t revision, const std::size_t index) {
                 if (!match_intro_->Active() && !sequencer_.opening().Active() && !Moving() &&
                     !sequencer_.show_results() && sequencer_.selection().Active() &&
                     revision == sequencer_.selection().revision && revision == Snapshot().actions.revision)
@@ -333,8 +331,8 @@ namespace tenhou {
         match_intro_ = std::make_unique<MatchIntroView>(window_, [this] {
             ApplyEffects(sequencer_.OnMatchIntroFinished(client_->snapshot(), MakeContext(), MakeMotion()));
         });
-        match_intro_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
-        settlement_view_->SetSoundPlayer([this](unsigned id) { PlaySoundId(id); });
+        match_intro_->SetSoundPlayer([this](const unsigned id) { PlaySoundId(id); });
+        settlement_view_->SetSoundPlayer([this](const unsigned id) { PlaySoundId(id); });
         settlement_view_->SetSoundStopper([this] {
             try { audio_.Stop(); } catch (const std::exception &e) {
                 log_(std::string("ONLINE AUDIO RESET ERROR ") + e.what());
@@ -344,10 +342,8 @@ namespace tenhou {
         settlement_view_->SetAnimationEnabled(sequencer_.animation_enabled());
         matching_ = std::make_unique<MatchmakingView>(window_, log_);
         client_ = std::make_unique<NetworkClient>([this](const LobbySnapshot &snapshot) { Update(snapshot); }, log_,
-                                                  [this](const NetworkMessage &message, const LobbySnapshot &snapshot) {
-                                                      OnGameEvent(message, snapshot);
-                                                  });
-        matching_->Bind([this](const std::string &command, unsigned value,
+                                                  [this](const NetworkMessage &message, const LobbySnapshot &snapshot) { OnGameEvent(message, snapshot); });
+        matching_->Bind([this](const std::string &command, const unsigned value,
                                const std::map<std::string, std::string> &settings) {
             if (command == "match" || command == "cancel")
                 client_->SubmitLobby(client_->snapshot().lobby_revision, command, value);
@@ -374,7 +370,7 @@ namespace tenhou {
 
     void LobbyView::EnableServiceLobby(std::function<void()> settings, std::function<void()> replay) {
         service_lobby_ = std::make_unique<OfflineLobbyView>(window_, config_,
-            [this, settings = std::move(settings), replay = std::move(replay)](OfflineLobbyView::Action action) {
+            [this, settings = std::move(settings), replay = std::move(replay)](const OfflineLobbyView::Action action) {
                 switch (action) {
                     case OfflineLobbyView::Action::Settings: settings(); break;
                     case OfflineLobbyView::Action::OpenReplay: replay(); break;
@@ -407,7 +403,7 @@ namespace tenhou {
                LobbyPhase::MatchComplete || phase == LobbyPhase::AwaitReturn;
     }
 
-    void LobbyView::Show(bool visible) {
+    void LobbyView::Show(const bool visible) {
         if (!visible) {
             CancelButton();
             table_.Renderer().HideWindowSurface();
@@ -427,27 +423,27 @@ namespace tenhou {
         if (visible) PostMessageW(window_, kMsgUpdateLobbyMusic, 0, 0);
     }
 
-    void LobbyView::SetWelcomeMusic(bool visible, bool official) {
+    void LobbyView::SetWelcomeMusic(const bool visible, const bool official) {
         welcome_music_ = visible;
         official_welcome_ = official;
         UpdateLobbyMusic();
     }
 
-    void LobbyView::Disconnect() {
+    void LobbyView::Disconnect() const {
         if (client_->active() || Snapshot().reconnect_available) client_->Disconnect();
     }
 
-    void LobbyView::Save() {
+    void LobbyView::Save() const {
         WritePreferenceInt(config_, "REBUILD", "NetworkAnimation", sequencer_.animation_enabled() ? 1 : 0);
     }
 
-    void LobbyView::Resize(int width, int height) {
+    void LobbyView::Resize(const int width, const int height) {
         MoveWindow(window_, 0, 0, width, height, TRUE);
         if (service_lobby_) service_lobby_->Resize(width, height);
         Arrange();
     }
 
-    void LobbyView::ConfigureArtwork(const std::filesystem::path &directory, int width) {
+    void LobbyView::ConfigureArtwork(const std::filesystem::path &directory, const int width) {
         CancelButton();
         CancelHandDrag();
         sequencer_.captions().Clear();
@@ -516,7 +512,7 @@ namespace tenhou {
         return buttons;
     }
 
-    int LobbyView::HitButton(const std::vector<TableActionButton> &buttons, int x, int y) {
+    int LobbyView::HitButton(const std::vector<TableActionButton> &buttons, const int x, const int y) {
         for (auto it = buttons.rbegin(); it != buttons.rend(); ++it) {
             const auto &r = it->viewport_rect;
             if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return it->id;
@@ -552,7 +548,7 @@ namespace tenhou {
         return r;
     }
 
-    void LobbyView::SetOriginalDisplay(bool enabled) {
+    void LobbyView::SetOriginalDisplay(const bool enabled) {
         CancelButton();
         CancelHandDrag();
         sequencer_.captions().Clear();
@@ -567,12 +563,12 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void LobbyView::Submit(std::size_t index) {
+    void LobbyView::Submit(const std::size_t index) {
         if (!client_) return;
         ApplyEffects(sequencer_.Submit(index, client_->snapshot(), MakeContext(), table_.Animating()));
     }
 
-    void LobbyView::PreferenceInput(bool double_click) {
+    void LobbyView::PreferenceInput(const bool double_click) {
         if (!LocalTableInput() || Moving() || sequencer_.selection().Active() ||
             sequencer_.pressed_tile() >= 0 || sequencer_.pressed_auto() >= 0 || sequencer_.hand_dragged())
             return;
@@ -608,7 +604,7 @@ namespace tenhou {
         if (fx.release_capture && GetCapture() == window_) ReleaseCapture();
     }
 
-    bool LobbyView::HandleKey(UINT key) {
+    bool LobbyView::HandleKey(const UINT key) {
         if (!IsWindowVisible(window_) || !client_) return false;
         if (service_lobby_ && service_lobby_->HandleKey(key)) return true;
         if (settlement_view_->HandleKey(key)) return true;
@@ -667,7 +663,7 @@ namespace tenhou {
             MonotonicMs());
     }
 
-    int LobbyView::HitAutomaticButton(int x, int y) const {
+    int LobbyView::HitAutomaticButton(const int x, const int y) const {
         if (!Compact() || !AutomaticInput()) return -1;
         const auto target = FitNativeCanvas(BoardBounds(), canvas_width_);
         if (x < target.left || x >= target.right || y < target.top || y >= target.bottom) return -1;
@@ -702,7 +698,7 @@ namespace tenhou {
         CheckButtonCapture();
     }
 
-    void LobbyView::Command(int id) {
+    void LobbyView::Command(const int id) {
         if (!client_) return;
         if (id == 0xbc6) {
             client_->ExitGame();
@@ -733,7 +729,7 @@ namespace tenhou {
         ApplyEffects(sequencer_.SyncSnapshot(incoming, client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
-    void LobbyView::StopSound(bool preserve_resume) {
+    void LobbyView::StopSound(const bool preserve_resume) {
         motion_timer_.Stop();
         if (match_intro_ && !preserve_resume) {
             if (match_intro_->Resuming()) log_("ONLINE RESUME PREPARATION END");
@@ -754,7 +750,7 @@ namespace tenhou {
         }
     }
 
-    void LobbyView::SetQuickAudio(bool mute_effects, bool mute_music) {
+    void LobbyView::SetQuickAudio(const bool mute_effects, const bool mute_music) {
         if (sequencer_.effects_muted() != mute_effects) {
             sequencer_.set_effects_muted(mute_effects);
             if (mute_effects) StopAudio();
@@ -767,7 +763,7 @@ namespace tenhou {
         }
     }
 
-    void LobbyView::UpdateLobbyMusic(bool refresh) {
+    void LobbyView::UpdateLobbyMusic(const bool refresh) {
         std::string key;
         bool third_party_lobby = false;
         if (!music_muted_ && !music_preview_ && !resource_directory_.empty()) {
@@ -811,12 +807,12 @@ namespace tenhou {
         } catch (const std::exception &e) { log_(std::string("LOBBY BGM ERROR ") + e.what()); }
     }
 
-    void LobbyView::SetOfflineLobbyMusic(std::optional<bool> contest) {
+    void LobbyView::SetOfflineLobbyMusic(const std::optional<bool> contest) {
         offline_lobby_music_ = contest;
         UpdateLobbyMusic();
     }
 
-    void LobbyView::ScheduleSound(unsigned id, unsigned delay) {
+    void LobbyView::ScheduleSound(const unsigned id, const unsigned delay) {
         if (!sequencer_.EffectsEnabled() || !audio_error_.empty() || !IsWindowVisible(window_)) return;
         try {
             if (!sound_loaded_) {
@@ -833,7 +829,7 @@ namespace tenhou {
         }
     }
 
-    void LobbyView::PlaySoundId(unsigned id, unsigned delay) {
+    void LobbyView::PlaySoundId(const unsigned id, const unsigned delay) {
         OnlineSequencerEffects fx;
         sequencer_.QueueOrEmitSound(id, fx, IsWindowVisible(window_) != FALSE, audio_error_.empty());
         if (fx.audio_queue_overflow) {
@@ -842,7 +838,7 @@ namespace tenhou {
             StopAudio();
             return;
         }
-        for (unsigned sound_id: fx.play_sounds) ScheduleSound(sound_id, delay);
+        for (const unsigned sound_id: fx.play_sounds) ScheduleSound(sound_id, delay);
     }
 
     void LobbyView::OnGameEvent(const NetworkMessage &message, const LobbySnapshot &snapshot) {
@@ -857,14 +853,14 @@ namespace tenhou {
         ApplyEffects(sequencer_.PresentationTick(client_->snapshot(), MakeContext(), MakeMotion()));
     }
 
-    void LobbyView::OpeningTick(double now) {
+    void LobbyView::OpeningTick(const double now) {
         if (!client_) return;
         auto ctx = MakeContext();
         ctx.anim_ms = now;
         ApplyEffects(sequencer_.OpeningTick(client_->snapshot(), ctx));
     }
 
-    void LobbyView::Paint(HDC dc, bool table_only, HWND surface_parent) {
+    void LobbyView::Paint(const HDC dc, const bool table_only, const HWND surface_parent) {
         RECT r{};
         GetClientRect(window_, &r);
         const bool game = client_ && Snapshot().game.initialized && !sequencer_.show_results();
@@ -927,7 +923,7 @@ namespace tenhou {
         }
     }
 
-    void LobbyView::UpdateExitVote() {
+    void LobbyView::UpdateExitVote() const {
         if (!client_ || !exit_vote_) return;
         const auto &s = client_->snapshot();
         if (!s.exit_voting || s.recovering || !IsWindowVisible(window_)) {
@@ -935,9 +931,9 @@ namespace tenhou {
             KillTimer(window_, kTimerExitVoteCountdown);
             return;
         }
-        auto now = MonotonicMs();
-        auto seconds = exit_vote_deadline_ > now ? (exit_vote_deadline_ - now + 999) / 1000 : 0;
-        std::wstring text = L"是否终止本场对局？对局和出牌计时已暂停。\r\n剩余 " + std::to_wstring(seconds) + L" 秒（30 秒）\r\n同意 " +
+        const auto now = MonotonicMs();
+        const auto seconds = exit_vote_deadline_ > now ? (exit_vote_deadline_ - now + 999) / 1000 : 0;
+        const std::wstring text = L"是否终止本场对局？\r\n剩余 " + std::to_wstring(seconds) + L" 秒（30 秒）\r\n同意 " +
                             std::to_wstring(s.exit_yes) + L" / 反对 " + std::to_wstring(s.exit_no) + L" / 真人 " +
                             std::to_wstring(s.exit_total) +
                             L"；需超过半数同意。\r\n" + (s.exit_choice < 0
@@ -960,7 +956,7 @@ namespace tenhou {
         SetTimer(window_, kTimerExitVoteCountdown, 100, nullptr);
     }
 
-    LRESULT CALLBACK LobbyView::ExitVoteProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp) {
+    LRESULT CALLBACK LobbyView::ExitVoteProcedure(const HWND window, const UINT message, const WPARAM wp, const LPARAM lp) {
         auto *self = reinterpret_cast<LobbyView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<LobbyView *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
@@ -974,7 +970,7 @@ namespace tenhou {
         return DefWindowProcW(window, message, wp, lp);
     }
 
-    void LobbyView::Capture(HDC dc) {
+    void LobbyView::Capture(const HDC dc) {
         Paint(dc);
         matching_->Capture(dc);
         if (service_lobby_) service_lobby_->Capture(dc);
@@ -1086,16 +1082,14 @@ namespace tenhou {
                 if (message == WM_RBUTTONUP || message == WM_LBUTTONDBLCLK) {
                     const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
                     const auto board = self->BoardBounds();
-                    const POINT point{x, y};
-                    if (PtInRect(&board, point) && self->HitAutomaticButton(x, y) < 0)
+                    if (const POINT point{x, y}; PtInRect(&board, point) && self->HitAutomaticButton(x, y) < 0)
                         self->PreferenceInput(message == WM_LBUTTONDBLCLK);
                     return 0;
                 }
                 if (message == WM_MOUSEMOVE) {
                     const int x = static_cast<short>(LOWORD(lparam)), y = static_cast<short>(HIWORD(lparam));
                     const auto buttons = self->Buttons();
-                    const auto [last_x, last_y] = self->sequencer_.hover_point();
-                    if (HitButton(buttons, last_x, last_y) != HitButton(buttons, x, y))
+                    if (const auto [last_x, last_y] = self->sequencer_.hover_point(); HitButton(buttons, last_x, last_y) != HitButton(buttons, x, y))
                         InvalidateRect(window, nullptr, FALSE);
                     self->sequencer_.set_hover_point(x, y);
                     TRACKMOUSEEVENT track{sizeof(TRACKMOUSEEVENT), TME_LEAVE, window, 0};
@@ -1105,9 +1099,7 @@ namespace tenhou {
                             self->LocalTableInput() &&
                             (!self->table_.Animating() || self->table_.ManualAnimation()) &&
                             !self->sequencer_.selection().Active()) {
-                            const int target = self->table_.HitTile(self->BoardBounds(), self->Snapshot().game, x, y);
-                            if (self->table_.MoveHandTile(self->sequencer_.pressed_tile(), target,
-                                                          self->Snapshot().game)) {
+                            if (const int target = self->table_.HitTile(self->BoardBounds(), self->Snapshot().game, x, y); self->table_.MoveHandTile(self->sequencer_.pressed_tile(), target, self->Snapshot().game)) {
                                 self->sequencer_.set_automatic(0, false);
                                 self->sequencer_.hand_dragged() = true;
                                 if (self->sequencer_.animation_enabled() && self->table_.Animating())
@@ -1119,9 +1111,7 @@ namespace tenhou {
                                 InvalidateRect(window, nullptr, FALSE);
                             }
                         }
-                        const auto interaction = self->Interaction(self->Snapshot());
-                        if (interaction.hovered != self->painted_hover_ ||
-                            interaction.hovered_button != self->painted_auto_hover_)
+                        if (const auto interaction = self->Interaction(self->Snapshot()); interaction.hovered != self->painted_hover_ || interaction.hovered_button != self->painted_auto_hover_)
                             InvalidateRect(window, nullptr, FALSE);
                     }
                     return 0;
@@ -1268,7 +1258,7 @@ namespace tenhou {
                     }
                     const std::string kind = self->sequencer_.action_filter() == "riichi" ? "riichi" : "discard";
                     for (std::size_t i = 0; i < choices.size(); ++i)
-                        if (choices[i].kind == kind && choices[i].tiles == std::vector<int>{tile}) {
+                        if (choices[i].kind == kind && choices[i].tiles == std::vector{tile}) {
                             self->Submit(i);
                             break;
                         }
@@ -1321,7 +1311,7 @@ namespace tenhou {
                         if (presented) return 0;
                         InvalidateRect(window, nullptr, FALSE);
                     }
-                    self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc, table_only, window); });
+                    self->paint_buffer_.Paint(window, [&](const HDC dc) { self->Paint(dc, table_only, window); });
                     return 0;
                 }
             } catch (const std::exception &error) {

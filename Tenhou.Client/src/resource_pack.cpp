@@ -13,22 +13,22 @@ namespace tenhou {
     namespace {
         constexpr std::size_t kMaxBytes = 64 * 1024 * 1024;
 
-        std::uint32_t U32(const Bytes &data, std::size_t offset) {
+        std::uint32_t U32(const Bytes &data, const std::size_t offset) {
             if (offset > data.size() || data.size() - offset < 4)
                 throw std::runtime_error("Truncated 32-bit field");
-            return data[offset] | (std::uint32_t(data[offset + 1]) << 8) |
-                   (std::uint32_t(data[offset + 2]) << 16) | (std::uint32_t(data[offset + 3]) << 24);
+            return data[offset] | (static_cast<std::uint32_t>(data[offset + 1]) << 8) |
+                   (static_cast<std::uint32_t>(data[offset + 2]) << 16) | (static_cast<std::uint32_t>(data[offset + 3]) << 24);
         }
 
-        unsigned U16(const Bytes &data, std::size_t offset) {
+        unsigned U16(const Bytes &data, const std::size_t offset) {
             if (offset > data.size() || data.size() - offset < 2)
                 throw std::runtime_error("Truncated 16-bit field");
-            return data[offset] | (unsigned(data[offset + 1]) << 8);
+            return data[offset] | (static_cast<unsigned>(data[offset + 1]) << 8);
         }
 
         // Normal zlib for compressed images; gzip for the outer resource container.
         // Unlike a guessed buffer size, this loop also verifies CRC/Adler and EOF.
-        Bytes Inflate(const Bytes &input, int window_bits, std::size_t limit) {
+        Bytes Inflate(const Bytes &input, const int window_bits, const std::size_t limit) {
             z_stream stream{};
             if (inflateInit2(&stream, window_bits) != Z_OK)
                 throw std::runtime_error("Cannot initialize zlib");
@@ -81,13 +81,13 @@ namespace tenhou {
             throw std::runtime_error("Cannot write output: " + path.string());
     }
 
-    Bytes InflateZlib(const Bytes &input, std::size_t limit) {
+    Bytes InflateZlib(const Bytes &input, const std::size_t limit) {
         if (input.size() > kMaxBytes || limit > kMaxBytes)
             throw std::runtime_error("Compressed resource exceeds 64 MiB limit");
         return Inflate(input, MAX_WBITS, limit);
     }
 
-    static ResourcePack ParseResourcePack(const Bytes &decoded, ResourceFilter include) {
+    static ResourcePack ParseResourcePack(const Bytes &decoded, const ResourceFilter include) {
         if (decoded.size() < 4 || decoded.size() > kMaxBytes)
             throw std::runtime_error("Invalid resource container size");
         ResourcePack pack;
@@ -118,7 +118,7 @@ namespace tenhou {
         return pack;
     }
 
-    ResourcePack LoadResourcePack(const std::filesystem::path &path, ResourceFilter include) {
+    ResourcePack LoadResourcePack(const std::filesystem::path &path, const ResourceFilter include) {
         const auto raw = ReadFile(path);
         // The cached .dat files retain their own gzip layer after download.
         return ParseResourcePack(Inflate(raw, MAX_WBITS + 16, kMaxBytes), include);
@@ -130,7 +130,7 @@ namespace tenhou {
         image.height = static_cast<int>(resource.metadata >> 16);
         if (image.width <= 0 || image.height <= 0 || image.width > 8192 || image.height > 8192)
             throw std::runtime_error("Invalid image dimensions");
-        const auto size = std::size_t(image.width) * image.height * 4;
+        const auto size = static_cast<std::size_t>(image.width) * image.height * 4;
         if (size > kMaxBytes) throw std::runtime_error("Image exceeds 64 MiB limit");
         // FUN_004691a0: raw pixels if size=w*h*4; FUN_00469310: zlib otherwise.
         image.bgra = resource.payload.size() == size ? resource.payload : Inflate(resource.payload, MAX_WBITS, size);
@@ -189,7 +189,7 @@ namespace tenhou {
             0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu, 0x682e6ff3u,
             0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u, 0x90befffaU, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
         };
-        const auto rotr = [](std::uint32_t x, unsigned n) -> std::uint32_t {
+        const auto rotr = [](const std::uint32_t x, const unsigned n) -> std::uint32_t {
             return (x >> n) | (x << (32u - n));
         };
         std::array<std::uint32_t, 8> state{
@@ -199,8 +199,8 @@ namespace tenhou {
         const auto compress = [&](const std::uint8_t *block) {
             std::uint32_t w[64]{};
             for (int i = 0; i < 16; ++i) {
-                w[i] = (std::uint32_t(block[i * 4]) << 24) | (std::uint32_t(block[i * 4 + 1]) << 16) |
-                       (std::uint32_t(block[i * 4 + 2]) << 8) | std::uint32_t(block[i * 4 + 3]);
+                w[i] = (static_cast<std::uint32_t>(block[i * 4]) << 24) | (static_cast<std::uint32_t>(block[i * 4 + 1]) << 16) |
+                       (static_cast<std::uint32_t>(block[i * 4 + 2]) << 8) | static_cast<std::uint32_t>(block[i * 4 + 3]);
             }
             for (int i = 16; i < 64; ++i) {
                 const std::uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);

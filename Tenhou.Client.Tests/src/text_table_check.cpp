@@ -8,14 +8,14 @@
 
 namespace tenhou {
     namespace {
-        void Require(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
+        void Require(const bool value, const char *message) { if (!value) throw std::runtime_error(message); }
         struct Surface {
             HDC dc = CreateCompatibleDC(nullptr);
             HBITMAP bitmap = nullptr;
             HGDIOBJ old = nullptr;
             std::uint32_t *pixels = nullptr;
             int width, height;
-            Surface(int w, int h) : width(w), height(h) {
+            Surface(const int w, const int h) : width(w), height(h) {
                 BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
                 info.bmiHeader.biWidth = w; info.bmiHeader.biHeight = -h;
                 info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
@@ -26,10 +26,10 @@ namespace tenhou {
                 Clear();
             }
             ~Surface() { SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); }
-            void Clear() { GdiFlush(); std::fill_n(pixels, std::size_t(width) * height, 0x19332d); }
+            void Clear() { GdiFlush(); std::fill_n(pixels, static_cast<std::size_t>(width) * height, 0x19332d); }
             std::vector<std::uint32_t> Pixels() const {
                 GdiFlush();
-                std::vector<std::uint32_t> result(pixels, pixels + std::size_t(width) * height);
+                std::vector<std::uint32_t> result(pixels, pixels + static_cast<std::size_t>(width) * height);
                 for (auto &p : result) p &= 0xffffff;
                 return result;
             }
@@ -53,7 +53,7 @@ namespace tenhou {
                 throw std::runtime_error(label + " differs at " + std::to_string(at % a.width) + "," + std::to_string(at / a.width));
             }
         }
-        OnlineState State(int rule) {
+        OnlineState State(const int rule) {
             OnlineState state; state.started = state.initialized = true; state.turn = 1;
             state.variant = rule != 0;
             state.variant_rule = rule == 1 ? "sichuan-bloodbattle" : rule == 2 ? "guobiao" : "";
@@ -127,7 +127,7 @@ namespace tenhou {
                 std::size_t different = 0;
                 for (std::size_t i = 0; i < pixels.size(); ++i) {
                     const auto a = pixels[i], b = expected[i];
-                    const auto delta = [&](int shift) { return std::abs(int(a >> shift & 255) - int(b >> shift & 255)); };
+                    const auto delta = [&](const int shift) { return std::abs(static_cast<int>(a >> shift & 255) - static_cast<int>(b >> shift & 255)); };
                     if (std::max({delta(0), delta(8), delta(16)}) > 12) ++different;
                 }
                 if (different >= pixels.size() / 100)
@@ -311,7 +311,7 @@ namespace tenhou {
 
     // Friend access is limited to driving the production painters without input automation.
     struct TextTableCheck {
-        static void Buttons(HWND parent, const std::filesystem::path &resources, Surface &surface) {
+        static void Buttons(const HWND parent, const std::filesystem::path &resources, Surface &surface) {
             LobbyView view(parent, resources / "p3-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440);
             int row = 0;
@@ -336,7 +336,7 @@ namespace tenhou {
                 ++row;
             }
         }
-        static void Intro(HWND parent, const std::filesystem::path &resources, Surface &surface, bool resume) {
+        static void Intro(const HWND parent, const std::filesystem::path &resources, Surface &surface, const bool resume) {
             MatchIntroView intro(parent, [] {}); intro.Configure(resources, 1440);
             intro.Move({0, 0, surface.width, surface.height});
             const auto state = OnlineTableState(State(2));
@@ -345,7 +345,7 @@ namespace tenhou {
             intro.Capture(surface.dc);
             Require(intro.artwork_.Text().CacheStats().raster_builds >= 9, "P3 intro did not draw title/round/winds/Info");
         }
-        static void Replay(HWND parent, const std::filesystem::path &resources, Surface &surface) {
+        static void Replay(const HWND parent, const std::filesystem::path &resources, Surface &surface) {
             TableView view(parent, [](const std::string &) {}, resources / "p3-replay.ini");
             view.ConfigureArtwork(resources, 1440);
             // Keep the production replay PaintTable path and inject only a public state fixture.
@@ -356,7 +356,7 @@ namespace tenhou {
             view.PaintTable(surface.dc, {0, 0, surface.width, surface.height});
             Require(view.artwork_error_.empty(), "P3 replay table renderer failed");
         }
-        static SettlementState SettlementFixture(int rule) {
+        static SettlementState SettlementFixture(const int rule) {
             SettlementState state;
             SettlementReceipt receipt;
             receipt.who = 0; receipt.from = 1;
@@ -458,8 +458,8 @@ namespace tenhou {
                 }
             }
         }
-        static void SettlementFrame(HWND parent, const std::filesystem::path &resources, Surface &surface,
-                                    int rule, int receipt, bool next_page) {
+        static void SettlementFrame(const HWND parent, const std::filesystem::path &resources, Surface &surface,
+                                    const int rule, const int receipt, const bool next_page) {
             SettlementView view(parent); view.Configure(resources, 1440);
             view.SetAnimationEnabled(false);
             view.Move({0,0,surface.width,surface.height});
@@ -489,7 +489,7 @@ namespace tenhou {
                 draw.base = {50000,50000,50000,50000}; draw.delta = {3000,-1000,-1000,-1000}; state.receipts = {draw};
                 SettlementView view(parent); view.Configure(resources,1440); view.SetAnimationEnabled(false);
                 view.Move({0,0,1197,897}); view.Set(state, {"Player 1","Player 2","Player 3","Player 4"}, false);
-                view.SetBackgroundPainter([&](HDC dc, RECT bounds) { table.Paint(dc,bounds,game); });
+                view.SetBackgroundPainter([&](const HDC dc, const RECT bounds) { table.Paint(dc,bounds,game); });
                 view.Show(true);
                 const auto window = GetDlgItem(parent,5400); RECT button{};
                 GetWindowRect(GetDlgItem(window,5404), &button);
@@ -500,7 +500,7 @@ namespace tenhou {
             const auto isolated = std::filesystem::temp_directory_path() / ("tenhou-text-p3-" + std::to_string(GetCurrentProcessId()));
             struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{isolated};
             std::filesystem::copy(resources, isolated, std::filesystem::copy_options::recursive);
-            const auto text_path = [&](unsigned id) { return isolated / "images" / "sprites" / (std::to_string(id) + ".png"); };
+            const auto text_path = [&](const unsigned id) { return isolated / "images" / "sprites" / (std::to_string(id) + ".png"); };
             for (const auto &text : kTextDefinitions) std::filesystem::remove(text_path(text.origin_id));
             // Exercise absent, valid and corrupt legacy overrides with fresh production renderers.
             std::filesystem::create_directories(text_path(440).parent_path());
@@ -555,13 +555,13 @@ namespace tenhou {
             std::cout << "P3 production text: three rules, cached/full/expose, SD text layout, buttons, intro, replay, PNG isolation\n";
         }
     };
-    void CheckCertificationPaint(HWND popup, const std::filesystem::path &resources) {
+    void CheckCertificationPaint(const HWND popup, const std::filesystem::path &resources) {
         RECT r{};
         GetClientRect(popup, &r);
         Surface image(r.right, r.bottom);
         SendMessageW(popup, WM_PRINT, reinterpret_cast<WPARAM>(image.dc), PRF_CLIENT | PRF_CHILDREN);
         const auto pixels = image.Pixels();
-        const auto bright = [](unsigned pixel) { return (pixel & 0xf0f0f0) == 0xf0f0f0; };
+        const auto bright = [](const unsigned pixel) { return (pixel & 0xf0f0f0) == 0xf0f0f0; };
         for (const auto row : {105, 252}) {
             const auto start = pixels.begin() + row * r.right;
             Require(std::count_if(start, start + 70 * r.right, bright) > 30, "Missing certification text");
@@ -569,5 +569,5 @@ namespace tenhou {
         image.Save(resources.parent_path() / "certification.png");
     }
 
-    void RunTextTableChecks(HWND parent, const std::filesystem::path &resources) { TextTableCheck::Run(parent, resources); }
+    void RunTextTableChecks(const HWND parent, const std::filesystem::path &resources) { TextTableCheck::Run(parent, resources); }
 }

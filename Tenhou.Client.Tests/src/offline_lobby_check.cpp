@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 namespace {
-    void Check(bool condition, const char *message) {
+    void Check(const bool condition, const char *message) {
         if (!condition) throw std::runtime_error(message);
     }
 

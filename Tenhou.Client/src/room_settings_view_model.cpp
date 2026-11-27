@@ -32,7 +32,7 @@ namespace tenhou {
         return true;
     }
 
-    bool RoomSettingsViewModel::SelectRule(std::size_t rule_index) {
+    bool RoomSettingsViewModel::SelectRule(const std::size_t rule_index) {
         if (rule_index >= available_.size()) return false;
         selected_ = rule_index;
         values_ = {{"rule", available_[selected_]->id}};
@@ -63,13 +63,13 @@ namespace tenhou {
         return true;
     }
 
-    std::string RoomSettingsViewModel::CurrentFieldValue(std::size_t field_index) const {
+    std::string RoomSettingsViewModel::CurrentFieldValue(const std::size_t field_index) const {
         const auto &field = available_.at(selected_)->fields.at(field_index);
         const auto found = values_.find(field.key);
         return found == values_.end() ? field.initial : found->second;
     }
 
-    bool RoomSettingsViewModel::SetChoiceField(std::size_t field_index, std::size_t choice_index) {
+    bool RoomSettingsViewModel::SetChoiceField(const std::size_t field_index, const std::size_t choice_index) {
         const auto &field = available_.at(selected_)->fields.at(field_index);
         if (choice_index >= field.choices.size()) {
             error_ = field.label + "：请选择有效的选项";
@@ -80,7 +80,7 @@ namespace tenhou {
         return true;
     }
 
-    bool RoomSettingsViewModel::SetTextField(std::size_t field_index, const std::string &raw_value) {
+    bool RoomSettingsViewModel::SetTextField(const std::size_t field_index, const std::string &raw_value) {
         const auto &field = available_.at(selected_)->fields.at(field_index);
         if (!field.minimum.empty() || !field.maximum.empty()) {
             int number = 0;

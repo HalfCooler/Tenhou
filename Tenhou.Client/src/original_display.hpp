@@ -80,11 +80,19 @@ namespace tenhou {
         bool relative_ = false, inside_ = false;
     };
 
+    struct DisplaySpriteSize {
+        int width = 0, height = 0;
+    };
+
+    DisplaySpriteSize OriginalDisplaySpriteSize(unsigned id, int design_width = 1440);
+
     class DisplayArtwork {
     public:
-        void SetPanelEnabled(bool enabled) { panel_enabled_ = enabled; }
+        void SetPanelEnabled(const bool enabled) { panel_enabled_ = enabled; }
 
         void Configure(const std::filesystem::path &directory, int width);
+
+        DisplaySpriteSize LogicalSize(unsigned id) const;
 
         const Image &Get(unsigned id);
 
@@ -96,7 +104,7 @@ namespace tenhou {
         void PaintHudImages(Gdiplus::Graphics &graphics, const ReplayState &state, const HudSprite &draw_sprite = {},
                             float scale_x = 1.0f, float scale_y = 1.0f);
 
-        void PaintChromeBackground(Gdiplus::Graphics &graphics, int hovered = -1);
+        void PaintChromeBackground(Gdiplus::Graphics &graphics, int hovered = -1) const;
 
 
         TextRenderer &Text();
@@ -108,7 +116,7 @@ namespace tenhou {
         void AppendStatus(FinalScene &scene, const ReplayState &state);
 
         void PaintNukiCounts(Gdiplus::Graphics &graphics, const ReplayState &state, TableArtwork &tiles,
-                             float scale_x = 1.0f, float scale_y = 1.0f);
+                             float scale_x = 1.0f, float scale_y = 1.0f) const;
 
         void Sprite(Gdiplus::Graphics &graphics, unsigned id, int x, int y, bool cx = false, bool cy = false);
 
@@ -124,6 +132,7 @@ namespace tenhou {
         std::map<CaptionKey, std::shared_ptr<Gdiplus::GraphicsPath> > captions_;
         std::filesystem::path directory_;
         int width_ = 1440;
+        int canvas_width_ = 1440;
         std::shared_ptr<const ResourcePack> pack_;
         VariantArtwork variants_;
         std::map<unsigned, Image> images_;

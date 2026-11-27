@@ -9,7 +9,7 @@ namespace tenhou {
                    const ReplayState &state, bool red, unsigned placed = 136, bool include_near = true);
 
     inline void InsertNearWall(std::vector<PositionedTile> &scene, TableArtwork &artwork,
-                               const ReplayState &state, bool red, unsigned placed = 136, bool include_far = false) {
+                               const ReplayState &state, const bool red, const unsigned placed = 136, const bool include_far = false) {
         InsertNearWall(scene, artwork.geometry(), state, red, placed, include_far);
     }
 } // namespace tenhou

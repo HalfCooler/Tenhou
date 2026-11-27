@@ -16,14 +16,14 @@ namespace tenhou {
     // The renderer and any image resources must outlive Paint; snapshots own no callbacks.
     class FinalScene {
     public:
-        explicit FinalScene(TextRenderer &renderer, bool sd = false, unsigned dpi = 96)
+        explicit FinalScene(TextRenderer &renderer, const bool sd = false, const unsigned dpi = 96)
             : renderer_(renderer), sd_(sd), dpi_(dpi) {}
-        void Text(SceneTextRun run, std::optional<Gdiplus::RectF> clip = {});
+        void Text(SceneTextRun run, const std::optional<Gdiplus::RectF>& clip = {});
         // key must identify ALL image/animation changes, including opacity and transform.
         // bounds conservatively encloses everything the callback paints, in HD pixels.
         void Image(std::string key, Gdiplus::RectF bounds, std::function<void(Gdiplus::Graphics &)> draw,
-                   std::optional<Gdiplus::RectF> clip = {});
-        std::vector<FinalSceneStamp> Snapshot(int width, int height, int dw, int dh) const;
+                   const std::optional<Gdiplus::RectF>& clip = {});
+        [[nodiscard]] std::vector<FinalSceneStamp> Snapshot(int width, int height, int dw, int dh) const;
         void VisitText(int width, int height, int dw, int dh,
                        const std::function<void(TextRenderer &, const TextRenderContext &, const SceneTextRun &)> &draw) const;
         void Paint(HDC target, int width, int height, int dw, int dh, RECT dirty) const;
@@ -36,8 +36,8 @@ namespace tenhou {
             std::optional<Gdiplus::RectF> clip;
         };
         TextRenderContext Context(int width, int height, int dw, int dh) const;
-        TextRenderContext Clipped(TextRenderContext context, const Command &command) const;
-        Gdiplus::RectF Bounds(const TextRenderContext &context, const Command &command) const;
+        static TextRenderContext Clipped(TextRenderContext context, const Command &command);
+        static Gdiplus::RectF Bounds(const TextRenderContext &context, const Command &command);
         TextRenderer &renderer_;
         bool sd_;
         unsigned dpi_;

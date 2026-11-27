@@ -36,7 +36,7 @@ namespace tenhou {
                 view.Update(s);
                 return replies;
             };
-            const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            const auto require = [](const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             require(receive("<HELO uname=\"Test&Partner%20Four\" "
                             "PF4=\"11,505,1674.45,-385.5,40,35,30,25,9,1000,212,147,348,206\" "
                             "PF3=\"12,125,1513.80,1234.9,85,75,40,0,15,1550,450,250,700,300\" "
@@ -143,7 +143,7 @@ namespace tenhou {
             view.Update(session.snapshot);
             const auto discards = view.Interaction(session.snapshot);
             require(discards.restrict_discards && std::find(discards.playable.begin(), discards.playable.end(), 20) !=
-                discards.playable.end() && std::none_of(discards.playable.begin(), discards.playable.end(), [](int tile) {
+                discards.playable.end() && std::none_of(discards.playable.begin(), discards.playable.end(), [](const int tile) {
                     return tile == 4 || tile / 4 == 4;
                 }), "Called tile and suji-kuikae tiles must be unavailable after chi");
             auto &recovering = const_cast<LobbySnapshot &>(view.client_->snapshot());
@@ -157,7 +157,7 @@ namespace tenhou {
             view.Disconnect();
         }
 
-        static void OfficialPracticeExitStopsOpening(HWND parent, const std::filesystem::path &resources) {
+        static void OfficialPracticeExitStopsOpening(const HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
             view.ConfigureArtwork(resources, 1440);
@@ -174,7 +174,7 @@ namespace tenhou {
                 view.OnGameEvent(msg, session.snapshot);
                 view.Update(session.snapshot);
             };
-            const auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            const auto require = [](const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             receive("<HELO uname=\"桐山\" PF4=\"9,0,1500,0,0,0,0,0,0,0,0,0,0,0\" "
                     "PF3=\"11,0,1500,0,0,0,0,0,0,0,0,0,0,0\" opt=\"3\" />");
             receive("<LN n=\"A1A1A1A\" j=\"112A\" g=\"112A\" />");
@@ -233,7 +233,7 @@ namespace tenhou {
             GetClientRect(popup, &rect);
             require(IsWindowVisible(popup) && !IsWindowEnabled(panel) && rect.right == 812 && rect.bottom == 658,
                     "Award did not open above the lobby at original HD size");
-            const auto wait_for = [&](HWND child, bool visible) {
+            const auto wait_for = [&](const HWND child, const bool visible) {
                 const auto until = GetTickCount64() + 4000;
                 while ((IsWindowVisible(child) != FALSE) != visible && GetTickCount64() < until) {
                     MSG msg{};
@@ -252,7 +252,7 @@ namespace tenhou {
             view.Disconnect();
         }
 
-        static void RecoveredContestReturn(HWND parent, const std::filesystem::path &resources) {
+        static void RecoveredContestReturn(const HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.EnableServiceLobby([] {}, [] {});
             view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
@@ -288,7 +288,7 @@ namespace tenhou {
             view.Disconnect();
         }
 
-        static void ProtocolOpening(HWND parent, const std::filesystem::path &resources, const std::string &rule) {
+        static void ProtocolOpening(const HWND parent, const std::filesystem::path &resources, const std::string &rule) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
             LobbySession session; session.interactive_games = true;
@@ -299,7 +299,7 @@ namespace tenhou {
                 const_cast<LobbySnapshot &>(view.client_->snapshot()) = snapshot;
                 view.OnGameEvent(message, snapshot); view.Update(snapshot);
             };
-            auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            auto require = [](const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             receive({"UN", {{"dan", "11,0,0,0"}}});
             receive({"VGO", {{"rule", rule}, {"table", "opening-check"}}});
             const bool sichuan = rule == "sichuan-bloodbattle";
@@ -311,7 +311,7 @@ namespace tenhou {
                 {"scores", "50000,50000,50000,50000"}, {"hand0", "0,4,8,12,16,20,24,28,32,36,40,44,48"},
                 {"hidden0", "13"}, {"hidden1", "13"}, {"hidden2", "13"}, {"hidden3", "13"},
                 {"actions", sichuan ? "exchange:0,4,8;exchange:4,8,12" : "discard:0;discard:4"}};
-            const auto button = [&](int id) -> std::optional<TableActionButton> {
+            const auto button = [&](const int id) -> std::optional<TableActionButton> {
                 for (const auto &item: view.Buttons())
                     if (item.id == id) return item;
                 return std::nullopt;
@@ -411,7 +411,7 @@ namespace tenhou {
             }
             view.Disconnect();
         }
-        static void Run(HWND parent, const std::filesystem::path &resources) {
+        static void Run(const HWND parent, const std::filesystem::path &resources) {
             LobbyView view(parent, resources / "presentation-test.ini", [](const std::string &) {});
             view.ConfigureArtwork(resources, 1440); view.sequencer_.set_sound_enabled(false); view.Show(true);
             LobbySnapshot snapshot; snapshot.variant_active = true; snapshot.phase = LobbyPhase::Game;
@@ -427,7 +427,7 @@ namespace tenhou {
                 const_cast<LobbySnapshot &>(view.client_->snapshot()) = snapshot;
                 view.OnGameEvent({tag, {}}, snapshot); view.Update(snapshot);
             };
-            auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+            auto require = [](const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             receive("VGO"); receive("PREPARE"); receive("VSTATE");
             require(view.sequencer_.opening().Active() && view.sequencer_.start_barrier() && view.sequencer_.displayed().game.events == 1,
                 "Variant initial snapshot deadlocked behind PREPARE");
@@ -478,8 +478,8 @@ namespace tenhou {
         }
     };
     struct SettlementPresentationCheck {
-        static void Run(HWND parent) {
-            auto require = [](bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
+        static void Run(const HWND parent) {
+            auto require = [](const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); };
             SettlementView result(parent); result.SetAnimationEnabled(false); result.SetSoundEnabled(false);
             SettlementState state; SettlementReceipt win; win.generic = true; win.who = win.from = 0;
             win.entries = {{"清一色"}}; auto second = win; second.who = second.from = 1;
@@ -545,7 +545,7 @@ namespace tenhou {
     };
 }
 namespace {
-    void Check(bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
+    void Check(const bool ok, const char *message) { if (!ok) throw std::runtime_error(message); }
     void Geometry(const std::filesystem::path &resources) {
         TableArtwork art; art.Load(resources, 1440);
         ReplayState state; state.initialized = state.variant = true;
@@ -596,7 +596,7 @@ namespace {
                   "Draw interpolated between native ticks");
             const auto &trail = art.GetFlight(*flying.flight, true).image;
             unsigned peak = 0;
-            for (std::size_t i = 3; i < trail.bgra.size(); i += 4) peak = std::max(peak, unsigned(trail.bgra[i]));
+            for (std::size_t i = 3; i < trail.bgra.size(); i += 4) peak = std::max(peak, static_cast<unsigned>(trail.bgra[i]));
             const auto terminal = draw.Frame(draw.duration - 1).back();
             Check(peak > 20 && peak < 90 && terminal.flight && terminal.x == terminal.flight->landing_x &&
                   terminal.y == terminal.flight->landing_y && !draw.Frame(draw.duration).back().flight,
@@ -626,12 +626,12 @@ namespace {
                   "North extraction lost its four-copy flight");
         }
     }
-    void Settlement(HWND parent) {
+    void Settlement(const HWND parent) {
         SettlementState state; SettlementReceipt receipt;
         receipt.generic = true; receipt.who = receipt.from = 0; receipt.fan = 3;
         receipt.entries = {{"清一色"}, {"根×1"}}; state.receipts = {receipt};
         SettlementView result(parent); std::vector<unsigned> sounds;
-        result.SetSoundPlayer([&](unsigned id) { sounds.push_back(id); });
+        result.SetSoundPlayer([&](const unsigned id) { sounds.push_back(id); });
         result.SetSoundEnabled(true);
         result.Set(state, {}, false); result.Show(true);
         const auto window = GetDlgItem(parent, 5400);
@@ -782,8 +782,8 @@ namespace {
                 if (IntersectRect(&intersection, &rect, &target))
                     for (LONG y = intersection.top; y < intersection.bottom; ++y)
                         for (LONG x = intersection.left; x < intersection.right; ++x) {
-                            const auto a = (std::size_t(y - rect.top) * im.image.width + x - rect.left) * 4 + 3;
-                            const auto b = (std::size_t(y - target.top) * image.image.width + x - target.left) * 4 + 3;
+                            const auto a = (static_cast<std::size_t>(y - rect.top) * im.image.width + x - rect.left) * 4 + 3;
+                            const auto b = (static_cast<std::size_t>(y - target.top) * image.image.width + x - target.left) * 4 + 3;
                             if (im.image.bgra[a] > 32 && image.image.bgra[b] > 32) opaque_overlap = true;
                         }
                 if (opaque_overlap) throw std::runtime_error("Full wall direction=" + std::to_string(tile.direction) +
@@ -866,7 +866,7 @@ namespace {
         result.Show(false);
     }
 
-    void MultiResolutionArtworkAndScalingCheck(HWND parent, const std::filesystem::path &resources) {
+    void MultiResolutionArtworkAndScalingCheck(const HWND parent, const std::filesystem::path &resources) {
         // 1. Verify original [STATUS] SCREENSIZE parsing & 4-tier auto selection
         Check(ParseScreenSizeSetting("") == 0 && ParseScreenSizeSetting("default") == 0, "Auto screen size parse failed");
         Check(ParseScreenSizeSetting("1024x768") == 1024 && ParseScreenSizeSetting("1440x1080") == 1440 &&
@@ -905,7 +905,7 @@ namespace {
         state.players[0].drawn_tile = 135;
         state.players[0].flowers = {136};
 
-        const auto render_tier = [&](D2DTableRenderer &renderer, int canvas_w, int vw, int vh) -> std::vector<std::uint8_t> {
+        const auto render_tier = [&](D2DTableRenderer &renderer, const int canvas_w, const int vw, const int vh) -> std::vector<std::uint8_t> {
             BITMAPINFO bi{};
             bi.bmiHeader = {sizeof(BITMAPINFOHEADER), vw, -vh, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
             HDC dc = CreateCompatibleDC(nullptr);
@@ -964,7 +964,7 @@ namespace {
         (void) parent;
     }
 }
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     HWND parent = nullptr;
     ULONG_PTR gdiplus = 0;
     try {

@@ -5,7 +5,7 @@
 namespace tenhou {
     // FUN_0047a... WM_LBUTTONDBLCLK / WM_RBUTTONUP: pass takes precedence
     // when its original button is present; otherwise use the currently drawn tile.
-    inline std::size_t PreferenceShortcut(const ClientPreferences &preferences, bool double_click,
+    inline std::size_t PreferenceShortcut(const ClientPreferences &preferences, const bool double_click,
                                           const OnlineState &state, const ActionSnapshot &actions) {
         constexpr auto none = static_cast<std::size_t>(-1);
         if (!actions.enabled || !actions.pending.empty() || !state.initialized || state.ended || state.awaiting_context)

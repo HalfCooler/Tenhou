@@ -2,8 +2,8 @@
 #include <stdexcept>
 
 namespace tenhou {
-    void PaintWall(Gdiplus::Graphics &graphics, TableArtwork &artwork, const ReplayState &state, bool red,
-                   unsigned placed, bool include_near) {
+    void PaintWall(Gdiplus::Graphics &graphics, TableArtwork &artwork, const ReplayState &state, const bool red,
+                   const unsigned placed, const bool include_near) {
         std::vector<PositionedTile> scene;
         for (const auto &tile: BuildWallScene(state, placed)) {
             if (!include_near && tile.direction == 0) continue;

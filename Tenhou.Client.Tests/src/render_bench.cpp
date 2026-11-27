@@ -38,7 +38,7 @@ namespace {
 
     struct HostWindow {
         HWND hwnd = nullptr;
-        HostWindow(int w, int h) {
+        HostWindow(const int w, const int h) {
             WNDCLASSEXW wc{sizeof(wc)};
             wc.lpfnWndProc = DefWindowProcW;
             wc.hInstance = GetModuleHandleW(nullptr);
@@ -49,7 +49,7 @@ namespace {
             if (!hwnd) throw std::runtime_error("Cannot create benchmark host window");
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-        void Resize(int w, int h) {
+        void Resize(const int w, const int h) {
             SetWindowPos(hwnd, nullptr, -32000, -32000, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
         }
         ~HostWindow() {
@@ -61,7 +61,7 @@ namespace {
         HDC dc = nullptr;
         HBITMAP bitmap = nullptr;
         HGDIOBJ old = nullptr;
-        OffscreenDc(int w, int h) {
+        OffscreenDc(const int w, const int h) {
             dc = CreateCompatibleDC(nullptr);
             BITMAPINFO info{};
             info.bmiHeader = {sizeof(BITMAPINFOHEADER), w, -h, 1, 32, BI_RGB, 0, 0, 0, 0, 0};
@@ -143,7 +143,7 @@ namespace {
         std::size_t hud_hits = 0;
     };
 
-    double Percentile(std::vector<double> sorted, double p) {
+    double Percentile(std::vector<double> sorted, const double p) {
         if (sorted.empty()) return 0;
         const double idx = p * static_cast<double>(sorted.size() - 1);
         const auto lo = static_cast<std::size_t>(std::floor(idx));
@@ -154,7 +154,7 @@ namespace {
 
     enum class Scenario { Static, HoverCountdown, Flight };
 
-    const char *ScenarioName(Scenario s) {
+    const char *ScenarioName(const Scenario s) {
         switch (s) {
             case Scenario::Static: return "static";
             case Scenario::HoverCountdown: return "hover_cd";
@@ -163,7 +163,7 @@ namespace {
         return "?";
     }
 
-    std::vector<TableActionButton> MakeButtons(int w, int h, int canvas_w, int frame_idx, Scenario scenario) {
+    std::vector<TableActionButton> MakeButtons(const int w, const int h, const int canvas_w, const int frame_idx, const Scenario scenario) {
         const auto dest = FitNativeCanvasBounds({0, 0, w, h}, canvas_w);
         const int bw = 140, bh = 44;
         const int y = dest.bottom - 140;
@@ -218,7 +218,7 @@ namespace {
         std::vector<double> samples;
         samples.reserve(static_cast<std::size_t>(measured_frames));
 
-        auto run_frame = [&](int idx) {
+        auto run_frame = [&](const int idx) {
             TableInteraction inter;
             inter.automatic = {true, false, false, false};
             if (scenario == Scenario::HoverCountdown) {
@@ -271,7 +271,7 @@ namespace {
         return summary;
     }
 
-    void PrintRow(const char *backend, int w, int h, Scenario s, const BenchSummary &r) {
+    void PrintRow(const char *backend, const int w, const int h, const Scenario s, const BenchSummary &r) {
         std::cout << std::left << std::setw(12) << backend
                   << std::setw(11) << (std::to_string(w) + "x" + std::to_string(h))
                   << std::setw(10) << ScenarioName(s)

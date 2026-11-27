@@ -90,8 +90,8 @@ namespace tenhou {
         enum class HoverEffect { None, Schedule, Redraw };
         enum class CertificatePhase { Opening, Ready, Closing, Finished };
 
-        void BeginMove(std::uint64_t now) { move_at_ = now + kMoveDelay; }
-        bool MoveReady(std::uint64_t now) const { return now >= move_at_; }
+        void BeginMove(const std::uint64_t now) { move_at_ = now + kMoveDelay; }
+        bool MoveReady(const std::uint64_t now) const { return now >= move_at_; }
 
         HoverEffect Hover(int slot, std::uint64_t now);
         void ClearRules();

@@ -63,7 +63,7 @@ namespace tenhou {
         return kPages;
     }
 
-    const SettingsPageDescriptor *FindSettingsPage(SettingsPageId id) {
+    const SettingsPageDescriptor *FindSettingsPage(const SettingsPageId id) {
         for (const auto &page: SettingsSchemaPages()) {
             if (page.id == id) return &page;
         }
@@ -110,7 +110,7 @@ namespace tenhou {
         return kModes;
     }
 
-    int SettingsStore::ClampRange(int value, int min_v, int max_v) {
+    int SettingsStore::ClampRange(const int value, const int min_v, const int max_v) {
         return std::clamp(value, min_v, max_v);
     }
 
@@ -118,20 +118,20 @@ namespace tenhou {
         return ClientPreferences::Load(config_);
     }
 
-    void SettingsStore::SaveTileAppearance(std::array<int, 3> rgb, int shadow) const {
+    void SettingsStore::SaveTileAppearance(const std::array<int, 3> rgb, const int shadow) const {
         const char *keys[]{"TileRed", "TileGreen", "TileBlue"};
         for (unsigned i = 0; i < 3; ++i)
             WritePreferenceInt(config_, "REBUILD", keys[i], ClampRange(rgb[i], 0, 256));
         WritePreferenceInt(config_, "RESOURCE", "HAI_SDW", ClampRange(shadow, 0, 10));
     }
 
-    void SettingsStore::ApplyTilePreset(std::size_t preset_index) const {
+    void SettingsStore::ApplyTilePreset(const std::size_t preset_index) const {
         const auto &presets = SettingsTilePresets();
         if (preset_index >= presets.size()) throw std::out_of_range("Invalid tile preset index");
         SaveTileAppearance(presets[preset_index].rgb, presets[preset_index].shadow);
     }
 
-    void SettingsStore::SetCenterPanelHidden(bool hidden) const {
+    void SettingsStore::SetCenterPanelHidden(const bool hidden) const {
         auto prefs = ClientPreferences::Load(config_);
         prefs.flags = (prefs.flags & ~0x2000u) | (hidden ? 0x2000u : 0u);
         WritePreferenceInt(config_, "STATUS", "FLAGS0", static_cast<int>(prefs.flags));
@@ -144,7 +144,7 @@ namespace tenhou {
         WritePreference(config_, "RESOURCE", "BG_SRC", source.empty() ? nullptr : source.c_str());
     }
 
-    void SettingsStore::ApplyBackgroundPreset(std::size_t preset_index) const {
+    void SettingsStore::ApplyBackgroundPreset(const std::size_t preset_index) const {
         const auto &presets = SettingsBackgroundPresets();
         if (preset_index >= presets.size()) throw std::out_of_range("Invalid background preset index");
         std::array<std::string, 10> lhsv;
@@ -157,11 +157,11 @@ namespace tenhou {
         return ClampRange(PreferenceInt(config_, "RESOURCE", "SE_NOVOICE", previous), 0, 2);
     }
 
-    void SettingsStore::SaveSoundMode(int mode) const {
+    void SettingsStore::SaveSoundMode(const int mode) const {
         WritePreferenceInt(config_, "RESOURCE", "SE_NOVOICE", ClampRange(mode, 0, 2));
     }
 
-    void SettingsStore::SaveSoundVolume(int volume) const {
+    void SettingsStore::SaveSoundVolume(const int volume) const {
         WritePreferenceInt(config_, "RESOURCE", "SE_VOL", ClampRange(volume, 0, 100));
     }
 
@@ -169,15 +169,15 @@ namespace tenhou {
         return ClampRange(PreferenceInt(config_, "RESOURCE", "BGM_VOL", 100), 0, 200);
     }
 
-    void SettingsStore::SaveMusicMasterVolume(int volume) const {
+    void SettingsStore::SaveMusicMasterVolume(const int volume) const {
         WritePreferenceInt(config_, "RESOURCE", "BGM_VOL", ClampRange(volume, 0, 200));
     }
 
-    int SettingsStore::LoadMusicTrackVolume(std::string_view key) const {
+    int SettingsStore::LoadMusicTrackVolume(const std::string_view key) const {
         return ClampRange(PreferenceInt(config_, "RESOURCE", MusicOption(std::string(key)), 60), 0, 200);
     }
 
-    void SettingsStore::SaveMusicTrackVolume(std::string_view key, int volume) const {
+    void SettingsStore::SaveMusicTrackVolume(const std::string_view key, const int volume) const {
         WritePreferenceInt(config_, "RESOURCE", MusicOption(std::string(key)), ClampRange(volume, 0, 200));
     }
 
@@ -203,7 +203,7 @@ namespace tenhou {
         return "default";
     }
 
-    bool SettingsStore::SaveScreenSize(std::string_view value) const {
+    bool SettingsStore::SaveScreenSize(const std::string_view value) const {
         const char *canonical = "default";
         for (const auto &preset: SettingsScreenSizePresets()) {
             if (value == preset.value) {
@@ -229,11 +229,11 @@ namespace tenhou {
         WritePreference(config_, "STATUS", "FULLSCREENSIZE", text.c_str());
     }
 
-    void SettingsStore::SaveHiddenId(bool hidden) const {
+    void SettingsStore::SaveHiddenId(const bool hidden) const {
         WritePreference(config_, "STATUS", "HIDDENID", hidden ? "1" : nullptr);
     }
 
-    void SettingsStore::SaveOtherFlag(int legacy_control_id, bool checked) const {
+    void SettingsStore::SaveOtherFlag(const int legacy_control_id, const bool checked) const {
         auto prefs = ClientPreferences::Load(config_);
         prefs.SetChecked(legacy_control_id, checked);
         WritePreferenceInt(config_, "STATUS", "FLAGS0", static_cast<int>(prefs.flags));

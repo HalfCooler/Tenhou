@@ -11,7 +11,7 @@ namespace tenhou {
     namespace {
         [[noreturn]] void Fail(const char *text) { throw std::runtime_error(std::string("Online action: ") + text); }
 
-        int AttributeNumber(const NetworkMessage &m, const char *key, int fallback = -1) {
+        int AttributeNumber(const NetworkMessage &m, const char *key, const int fallback = -1) {
             const auto it = m.attributes.find(key);
             if (it == m.attributes.end()) return fallback;
             int n = -1;
@@ -20,11 +20,11 @@ namespace tenhou {
             return n;
         }
 
-        std::string One(const char *tag, const char *attr, int value) {
+        std::string One(const char *tag, const char *attr, const int value) {
             return std::string("<") + tag + " " + attr + "=\"" + std::to_string(value) + "\" />";
         }
 
-        bool Groups(std::array<int, 34> &counts, int remaining) {
+        bool Groups(std::array<int, 34> &counts, const int remaining) {
             int i = 0;
             while (i < 34 && !counts[i]) ++i;
             if (i == 34) return remaining == 0;
@@ -48,7 +48,7 @@ namespace tenhou {
             return false;
         }
 
-        bool Complete(std::array<int, 34> counts, int melds) {
+        bool Complete(std::array<int, 34> counts, const int melds) {
             int total = 0, pairs = 0;
             for (int n: counts) {
                 total += n;
@@ -76,7 +76,7 @@ namespace tenhou {
             return false;
         }
 
-        std::vector<int> Waits(const std::vector<int> &hand, int melds, const std::vector<int> &locked = {}) {
+        std::vector<int> Waits(const std::vector<int> &hand, const int melds, const std::vector<int> &locked = {}) {
             std::array < int, 34 > counts{};
             for (int tile: hand) ++counts[tile / 4];
             std::array < int, 34 > unavailable{};
@@ -93,7 +93,7 @@ namespace tenhou {
             return waits;
         }
 
-        std::vector<int> Without(std::vector<int> hand, int tile) {
+        std::vector<int> Without(std::vector<int> hand, const int tile) {
             const auto it = std::find(hand.begin(), hand.end(), tile);
             if (it == hand.end()) Fail("tile absent from hand");
             hand.erase(it);
@@ -107,7 +107,7 @@ namespace tenhou {
                    (tag.size() == 1 || (tag[1] >= '0' && tag[1] <= '9'));
         }
 
-        bool KuikaeForbidden(int discard, int called, int chi_low = -1) {
+        bool KuikaeForbidden(const int discard, const int called, const int chi_low = -1) {
             if (discard == called) return true;
             if (chi_low < 0 || discard / 9 != called / 9) return false;
             return (called == chi_low && discard == chi_low + 3) ||
@@ -115,7 +115,7 @@ namespace tenhou {
         }
     }
 
-    void OnlineActions::Offer(const OnlineState &s, unsigned hint) {
+    void OnlineActions::Offer(const OnlineState &s, const unsigned hint) {
         auto &choices = snapshot.choices;
         choices.clear();
         const auto add = [&](std::string kind, std::vector<int> tiles, std::vector<std::string> messages) {
@@ -198,7 +198,7 @@ namespace tenhou {
             // Original standard sanma button 0xFB1 sends <N type="10" />; self-hosted servers accept hai.
             if ((hint & 128) && (s.type & 16) && p.draw_pending) {
                 if (official) {
-                    if (std::any_of(hand.begin(), hand.end(), [&](int tile) {
+                    if (std::any_of(hand.begin(), hand.end(), [&](const int tile) {
                         return tile / 4 == 30 && (!p.reach || tile == p.drawn_tile);
                     }))
                         add("nuki", {}, {"<N type=\"10\" />"});
@@ -234,7 +234,7 @@ namespace tenhou {
                                 if (b / 4 == needs[1]) {
                                     // At least one post-call discard must survive kuikae restrictions.
                                     const auto rest = Without(Without(hand, a), b);
-                                    const bool playable = std::any_of(rest.begin(), rest.end(), [&](int t) {
+                                    const bool playable = std::any_of(rest.begin(), rest.end(), [&](const int t) {
                                         return !KuikaeForbidden(t / 4, kind, low);
                                     });
                                     if (playable) add("chi", {a, b}, {
@@ -306,7 +306,7 @@ namespace tenhou {
         Offer(after, hint);
     }
 
-    std::vector<std::string> OnlineActions::Submit(std::uint64_t revision, std::size_t index) {
+    std::vector<std::string> OnlineActions::Submit(const std::uint64_t revision, const std::size_t index) {
         if (!snapshot.enabled) Fail("interactive mode is disabled");
         if (!snapshot.pending.empty()) Fail("waiting for server confirmation");
         if (revision != snapshot.revision) Fail("stale action revision");

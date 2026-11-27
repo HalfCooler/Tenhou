@@ -47,7 +47,7 @@ namespace tenhou {
         const std::vector<int> &raised() const { return raised_; }
         void ClearRaised() { raised_.clear(); }
 
-        void SetDrawEndSlots(unsigned slots) { draw_end_slots_ = slots; }
+        void SetDrawEndSlots(const unsigned slots) { draw_end_slots_ = slots; }
         unsigned draw_end_slots() const { return draw_end_slots_; }
 
         std::pair<int, int> ActionAnchor(const OnlineState &online, const TileGeometryCatalog &geometry);

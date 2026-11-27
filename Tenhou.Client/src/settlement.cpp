@@ -30,7 +30,7 @@ namespace tenhou {
         return entry;
     }
 
-    SettlementDisplayEntry ResolveSettlementEntry(const SettlementEntry &entry, std::string_view rule) {
+    SettlementDisplayEntry ResolveSettlementEntry(const SettlementEntry &entry, const std::string_view rule) {
         const auto normalized = ParseSettlementEntry(entry.name);
         const auto *pattern = FindTextRulePattern(rule, normalized.name);
         const int count = entry.count > 1 ? entry.count : normalized.count;
@@ -47,7 +47,7 @@ namespace tenhou {
         using Attributes = std::map<std::string, std::string>;
         [[noreturn]] void Fail(const std::string &message) { throw std::runtime_error("Settlement: " + message); }
 
-        int Integer(const std::string &text, int low, int high) {
+        int Integer(const std::string &text, const int low, const int high) {
             int value = 0;
             const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
             if (text.empty() || parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() || value < low ||
@@ -56,8 +56,8 @@ namespace tenhou {
             return value;
         }
 
-        std::vector<int> List(const Attributes &a, const std::string &key, int low, int high, std::size_t limit,
-                              bool required = false) {
+        std::vector<int> List(const Attributes &a, const std::string &key, const int low, const int high, const std::size_t limit,
+                              const bool required = false) {
             const auto found = a.find(key);
             if (found == a.end()) {
                 if (required) Fail("missing " + key);
@@ -77,7 +77,7 @@ namespace tenhou {
             return values;
         }
 
-        int Number(const Attributes &a, const std::string &key, int high) {
+        int Number(const Attributes &a, const std::string &key, const int high) {
             const auto value = List(a, key, 0, high, 1, true);
             return value.front();
         }
@@ -114,7 +114,7 @@ namespace tenhou {
             out << ']';
         }
 
-        std::string Tiles(const std::vector<int> &values, bool red) {
+        std::string Tiles(const std::vector<int> &values, const bool red) {
             std::string result;
             for (int tile: values) {
                 auto label = TileLabel(tile);
@@ -125,7 +125,7 @@ namespace tenhou {
             return result;
         }
 
-        std::string Seat(int seat, const std::array<std::string, 4> &names) {
+        std::string Seat(const int seat, const std::array<std::string, 4> &names) {
             return "Seat " + std::to_string(seat) + (names[seat].empty() ? "" : "  " + names[seat]);
         }
     }
@@ -289,14 +289,14 @@ namespace tenhou {
         state = std::move(next);
     }
 
-    std::optional<TextKey> SettlementYakuKey(int id) {
+    std::optional<TextKey> SettlementYakuKey(const int id) {
         // The protocol's contiguous IDs have the same order as the original table.
         if (id >= 0 && id < 55)
             if (const auto *text = FindTextByOrigin(481 + id)) return text->key;
         return std::nullopt;
     }
 
-    std::string SettlementYakuName(int id) {
+    std::string SettlementYakuName(const int id) {
         if (const auto key = SettlementYakuKey(id)) return std::string(TextUtf8(*key));
         static constexpr std::string_view ancient[]{
             "燕返", "杠振", "十二落抬", "五门齐", "三连刻", "一色三同顺", "一筒摸月", "九筒摸鱼",
@@ -325,7 +325,7 @@ namespace tenhou {
         });
         if (riichi && std::none_of(yaku.begin(), yaku.end(), [](const SettlementYaku &y) { return y.id == 53; })) yaku.
                 push_back({53, 0});
-        const auto rank = [](int id) {
+        const auto rank = [](const int id) {
             if (id == 1 || id == 21) return 0; // Riichi / double riichi.
             if (id >= 2 && id <= 6) return 1; // Ippatsu, chankan, rinshan, haitei, houtei.
             return id == 53 ? 3 : 2;
@@ -337,7 +337,7 @@ namespace tenhou {
     }
 
     void ValidateSettlementDisclosure(const SettlementReceipt &r, const ReplayState &table) {
-        const auto validate = [&](const std::vector<int> &hand, int seat, int winning_tile) {
+        const auto validate = [&](const std::vector<int> &hand, const int seat, const int winning_tile) {
             auto expected = table.players[seat].hand;
             const bool hidden = std::find(expected.begin(), expected.end(), -1) != expected.end();
             if (winning_tile >= 0 && r.who != r.from) expected.push_back(winning_tile);
@@ -377,8 +377,8 @@ namespace tenhou {
                    : "Draw" + (r.reason.empty() ? std::string() : " | " + r.reason);
     }
 
-    std::string SettlementText(const SettlementState &s, std::size_t selection, const std::array<std::string, 4> &names,
-                               bool red, bool totals) {
+    std::string SettlementText(const SettlementState &s, const std::size_t selection, const std::array<std::string, 4> &names,
+                               const bool red, const bool totals) {
         std::ostringstream out;
         if (selection == s.receipts.size() && s.has_final) {
             out << "MATCH RESULTS | supplied scores / points\r\n";

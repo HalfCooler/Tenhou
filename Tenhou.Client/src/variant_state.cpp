@@ -12,14 +12,14 @@ namespace tenhou {
             const auto it = f.find(key);
             return it == f.end() ? fallback : it->second;
         }
-        int Number(const std::string &text, int low, int high) {
+        int Number(const std::string &text, const int low, const int high) {
             int n = 0;
             const auto read = std::from_chars(text.data(), text.data() + text.size(), n);
             if (read.ec != std::errc() || read.ptr != text.data() + text.size() || n < low || n > high)
                 throw std::runtime_error("Invalid variant number");
             return n;
         }
-        std::vector<std::string> Split(const std::string &text, char separator) {
+        std::vector<std::string> Split(const std::string &text, const char separator) {
             std::vector<std::string> result;
             if (text.empty()) return result;
             std::size_t start = 0;
@@ -33,7 +33,7 @@ namespace tenhou {
             }
             return result;
         }
-        std::vector<int> Numbers(const std::string &text, int low, int high, std::size_t limit, bool unique = true) {
+        std::vector<int> Numbers(const std::string &text, const int low, const int high, const std::size_t limit, const bool unique = true) {
             std::vector<int> result;
             for (const auto &part: Split(text, ',')) {
                 const int n = Number(part, low, high);
@@ -156,7 +156,7 @@ namespace tenhou {
             if (!p.hand.empty() && p.hand.size() != static_cast<std::size_t>(p.hidden)) throw std::runtime_error("Inconsistent variant hand");
             p.deal_hand = Numbers(Get(f, "deal" + id), 0, tile_max, 13);
             if (f.count("deal" + id) && (p.deal_hand.size() != 13 ||
-                !std::all_of(p.deal_hand.begin(), p.deal_hand.end(), [&](int tile) {
+                !std::all_of(p.deal_hand.begin(), p.deal_hand.end(), [&](const int tile) {
                     return std::find(p.hand.begin(), p.hand.end(), tile) != p.hand.end();
                 }))) throw std::runtime_error("Invalid variant deal order");
             p.drawn = Number(Get(f, "drawn" + id, "-1"), -1, tile_max);
@@ -208,7 +208,7 @@ namespace tenhou {
     }
 
     std::vector<OnlineAction> ParseVariantActions(const std::string &encoded, const std::string &table,
-                                                 std::uint64_t window, int tile_limit) {
+                                                 const std::uint64_t window, const int tile_limit) {
         std::vector<OnlineAction> result;
         const std::map<std::string, std::pair<std::string, std::size_t>> kinds{{"discard", {"打出", 1}}, {"exchange", {"换三张", 3}},
             {"dingque", {"定缺", 1}}, {"pon", {"碰", 2}}, {"chi", {"吃", 2}}, {"open_kan", {"明杠", 3}},
@@ -288,7 +288,7 @@ namespace tenhou {
         return event;
     }
 
-    std::vector<VariantEvent> VariantEventCursor::Consume(const VariantState &state, bool recovering) {
+    std::vector<VariantEvent> VariantEventCursor::Consume(const VariantState &state, const bool recovering) {
         std::vector<VariantEvent> result;
         resynchronized = !aligned || recovering || state.event_seq < applied ||
             (state.event_seq > applied && (state.events.empty() || state.events.front().seq > applied + 1));

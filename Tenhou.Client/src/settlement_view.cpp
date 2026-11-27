@@ -1,7 +1,9 @@
 #include "settlement_view.hpp"
+#include "window_layout.hpp"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 namespace tenhou {
@@ -14,7 +16,7 @@ namespace tenhou {
         }
     }
 
-    SettlementView::SettlementView(HWND parent) {
+    SettlementView::SettlementView(const HWND parent) {
         WNDCLASSEXW wc{sizeof(wc)};
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.lpfnWndProc = Procedure;
@@ -56,7 +58,7 @@ namespace tenhou {
         if (font_) DeleteObject(font_);
     }
 
-    void SettlementView::InvalidateBackdrop(bool release) {
+    void SettlementView::InvalidateBackdrop(const bool release) {
         backdrop_valid_ = false;
         if (!release) return;
         if (backdrop_old_ && backdrop_dc_) SelectObject(backdrop_dc_, backdrop_old_);
@@ -101,23 +103,23 @@ namespace tenhou {
         if (effects.confirm_finished && confirm_handler_) confirm_handler_();
     }
 
-    void SettlementView::SetSoundEnabled(bool enabled) {
+    void SettlementView::SetSoundEnabled(const bool enabled) {
         ApplyEffects(sequencer_.SetSoundEnabled(enabled, GetTickCount64()));
     }
 
-    void SettlementView::SetAnimationEnabled(bool enabled) {
+    void SettlementView::SetAnimationEnabled(const bool enabled) {
         ApplyEffects(sequencer_.SetAnimationEnabled(enabled, GetTickCount64()));
     }
 
-    void SettlementView::SetConfirmEnabled(bool enabled) {
+    void SettlementView::SetConfirmEnabled(const bool enabled) {
         ApplyEffects(sequencer_.SetConfirmEnabled(enabled, GetTickCount64()));
     }
 
-    void SettlementView::SetContinuation(bool available) {
+    void SettlementView::SetContinuation(const bool available) {
         ApplyEffects(sequencer_.SetContinuation(available, GetTickCount64()));
     }
 
-    void SettlementView::Configure(const std::filesystem::path &directory, int width) {
+    void SettlementView::Configure(const std::filesystem::path &directory, const int width) {
         display_artwork_.Configure(directory, width);
         directory_ = directory;
         canvas_ = width;
@@ -129,7 +131,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void SettlementView::Show(bool visible) {
+    void SettlementView::Show(const bool visible) {
         const bool opening = visible && !sequencer_.visible();
         if (!visible && peeking_) {
             peeking_ = false;
@@ -142,11 +144,13 @@ namespace tenhou {
         if (opening && host_visible) SetFocus(ok_);
     }
 
-    void SettlementView::Move(RECT r) {
+    void SettlementView::Move(const RECT r) const
+    {
         MoveWindow(window_, r.left, r.top, std::max(1L, r.right - r.left), std::max(1L, r.bottom - r.top), TRUE);
     }
 
-    void SettlementView::Capture(HDC dc) {
+    void SettlementView::Capture(HDC dc) const
+    {
         if (!IsWindowVisible(window_)) return;
         POINT origin{};
         ClientToScreen(GetParent(window_), &origin);
@@ -158,7 +162,7 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-    void SettlementView::Set(const SettlementState &s, const std::array<std::string, 4> &names, bool red) {
+    void SettlementView::Set(const SettlementState &s, const std::array<std::string, 4> &names, const bool red) {
         SettlementEffects effects;
         if (!sequencer_.SetState(s, names, red, GetTickCount64(), effects)) return;
         InvalidateBackdrop();
@@ -175,7 +179,7 @@ namespace tenhou {
         ApplyEffects(effects);
     }
 
-    void SettlementView::SetRoundFinished(bool finished) {
+    void SettlementView::SetRoundFinished(const bool finished) {
         ApplyEffects(sequencer_.SetRoundFinished(finished, GetTickCount64()));
     }
 
@@ -185,7 +189,8 @@ namespace tenhou {
         ApplyEffects(sequencer_.SelectReceipt(index, GetTickCount64()));
     }
 
-    void SettlementView::UpdateText() {
+    void SettlementView::UpdateText() const
+    {
         const auto text = sequencer_.FormatDetailsText(resource_error_.empty());
         SetWindowTextW(details_, Wide(text).c_str());
     }
@@ -202,7 +207,7 @@ namespace tenhou {
         ApplyEffects(sequencer_.PresentationTick(GetTickCount64(), IsWindowVisible(window_) != FALSE));
     }
 
-    void SettlementView::SetContext(int dealer, int honba, int sticks) {
+    void SettlementView::SetContext(const int dealer, const int honba, const int sticks) {
         bool changed = false;
         sequencer_.SetContext(dealer, honba, sticks, changed);
         if (changed) {
@@ -250,8 +255,8 @@ namespace tenhou {
         MoveWindow(choices_, 8, 4, std::max(50L, r.right - 160), 220, TRUE);
         ShowWindow(choices_, multiple || details ? SW_SHOW : SW_HIDE);
         const auto target = Target();
-        const double unit = canvas_ == 1024 ? 1.0 : 1.4 * (double(canvas_) / 1440.0);
-        const double fit = double(target.right - target.left) / canvas_;
+        const double unit = canvas_ == 1024 ? 1.0 : 1.4 * (static_cast<double>(canvas_) / 1440.0);
+        const double fit = static_cast<double>(target.right - target.left) / canvas_;
         const int center = target.left + (target.right - target.left) / 2;
         const auto confirm = SettlementConfirmRect(sequencer_.state(), sequencer_.selected(), canvas_);
         const int x = target.left + static_cast<int>(confirm.left * fit),
@@ -287,7 +292,7 @@ namespace tenhou {
         ApplyEffects(sequencer_.ConfirmTick(GetTickCount64()));
     }
 
-    bool SettlementView::HandleKey(UINT key) {
+    bool SettlementView::HandleKey(const UINT key) {
         if (!sequencer_.visible() || !IsWindowVisible(window_)) return false;
         if (key == VK_NEXT || key == VK_PRIOR) {
             ChangePatternPage(key == VK_NEXT ? 1 : -1);
@@ -300,7 +305,7 @@ namespace tenhou {
         return false;
     }
 
-    void SettlementView::ChangePatternPage(int step) {
+    void SettlementView::ChangePatternPage(const int step) {
         ApplyEffects(sequencer_.ChangePatternPage(step, GetTickCount64()));
     }
 
@@ -428,12 +433,21 @@ namespace tenhou {
             }
             for (const auto &item: scene.images) {
                 const auto &im = display_artwork_.Get(item.id);
+                const auto logical = display_artwork_.LogicalSize(item.id);
+                const double ui_ratio = canvas_ == 1024 ? 1.0 : static_cast<double>(canvas_) / 1440.0;
+                const int draw_w = std::max(1, static_cast<int>(std::lround(
+                    (logical.width > 0 ? logical.width * ui_ratio : im.width) * item.scale)));
+                const int draw_h = std::max(1, static_cast<int>(std::lround(
+                    (logical.height > 0 ? logical.height * ui_ratio : im.height) * item.scale)));
                 Gdiplus::Bitmap bitmap(im.width, im.height, im.width * 4, PixelFormat32bppARGB,
                                        const_cast<BYTE *>(im.bgra.data()));
-                if (graphics.DrawImage(&bitmap, item.x, item.y,
-                                       static_cast<int>(im.width * item.scale),
-                                       static_cast<int>(im.height * item.scale)) != Gdiplus::Ok)
-                    throw std::runtime_error("Cannot paint settlement image");
+                const auto prev_mode = graphics.GetInterpolationMode();
+                if (im.width != draw_w || im.height != draw_h)
+                    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+                const auto status = graphics.DrawImage(&bitmap, Gdiplus::Rect(item.x, item.y, draw_w, draw_h),
+                                                       0, 0, im.width, im.height, Gdiplus::UnitPixel);
+                graphics.SetInterpolationMode(prev_mode);
+                if (status != Gdiplus::Ok) throw std::runtime_error("Cannot paint settlement image");
             }
             for (const auto &item: scene.text) {
                 if (!item.visible || !item.spans.empty() || item.entrance <= 0) continue;
@@ -493,7 +507,7 @@ namespace tenhou {
                                static_cast<float>(target.right - target.left),
                                static_cast<float>(target.bottom - target.top)),
                 sd, GetDpiForWindow(window_));
-            const double to_ui = scene.width > 1440 ? 1440.0 / double(scene.width) : 1.0;
+            const double to_ui = scene.width > 1440 ? 1440.0 / static_cast<double>(scene.width) : 1.0;
             for (const auto &item: scene.text) {
                 if (!item.visible || item.spans.empty()) continue;
                 auto scaled_item = item;
@@ -539,12 +553,12 @@ namespace tenhou {
         }
     }
 
-    void SettlementView::SetPeekEnabled(bool enabled) {
+    void SettlementView::SetPeekEnabled(const bool enabled) {
         peek_enabled_ = enabled;
         if (!enabled) Peek(false);
     }
 
-    void SettlementView::Peek(bool down) {
+    void SettlementView::Peek(const bool down) {
         if (down && !peek_enabled_) return;
         if (peeking_ == down || !sequencer_.visible()) return;
         peeking_ = down;
@@ -558,7 +572,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    LRESULT CALLBACK SettlementView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    LRESULT CALLBACK SettlementView::Procedure(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *self = reinterpret_cast<SettlementView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<SettlementView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -609,7 +623,7 @@ namespace tenhou {
             }
             if (message == WM_PAINT) {
                 try {
-                    self->paint_buffer_.Paint(window, [&](HDC dc) { self->Paint(dc); });
+                    self->paint_buffer_.Paint(window, [&](const HDC dc) { self->Paint(dc); });
                 } catch (const std::exception &) {
                 }
                 return 0;

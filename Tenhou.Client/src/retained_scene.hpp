@@ -6,23 +6,23 @@
 #include <sstream>
 
 namespace tenhou {
-    inline bool Overlaps(RECT a, RECT b) {
+    inline bool Overlaps(const RECT a, const RECT b) {
         RECT intersection{};
         return IntersectRect(&intersection, &a, &b) != FALSE;
     }
 
-    inline void ClipGraphics(Gdiplus::Graphics &graphics, RECT rect) {
+    inline void ClipGraphics(Gdiplus::Graphics &graphics, const RECT rect) {
         graphics.SetClip(Gdiplus::Rect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top));
     }
 
     // Include the GDI+ boundary pixel when restoring the old and new positions.
-    inline RECT TileBounds(const PositionedTile &placed, int width, int height) {
+    inline RECT TileBounds(const PositionedTile &placed, const int width, const int height) {
         RECT bounds{placed.x - 2, placed.y - 2, placed.x + width + 2, placed.y + height + 2};
         if (placed.flight) for (const auto &offset: placed.flight->offsets) {
-            bounds.left = std::min(bounds.left, LONG(placed.x + offset.x - 2));
-            bounds.top = std::min(bounds.top, LONG(placed.y + offset.y - 2));
-            bounds.right = std::max(bounds.right, LONG(placed.x + offset.x + width + 2));
-            bounds.bottom = std::max(bounds.bottom, LONG(placed.y + offset.y + height + 2));
+            bounds.left = std::min(bounds.left, static_cast<LONG>(placed.x + offset.x - 2));
+            bounds.top = std::min(bounds.top, static_cast<LONG>(placed.y + offset.y - 2));
+            bounds.right = std::max(bounds.right, static_cast<LONG>(placed.x + offset.x + width + 2));
+            bounds.bottom = std::max(bounds.bottom, static_cast<LONG>(placed.y + offset.y + height + 2));
         }
         return bounds;
     }
@@ -30,7 +30,7 @@ namespace tenhou {
     inline std::vector<std::size_t> TableFlightOrder(const std::vector<PositionedTile> &scene) {
         std::vector<std::size_t> order;
         for (std::size_t i = 0; i < scene.size(); ++i) if (scene[i].flight) order.push_back(i);
-        const auto depth = [&](std::size_t index) {
+        const auto depth = [&](const std::size_t index) {
             const auto &flight = *scene[index].flight;
             return flight.landing_x + flight.landing_y + std::min(0, flight.offsets[0].x) +
                    std::min(0, flight.offsets[0].y);
@@ -39,8 +39,8 @@ namespace tenhou {
         return order;
     }
 
-    inline void PaintTableFlights(Gdiplus::Graphics &graphics, RECT region,
-                                  const std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red) {
+    inline void PaintTableFlights(Gdiplus::Graphics &graphics, const RECT region,
+                                  const std::vector<PositionedTile> &scene, TableArtwork &artwork, const bool red) {
         for (const auto index: TableFlightOrder(scene)) {
             const auto &placed = scene[index];
             const auto &flight = *placed.flight;
@@ -78,7 +78,7 @@ namespace tenhou {
     // bound with the selected canvas; fall back to a full frame for complex damage.
     class DirtyRegions {
     public:
-        DirtyRegions(int width, int height) : width_(width), height_(height) {
+        DirtyRegions(const int width, const int height) : width_(width), height_(height) {
         }
 
         void Add(RECT rect) {
@@ -143,7 +143,7 @@ namespace tenhou {
             std::array<const void *, 3> shadows{};
         };
 
-        void SetReferenceRendering(bool enabled) {
+        void SetReferenceRendering(const bool enabled) {
             reference_ = enabled;
             Invalidate();
         }
@@ -155,9 +155,9 @@ namespace tenhou {
 
         template<class Backdrop, class Foreground>
         void Render(HDC target, int width, RECT destination,
-                    const std::vector<PositionedTile> &scene, TableArtwork &artwork, bool red,
+                    const std::vector<PositionedTile> &scene, TableArtwork &artwork, const bool red,
                     const std::string &backdrop_key, const std::string &metadata, Backdrop background,
-                    Foreground foreground, RECT overlay = {},
+                    Foreground foreground, const RECT overlay = {},
                     const std::vector<unsigned> &appearances = {}, const std::vector<RECT> &metadata_regions = {},
                     const std::vector<RECT> &atomic_layers = {}, const std::vector<Damage> &damage = {},
                     const FinalScene *final_scene = nullptr) {

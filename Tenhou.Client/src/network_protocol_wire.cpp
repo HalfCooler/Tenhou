@@ -15,9 +15,9 @@ namespace tenhou {
     using protocol_detail::Letter;
 
     namespace {
-        bool Space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
-        bool Name(char c) { return Letter(c) || Digit(c) || c == '-' || c == '.' || c == ':'; }
-        void ValidateUtf8(std::string_view value) {
+        bool Space(const char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; }
+        bool Name(const char c) { return Letter(c) || Digit(c) || c == '-' || c == '.' || c == ':'; }
+        void ValidateUtf8(const std::string_view value) {
             for (std::size_t i = 0; i < value.size();) {
                 const auto b0 = static_cast<unsigned char>(value[i]);
                 if (b0 < 0x80) {
@@ -54,7 +54,7 @@ namespace tenhou {
             }
         }
 
-        void AppendUtf8(std::string &out, std::uint32_t cp) {
+        void AppendUtf8(std::string &out, const std::uint32_t cp) {
             if (cp < 0x80) {
                 out.push_back(static_cast<char>(cp));
             } else if (cp < 0x800) {
@@ -124,13 +124,13 @@ namespace tenhou {
         return out;
     }
 
-    NetworkMessage ParseNetworkMessage(const std::string &xml, bool official_server) {
+    NetworkMessage ParseNetworkMessage(const std::string &xml, const bool official_server) {
         if (xml.empty() || xml.size() > kNetworkMessageLimit) Fail("Empty or oversized network message");
         Validate(xml);
         NetworkMessage message;
         std::size_t p = 0;
         auto spaces = [&] { while (p < xml.size() && Space(xml[p])) ++p; };
-        auto expect = [&](char c) { if (p == xml.size() || xml[p++] != c) Fail("Malformed protocol XML"); };
+        auto expect = [&](const char c) { if (p == xml.size() || xml[p++] != c) Fail("Malformed protocol XML"); };
         auto name = [&] {
             const auto start = p;
             if (p == xml.size() || !Letter(xml[p])) Fail("Invalid protocol XML name");
@@ -180,7 +180,7 @@ namespace tenhou {
         return message;
     }
 
-    std::vector<std::string> NetworkFramer::Feed(const char *bytes, std::size_t count) {
+    std::vector<std::string> NetworkFramer::Feed(const char *bytes, const std::size_t count) {
         std::vector<std::string> messages;
         for (std::size_t i = 0; i < count; ++i) {
             if (bytes[i] == '\0') {
@@ -197,7 +197,7 @@ namespace tenhou {
     }
 
     std::string AuthenticationResponse(const std::string &challenge) {
-        if (challenge.empty() || challenge.size() > 128 || !std::all_of(challenge.begin(), challenge.end(), [](char c) {
+        if (challenge.empty() || challenge.size() > 128 || !std::all_of(challenge.begin(), challenge.end(), [](const char c) {
             return Letter(c) || Digit(c) || c == '-' || c == '.';
         }))
             Fail("Invalid authentication token");
@@ -265,7 +265,7 @@ namespace tenhou {
         return result;
     }
 
-    ServerErrorNotice FormatServerError(int code, const std::string &wire_text) {
+    ServerErrorNotice FormatServerError(const int code, const std::string &wire_text) {
         if (!wire_text.empty()) {
             ValidateUtf8(wire_text);
             return {"Error", wire_text, true};
@@ -311,7 +311,7 @@ namespace tenhou {
         }
     }
 
-    const char *LobbyPhaseName(LobbyPhase phase) {
+    const char *LobbyPhaseName(const LobbyPhase phase) {
         switch (phase) {
             case LobbyPhase::Disconnected: return "Disconnected";
             case LobbyPhase::Resolving: return "Resolving";
@@ -336,7 +336,7 @@ namespace tenhou {
         out << '"';
         for (unsigned char c: value) {
             if (c == '"' || c == '\\') out << '\\' << c;
-            else if (c < 32) out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << unsigned(c);
+            else if (c < 32) out << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned>(c);
             else out << c;
         }
         out << '"';

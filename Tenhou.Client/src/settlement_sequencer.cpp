@@ -14,7 +14,7 @@ namespace tenhou {
     }
 
     bool SettlementSequencer::SetState(const SettlementState &s, const std::array<std::string, 4> &names,
-                                       bool red, std::uint64_t now_ms, SettlementEffects &out) {
+                                       const bool red, const std::uint64_t now_ms, SettlementEffects &out) {
         if (SettlementJson(state_) == SettlementJson(s) && state_.red_tiles == s.red_tiles &&
             names_ == names && red_ == red)
             return false;
@@ -35,7 +35,7 @@ namespace tenhou {
         return true;
     }
 
-    void SettlementSequencer::SetContext(int dealer, int honba, int sticks, bool &changed) {
+    void SettlementSequencer::SetContext(const int dealer, const int honba, const int sticks, bool &changed) {
         if (dealer_ == dealer && honba_ == honba && sticks_ == sticks) {
             changed = false;
             return;
@@ -46,7 +46,7 @@ namespace tenhou {
         changed = true;
     }
 
-    SettlementEffects SettlementSequencer::SetVisible(bool visible, std::uint64_t now_ms, bool window_visible) {
+    SettlementEffects SettlementSequencer::SetVisible(const bool visible, const std::uint64_t now_ms, const bool window_visible) {
         SettlementEffects effects;
         const bool opening = visible && !visible_;
         const bool changed = visible != visible_;
@@ -63,14 +63,14 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SetSoundEnabled(bool enabled, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SetSoundEnabled(const bool enabled, const std::uint64_t now_ms) {
         SettlementEffects effects;
         sound_enabled_ = enabled;
         if (!enabled && !animation_enabled_) effects.Merge(CancelPresentation(now_ms));
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SetAnimationEnabled(bool enabled, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SetAnimationEnabled(const bool enabled, const std::uint64_t now_ms) {
         SettlementEffects effects;
         animation_enabled_ = enabled;
         if (!enabled && !sound_enabled_) effects.Merge(CancelPresentation(now_ms));
@@ -79,7 +79,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SetConfirmEnabled(bool enabled, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SetConfirmEnabled(const bool enabled, const std::uint64_t now_ms) {
         SettlementEffects effects;
         if (confirm_enabled_ != enabled) {
             confirm_enabled_ = enabled;
@@ -89,7 +89,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SetContinuation(bool available, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SetContinuation(const bool available, const std::uint64_t now_ms) {
         SettlementEffects effects;
         if (continuation_ != available) {
             continuation_ = available;
@@ -99,7 +99,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SetRoundFinished(bool finished, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SetRoundFinished(const bool finished, const std::uint64_t now_ms) {
         SettlementEffects effects;
         if (finished && !round_finished_ && !state_.receipts.empty() && state_.receipts.front().generic) {
             effects.Merge(SelectReceipt(0, now_ms));
@@ -110,7 +110,7 @@ namespace tenhou {
         return effects;
     }
 
-    void SettlementSequencer::SetPaused(bool paused, std::uint64_t now_ms) {
+    void SettlementSequencer::SetPaused(const bool paused, const std::uint64_t now_ms) {
         if (paused && !paused_at_) paused_at_ = now_ms;
         else if (!paused && paused_at_) {
             if (confirm_deadline_) confirm_deadline_ += now_ms - paused_at_;
@@ -118,7 +118,7 @@ namespace tenhou {
         }
     }
 
-    SettlementEffects SettlementSequencer::SelectReceipt(std::size_t index, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SelectReceipt(const std::size_t index, const std::uint64_t now_ms) {
         SettlementEffects effects;
         const auto count = ChoiceCount();
         selected_ = count ? std::min(index, count - 1) : 0;
@@ -130,7 +130,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::ChangePatternPage(int step, std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::ChangePatternPage(const int step, const std::uint64_t now_ms) {
         SettlementEffects effects;
         if (Animating() || selected_ >= state_.receipts.size()) return effects;
         const int pages = static_cast<int>(SettlementPatternPages(state_.receipts[selected_]));
@@ -164,14 +164,15 @@ namespace tenhou {
         return totals_revealed_ && shown_yaku_ >= YakuCount() && shown_tiles_ >= PreviewTiles() * 2 && !UraPending();
     }
 
-    void SettlementSequencer::ArmPresentationTimer(SettlementEffects &effects) {
+    void SettlementSequencer::ArmPresentationTimer(SettlementEffects &effects) const
+    {
         effects.presentation_timer_ms = 0u;
         if (Complete() || selected_ >= state_.receipts.size()) return;
         const auto &r = state_.receipts[selected_];
         effects.presentation_timer_ms = r.who < 0 ? 80u : 10u;
     }
 
-    SettlementEffects SettlementSequencer::CancelPresentation(std::uint64_t now_ms, bool keep_countdown) {
+    SettlementEffects SettlementSequencer::CancelPresentation(const std::uint64_t now_ms, const bool keep_countdown) {
         SettlementEffects effects;
         effects.presentation_timer_ms = 0u;
         if (!keep_countdown) {
@@ -193,7 +194,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::Present(std::uint64_t now_ms, bool window_visible) {
+    SettlementEffects SettlementSequencer::Present(const std::uint64_t now_ms, const bool window_visible) {
         SettlementEffects effects = CancelPresentation(now_ms);
         if (!visible_ || !window_visible) return effects;
         confirm_ready_ = true;
@@ -225,7 +226,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::PresentationTick(std::uint64_t now_ms, bool window_visible) {
+    SettlementEffects SettlementSequencer::PresentationTick(const std::uint64_t now_ms, const bool window_visible) {
         SettlementEffects effects;
         if (paused_at_) return effects;
         if (!visible_ || !window_visible || selected_ >= state_.receipts.size()) {
@@ -280,7 +281,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::SyncCountdown(std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::SyncCountdown(const std::uint64_t now_ms) {
         SettlementEffects effects;
         const auto pages = CurrentPatternPages();
         const bool next = (continuation_ && !state_.has_final && pattern_page_ + 1 >= pages &&
@@ -305,7 +306,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::ConfirmTick(std::uint64_t now_ms) {
+    SettlementEffects SettlementSequencer::ConfirmTick(const std::uint64_t now_ms) {
         SettlementEffects effects;
         if (paused_at_ || !visible_ || !confirm_deadline_) return effects;
         const int seconds = now_ms >= confirm_deadline_
@@ -325,7 +326,7 @@ namespace tenhou {
         return effects;
     }
 
-    SettlementEffects SettlementSequencer::Confirm(std::uint64_t now_ms, bool window_visible) {
+    SettlementEffects SettlementSequencer::Confirm(const std::uint64_t now_ms, const bool window_visible) {
         SettlementEffects effects;
         if (!visible_ || Animating() || !confirm_enabled_) return effects;
         if (selected_ < state_.receipts.size() &&
@@ -345,7 +346,7 @@ namespace tenhou {
         return effects;
     }
 
-    std::string SettlementSequencer::FormatDetailsText(bool resource_available) const {
+    std::string SettlementSequencer::FormatDetailsText(const bool resource_available) const {
         auto displayed = state_;
         for (auto &receipt: displayed.receipts) receipt.yaku = SettlementDisplayYaku(receipt);
         const bool animate = animation_enabled_ && resource_available;

@@ -5,12 +5,12 @@
 #include <string>
 
 namespace tenhou::protocol_detail {
-    inline bool Letter(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
-    inline bool Digit(char c) { return c >= '0' && c <= '9'; }
+    inline bool Letter(const char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_'; }
+    inline bool Digit(const char c) { return c >= '0' && c <= '9'; }
 
     [[noreturn]] inline void Fail(const char *message) { throw std::runtime_error(message); }
 
-    inline unsigned Integer(const std::string &value, int base = 10) {
+    inline unsigned Integer(const std::string &value, const int base = 10) {
         unsigned result = 0;
         const auto p = std::from_chars(value.data(), value.data() + value.size(), result, base);
         if (value.empty() || p.ec != std::errc() || p.ptr != value.data() + value.size())

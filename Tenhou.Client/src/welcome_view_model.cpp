@@ -5,7 +5,7 @@
 #include <charconv>
 
 namespace tenhou {
-    std::string WelcomeViewModel::Trim(std::string_view value) {
+    std::string WelcomeViewModel::Trim(const std::string_view value) {
         const auto start = value.find_first_not_of(" \t\r\n");
         if (start == std::string_view::npos) return {};
         const auto end = value.find_last_not_of(" \t\r\n");
@@ -36,8 +36,8 @@ namespace tenhou {
         if (const auto port = ParsedPort()) WritePreferenceInt(config, "REBUILD", "NativePort", static_cast<int>(port));
     }
 
-    void WelcomeViewModel::SetServer(bool official) { official_server_ = official; }
-    void WelcomeViewModel::SetGender(char gender) { gender_ = gender == 'F' ? 'F' : 'M'; }
+    void WelcomeViewModel::SetServer(const bool official) { official_server_ = official; }
+    void WelcomeViewModel::SetGender(const char gender) { gender_ = gender == 'F' ? 'F' : 'M'; }
 
     void WelcomeViewModel::SetIdentity(std::string value) {
         if (hidden_id_ && value == kMaskedIdentity) return;
@@ -50,9 +50,9 @@ namespace tenhou {
     void WelcomeViewModel::SetNickname(std::string value) { nickname_ = std::move(value); }
     void WelcomeViewModel::SetPassword(std::string value) { password_ = std::move(value); }
     void WelcomeViewModel::ClearPassword() { password_.clear(); }
-    void WelcomeViewModel::SetHiddenId(bool hidden) { hidden_id_ = hidden; }
+    void WelcomeViewModel::SetHiddenId(const bool hidden) { hidden_id_ = hidden; }
 
-    void WelcomeViewModel::SetLoginState(bool connecting, std::string status) {
+    void WelcomeViewModel::SetLoginState(const bool connecting, std::string status) {
         connecting_ = connecting;
         status_ = std::move(status);
     }
@@ -80,7 +80,7 @@ namespace tenhou {
     bool WelcomeViewModel::HasValidOfficialId() const {
         const auto id = TrimmedOfficialIdentity();
         if (id == "NoName") return true;
-        const auto alnum = [](char c) {
+        const auto alnum = [](const char c) {
             return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
         };
         return id.size() == 19 && id.compare(0, 2, "ID") == 0 && id[10] == '-' &&

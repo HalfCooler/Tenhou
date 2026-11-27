@@ -7,12 +7,12 @@
 #include <stdexcept>
 
 namespace tenhou {
-    const Image *VariantArtwork::GetSprite(unsigned id) {
+    const Image *VariantArtwork::GetSprite(const unsigned id) {
         for (const auto &sprite: kSpriteAssets) if (sprite.id == id) return Get(sprite.asset);
         return nullptr;
     }
 
-    AssetId FlowerArtwork(int entity) {
+    AssetId FlowerArtwork(const int entity) {
         static constexpr AssetId ids[]{AssetId::FlowerMei, AssetId::FlowerLan, AssetId::FlowerZhu, AssetId::FlowerJu,
             AssetId::FlowerChun, AssetId::FlowerXia, AssetId::FlowerQiu, AssetId::FlowerDong};
         if (entity < 136 || entity > 143) throw std::runtime_error("Invalid flower entity");
@@ -32,14 +32,14 @@ namespace tenhou {
         if (bitmap.GetLastStatus() != Gdiplus::Ok || !w || !h || w > 4096 || h > 4096)
             throw std::runtime_error("Invalid variant PNG: " + path.u8string());
         Image image; image.width = static_cast<int>(w); image.height = static_cast<int>(h);
-        image.bgra.resize(std::size_t(w) * h * 4);
+        image.bgra.resize(static_cast<std::size_t>(w) * h * 4);
         Gdiplus::Rect rect(0, 0, image.width, image.height);
         Gdiplus::BitmapData data{};
         if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &data) != Gdiplus::Ok)
             throw std::runtime_error("Cannot decode variant PNG");
         for (unsigned y = 0; y < h; ++y)
-            std::memcpy(image.bgra.data() + std::size_t(y) * w * 4,
-                static_cast<const BYTE *>(data.Scan0) + std::ptrdiff_t(y) * data.Stride, std::size_t(w) * 4);
+            std::memcpy(image.bgra.data() + static_cast<std::size_t>(y) * w * 4,
+                static_cast<const BYTE *>(data.Scan0) + static_cast<std::ptrdiff_t>(y) * data.Stride, static_cast<std::size_t>(w) * 4);
         bitmap.UnlockBits(&data);
         return &*images_.emplace(id, std::move(image)).first->second;
     }

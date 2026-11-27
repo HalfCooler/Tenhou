@@ -7,7 +7,7 @@
 #include <windows.h>
 
 namespace tenhou {
-    inline std::wstring Utf8ToWide(std::string_view utf8) {
+    inline std::wstring Utf8ToWide(const std::string_view utf8) {
         if (utf8.empty()) return {};
         const int length = MultiByteToWideChar(
             CP_UTF8, 0, utf8.data(), static_cast<int>(utf8.size()), nullptr, 0);
@@ -18,7 +18,7 @@ namespace tenhou {
         return result;
     }
 
-    inline std::string WideToUtf8(std::wstring_view wide) {
+    inline std::string WideToUtf8(const std::wstring_view wide) {
         if (wide.empty()) return {};
         const int length = WideCharToMultiByte(
             CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
@@ -29,7 +29,7 @@ namespace tenhou {
         return result;
     }
 
-    inline std::filesystem::path PathFromUtf8(std::string_view utf8) {
+    inline std::filesystem::path PathFromUtf8(const std::string_view utf8) {
         return std::filesystem::path(Utf8ToWide(utf8));
     }
 

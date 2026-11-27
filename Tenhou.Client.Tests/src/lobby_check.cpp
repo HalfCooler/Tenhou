@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
         std::ofstream log(directory / "client.log");
         WNDCLASSEXW wc{sizeof(wc)}; wc.hInstance = GetModuleHandleW(nullptr); wc.lpszClassName = L"TENHOU_LOBBY_CHECK";
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-        wc.lpfnWndProc = [](HWND w, UINT m, WPARAM wp, LPARAM lp) -> LRESULT {
+        wc.lpfnWndProc = [](const HWND w, const UINT m, const WPARAM wp, const LPARAM lp) -> LRESULT {
             if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
             return DefWindowProcW(w, m, wp, lp);
         };

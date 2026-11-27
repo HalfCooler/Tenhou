@@ -97,13 +97,13 @@ namespace tenhou {
         std::size_t shown_tiles() const { return shown_tiles_; }
         int yaku_entrance_frame() const { return yaku_entrance_frame_; }
 
-        void SetConfirmDeadlineForTest(std::uint64_t deadline) { confirm_deadline_ = deadline; }
+        void SetConfirmDeadlineForTest(const std::uint64_t deadline) { confirm_deadline_ = deadline; }
 
         std::string FormatDetailsText(bool resource_available) const;
         SettlementSceneParameters SceneParameters() const;
 
     private:
-        void ArmPresentationTimer(SettlementEffects &effects);
+        void ArmPresentationTimer(SettlementEffects &effects) const;
 
         SettlementState state_;
         std::array<std::string, 4> names_{};

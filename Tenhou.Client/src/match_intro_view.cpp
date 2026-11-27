@@ -17,8 +17,8 @@ namespace tenhou {
             return out;
         }
 
-        void Text(Gdiplus::Graphics &g, const std::wstring &value, float x, float y, float w, float h,
-                  float size, const wchar_t *face, Gdiplus::Color color = Gdiplus::Color(255, 255, 255, 255)) {
+        void Text(Gdiplus::Graphics &g, const std::wstring &value, const float x, const float y, const float w, const float h,
+                  const float size, const wchar_t *face, const Gdiplus::Color color = Gdiplus::Color(255, 255, 255, 255)) {
             Gdiplus::FontFamily family(face);
             Gdiplus::Font font(family.IsAvailable() ? &family : Gdiplus::FontFamily::GenericSansSerif(), size,
                                Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
@@ -32,7 +32,7 @@ namespace tenhou {
         }
     }
 
-    MatchIntroView::MatchIntroView(HWND parent, std::function<void()> finished)
+    MatchIntroView::MatchIntroView(const HWND parent, std::function<void()> finished)
         : parent_(parent), finished_(std::move(finished)) {
         const auto instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(parent, GWLP_HINSTANCE));
         WNDCLASSEXW wc{sizeof(wc)};
@@ -59,7 +59,7 @@ namespace tenhou {
         if (IsWindow(window_)) DestroyWindow(window_);
     }
 
-    void MatchIntroView::Configure(const std::filesystem::path &directory, int width) {
+    void MatchIntroView::Configure(const std::filesystem::path &directory, const int width) {
         Cancel();
         directory_ = directory;
         width_ = width;
@@ -67,7 +67,7 @@ namespace tenhou {
         artwork_.Configure(directory, width);
     }
 
-    void MatchIntroView::Move(RECT bounds) {
+    void MatchIntroView::Move(const RECT bounds) {
         bounds_ = FitNativeCanvas(bounds, width_);
         MoveWindow(window_, bounds_.left, bounds_.top, bounds_.right - bounds_.left, bounds_.bottom - bounds_.top,
                    TRUE);
@@ -83,7 +83,8 @@ namespace tenhou {
         }
     }
 
-    void MatchIntroView::Arrange() {
+    void MatchIntroView::Arrange() const
+    {
         if (!ok_) return;
         RECT r{};
         GetClientRect(window_, &r);
@@ -93,7 +94,7 @@ namespace tenhou {
                    std::max(1, static_cast<int>(55 * s)), std::max(1, static_cast<int>(21 * s)), TRUE);
     }
 
-    void MatchIntroView::Begin(const ReplayState &state, unsigned type) {
+    void MatchIntroView::Begin(const ReplayState &state, const unsigned type) {
         if (!state.initialized) return;
         Cancel();
         state_ = state;
@@ -113,7 +114,7 @@ namespace tenhou {
         InvalidateRect(window_, nullptr, FALSE);
     }
 
-    void MatchIntroView::Resume(const ReplayState &state, unsigned type) {
+    void MatchIntroView::Resume(const ReplayState &state, const unsigned type) {
         // Original SAIKAI: 004ab91f uses a blank, disabled button and does not
         // post the TAIKYOKU-only 8302 countdown. INIT/REINIT closes the popup.
         const bool beginning = !Resuming();
@@ -153,7 +154,7 @@ namespace tenhou {
         if (finished_) finished_();
     }
 
-    void MatchIntroView::PaintOk(HDC dc, RECT bounds, bool pressed) {
+    void MatchIntroView::PaintOk(const HDC dc, const RECT bounds, const bool pressed) {
         Gdiplus::Graphics g(dc);
         const int w = bounds.right - bounds.left, h = bounds.bottom - bounds.top;
         Gdiplus::LinearGradientBrush fill(Gdiplus::Point(0, 0), Gdiplus::Point(0, h),
@@ -167,7 +168,7 @@ namespace tenhou {
              h * .57f, L"Segoe UI", Gdiplus::Color(255, 20, 20, 20));
     }
 
-    void MatchIntroView::Paint(HDC dc) {
+    void MatchIntroView::Paint(const HDC dc) {
         RECT r{};
         GetClientRect(window_, &r);
         SetDCBrushColor(dc, RGB(24, 45, 44));
@@ -258,7 +259,7 @@ namespace tenhou {
         }
     }
 
-    void MatchIntroView::Capture(HDC dc) {
+    void MatchIntroView::Capture(const HDC dc) {
         if (!active_) return;
         const int saved = SaveDC(dc);
         SetViewportOrgEx(dc, bounds_.left, bounds_.top, nullptr);
@@ -275,7 +276,7 @@ namespace tenhou {
         RestoreDC(dc, saved);
     }
 
-LRESULT CALLBACK MatchIntroView::Procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK MatchIntroView::Procedure(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *self = reinterpret_cast<MatchIntroView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
             self = static_cast<MatchIntroView *>(reinterpret_cast<CREATESTRUCTW *>(lparam)->lpCreateParams);
@@ -312,7 +313,7 @@ LRESULT CALLBACK MatchIntroView::Procedure(HWND window, UINT message, WPARAM wpa
                 return 0;
             }
             if (message == WM_PAINT) {
-                self->buffer_.Paint(window, [&](HDC dc) { self->Paint(dc); });
+                self->buffer_.Paint(window, [&](const HDC dc) { self->Paint(dc); });
                 return 0;
             }
             if (message == WM_PRINTCLIENT) {
@@ -323,7 +324,7 @@ LRESULT CALLBACK MatchIntroView::Procedure(HWND window, UINT message, WPARAM wpa
         return DefWindowProcW(window, message, wparam, lparam);
     }
 
-LRESULT CALLBACK MatchIntroView::OkProcedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK MatchIntroView::OkProcedure(const HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto *self = reinterpret_cast<MatchIntroView *>(GetWindowLongPtrW(window, GWLP_USERDATA));
         if (self) {
             if (message == WM_GETDLGCODE && wparam == VK_RETURN) return DLGC_WANTALLKEYS;

@@ -60,7 +60,7 @@ namespace tenhou {
         return fx;
     }
 
-    bool ReplayTableSequencer::Start(unsigned interval_ms, std::uint64_t now_tick_ms, bool viewport_visible,
+    bool ReplayTableSequencer::Start(const unsigned interval_ms, const std::uint64_t now_tick_ms, const bool viewport_visible,
                                      ReplaySequencerEffects &out) {
         if (!session_ || session_->position() >= session_->log().events.size() || !viewport_visible) return false;
         playing_ = true;
@@ -80,9 +80,9 @@ namespace tenhou {
         return type;
     }
 
-    ReplaySequencerEffects ReplayTableSequencer::Advance(unsigned speed_interval_ms, int canvas_width,
-                                                         bool artwork_healthy, std::uint64_t now_tick_ms,
-                                                         double now_anim_ms, const GeometryLoader &load_geometry) {
+    ReplaySequencerEffects ReplayTableSequencer::Advance(const unsigned speed_interval_ms, const int canvas_width,
+                                                         const bool artwork_healthy, const std::uint64_t now_tick_ms,
+                                                         const double now_anim_ms, const GeometryLoader &load_geometry) {
         ReplaySequencerEffects fx;
         if (!session_ || session_->position() >= session_->log().events.size()) return fx;
         fx.cancel_settlement = true;
@@ -146,10 +146,10 @@ namespace tenhou {
         return fx;
     }
 
-    ReplaySequencerEffects ReplayTableSequencer::PlaybackTick(unsigned speed_interval_ms, int canvas_width,
-                                                              bool artwork_healthy, std::uint64_t now_tick_ms,
-                                                              double now_anim_ms, bool intro_active,
-                                                              bool settlement_animating, bool audio_active,
+    ReplaySequencerEffects ReplayTableSequencer::PlaybackTick(const unsigned speed_interval_ms, const int canvas_width,
+                                                              const bool artwork_healthy, const std::uint64_t now_tick_ms,
+                                                              const double now_anim_ms, const bool intro_active,
+                                                              const bool settlement_animating, const bool audio_active,
                                                               const GeometryLoader &load_geometry) {
         ReplaySequencerEffects fx;
         if (intro_active || opening_.Active() || draw_end_ticks_ ||
@@ -187,7 +187,7 @@ namespace tenhou {
         return fx;
     }
 
-    ReplaySequencerEffects ReplayTableSequencer::OpeningTick(double now_anim_ms, bool intro_active) {
+    ReplaySequencerEffects ReplayTableSequencer::OpeningTick(const double now_anim_ms, const bool intro_active) {
         ReplaySequencerEffects fx;
         if (intro_active) {
             opening_.ResumeClock(now_anim_ms);
@@ -204,7 +204,7 @@ namespace tenhou {
         return fx;
     }
 
-    ReplaySequencerEffects ReplayTableSequencer::MotionTick(double now_anim_ms) {
+    ReplaySequencerEffects ReplayTableSequencer::MotionTick(const double now_anim_ms) {
         ReplaySequencerEffects fx;
         const bool active = presentation_.Active();
         if (presentation_.Tick(now_anim_ms)) fx.logs.emplace_back("ANIMATION END");
@@ -218,7 +218,7 @@ namespace tenhou {
         return true;
     }
 
-    ReplaySequencerEffects ReplayTableSequencer::OnMatchIntroFinished(double now_anim_ms) {
+    ReplaySequencerEffects ReplayTableSequencer::OnMatchIntroFinished(const double now_anim_ms) {
         ReplaySequencerEffects fx;
         opening_.ResumeClock(now_anim_ms);
         if (start_sound_pending_) {

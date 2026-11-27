@@ -19,7 +19,7 @@ namespace tenhou {
         ~OfflineLobbyView();
 
         void ConfigureArtwork(const std::filesystem::path &resources, int canvas_width = 1440);
-        void Resize(int width, int height);
+        void Resize(int width, int height) const;
         void Show(bool visible);
         void SetServiceSnapshot(const LobbySnapshot &snapshot);
         void Capture(HDC dc);
@@ -46,14 +46,14 @@ namespace tenhou {
         void PaintViewport(HDC dc);
         void PaintPanel(HDC dc);
         void PaintCandidates(HDC dc);
-        void PaintContest(HDC dc);
-        void PaintProfile(HDC dc);
+        void PaintContest(HDC dc) const;
+        void PaintProfile(HDC dc) const;
         void PaintRules(HDC dc);
         void PaintButton(const DRAWITEMSTRUCT &item);
         void ShowMenu();
-        void ShowPractice();
+        void ShowPractice() const;
         void ShowProfileExportMenu();
-        void CopyProfileText();
+        void CopyProfileText() const;
         void SaveProfileImage();
         void ChooseProfile(bool monthly);
         void LoadProfilePreferences();

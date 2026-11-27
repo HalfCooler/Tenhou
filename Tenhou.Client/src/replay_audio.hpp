@@ -41,8 +41,8 @@ namespace tenhou {
         BackgroundMusic(const BackgroundMusic &) = delete;
         BackgroundMusic &operator=(const BackgroundMusic &) = delete;
 
-        void Select(const std::filesystem::path &path = {}, bool seek = false, double gain = 1);
-        void Stop();
+        void Select(const std::filesystem::path &path = {}, bool seek = false, double gain = 1) const;
+        void Stop() const;
         StereoLevels Levels() const;
 
     private:
@@ -73,18 +73,18 @@ namespace tenhou {
         ReplayAudio &operator=(const ReplayAudio &) = delete;
 
         void Play(unsigned id, std::shared_ptr<const SoundClip> clip, bool loop = false,
-                  double base_gain = double(.6f));
+                  double base_gain = static_cast<double>(.6f)) const;
 
         void Schedule(unsigned id, std::shared_ptr<const SoundClip> clip, unsigned delay_ms);
 
         void Poll();
 
-        void Stop();
+        void Stop() const;
 
         bool Active() const;
         std::uint64_t LastPlayedAt() const;
 
-        void SetVolumePercent(int percent);
+        void SetVolumePercent(int percent) const;
 
     private:
         struct Impl;

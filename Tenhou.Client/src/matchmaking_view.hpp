@@ -13,9 +13,9 @@ namespace tenhou {
 
         ~MatchmakingView();
 
-        void Move(RECT bounds);
+        void Move(RECT bounds) const;
 
-        void Show(bool visible);
+        void Show(bool visible) const;
 
         void Capture(HDC dc);
         void ConfigureArtwork(const std::filesystem::path &directory);
@@ -33,11 +33,11 @@ namespace tenhou {
 
         void Command(int id);
 
-        void Update();
+        void Update() const;
 
         void Paint(HDC dc);
 
-        void PaintButton(const DRAWITEMSTRUCT &item);
+        void PaintButton(const DRAWITEMSTRUCT &item) const;
 
         HWND window_ = nullptr;
         HFONT font_ = nullptr;

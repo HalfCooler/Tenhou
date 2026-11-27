@@ -7,16 +7,16 @@
 
 namespace tenhou {
     namespace {
-        unsigned U32(const Bytes &b, std::size_t n) {
+        unsigned U32(const Bytes &b, const std::size_t n) {
             if (n + 4 > b.size()) throw std::runtime_error("Truncated shadow resource");
             unsigned v = 0;
             std::memcpy(&v, b.data() + n, 4);
             return v;
         }
 
-        int I16(const Bytes &b, std::size_t n) { return static_cast<short>(U32(b, n) & 65535); }
+        int I16(const Bytes &b, const std::size_t n) { return static_cast<short>(U32(b, n) & 65535); }
         // FUN_00410920: index into the original sdw2 cache. No inferred RGB masks.
-        unsigned Slot(ShadowKey k) {
+        unsigned Slot(const ShadowKey k) {
             if (k.direction < 0 || k.direction > 3 || k.slot < 0) return 0;
             const unsigned s = static_cast<unsigned>(k.slot), d = static_cast<unsigned>(k.direction);
             switch (k.family) {
@@ -81,7 +81,7 @@ namespace tenhou {
             if (mask.width <= 0 || mask.height <= 0 || mask.width > 4096 || mask.height > 4096) throw
                     std::runtime_error("Invalid shadow dimensions");
             const auto size = U32(raw_, offset + 8), expected = static_cast<unsigned>(mask.stride * mask.height);
-            if (offset + 12 + std::uint64_t(size) > raw_.size()) throw std::runtime_error("Invalid shadow payload");
+            if (offset + 12 + static_cast<std::uint64_t>(size) > raw_.size()) throw std::runtime_error("Invalid shadow payload");
             mask.pixels = Bytes(raw_.begin() + offset + 12, raw_.begin() + offset + 12 + size);
             if (size != expected) mask.pixels = InflateZlib(mask.pixels, expected);
             if (mask.pixels.size() != expected) throw std::runtime_error("Invalid shadow stride");
@@ -99,7 +99,7 @@ namespace tenhou {
         return pack;
     }
 
-    const ShadowPack *ResolveShadowPack(const std::filesystem::path &directory, int canvas_width) {
+    const ShadowPack *ResolveShadowPack(const std::filesystem::path &directory, const int canvas_width) {
         if (canvas_width == 1440) return &ShadowPack::Embedded();
         if (directory.empty()) return nullptr;
         AssetId id = AssetId::TileShadowsSd;
@@ -121,20 +121,20 @@ namespace tenhou {
         return entry.get();
     }
 
-    const ShadowMask *ShadowPack::Get(ShadowKey key) const {
+    const ShadowMask *ShadowPack::Get(const ShadowKey key) const {
         const auto slot = Slot(key);
         if (!slot) return nullptr;
         const auto found = masks_.find(U32(raw_, slot));
         return found == masks_.end() ? nullptr : &found->second;
     }
 
-    std::array<unsigned, 258> OriginalShadowPalette(int strength) {
+    std::array<unsigned, 258> OriginalShadowPalette(const int strength) {
         std::array < unsigned, 258 > result{1, 256};
         // ASM 004179e8..f5 stores float(strength * .1f); 0046a269
         // multiplies the 4-spaced index then truncates/saturates, not opacity/10.
-        const float factor = float(std::clamp(strength, 0, 10) * double(.1f));
+        const float factor = static_cast<float>(std::clamp(strength, 0, 10) * double(.1f));
         for (unsigned i = 0; i < 256; ++i) result[i + 2] = static_cast<unsigned>(std::min(
-                                                               255, int(i * 4 * double(factor)))) << 24;
+                                                               255, static_cast<int>(i * 4 * double(factor)))) << 24;
         return result;
     }
 
@@ -184,7 +184,7 @@ namespace tenhou {
         }
 
         // O(1) flat slot index matching first-occurrence semantics of the original linear scan.
-        auto family_index = [](char f) -> int {
+        auto family_index = [](const char f) -> int {
             switch (f) {
                 case 't': return 0;
                 case 'y': return 1;
@@ -211,7 +211,7 @@ namespace tenhou {
                     wall_pos_index[d][wpos] = static_cast<int>(idx);
             }
         }
-        const auto find = [&](char f, int s, int d) -> TileShadow * {
+        const auto find = [&](const char f, const int s, const int d) -> TileShadow * {
             const int fi = family_index(f);
             if (fi >= 0 && d >= 0 && d < 4 && s >= 0 && s < kMaxSlot) {
                 const int idx = slot_index[fi][d][s];
@@ -221,7 +221,7 @@ namespace tenhou {
                 if (item.family == f && item.slot == s && item.placed.tile.direction == d) return &item;
             return nullptr;
         };
-        const auto mask = [&](const TileShadow &e, int slot, int kind) {
+        const auto mask = [&](const TileShadow &e, const int slot, const int kind) {
             return pack.Get({e.family, slot, kind, e.placed.tile.direction});
         };
         const auto aligned = [](const TileShadow &a, const TileShadow &b) { return a.dx == b.dx && a.dy == b.dy; };
@@ -273,7 +273,7 @@ namespace tenhou {
                 }
                 // At the extra eighteenth stack, project the last available
                 // neighbour masks by the same native step as the reused sprite.
-                const auto previous_mask = [&](int kind, std::shared_ptr<ShadowMask> &storage) -> const ShadowMask * {
+                const auto previous_mask = [&](const int kind, std::shared_ptr<ShadowMask> &storage) -> const ShadowMask * {
                     if (const auto *original = mask(current, previous->slot, kind)) return original;
                     const auto *source = mask(current, previous->slot - 1, kind);
                     if (!source) return nullptr;
@@ -296,25 +296,25 @@ namespace tenhou {
         return result;
     }
 
-    Image ComposeTileShadows(const std::vector<TileShadow> &scene, CanvasRect r, int strength) {
+    Image ComposeTileShadows(const std::vector<TileShadow> &scene, const CanvasRect r, const int strength) {
         Image result;
         result.width = r.right - r.left;
         result.height = r.bottom - r.top;
         if (result.width <= 0 || result.height <= 0) return result;
-        Bytes coverage(std::size_t(result.width) * result.height);
+        Bytes coverage(static_cast<std::size_t>(result.width) * result.height);
         for (const auto &item: scene) {
             if (!item.ground) continue; // Original only merges extra if base overlaps.
             for (const auto *mask: {item.ground, item.extra})
                 if (mask) {
                     const int x = mask->x + item.dx, y = mask->y + item.dy;
-                    for (int row = std::max(0, int(r.top) - y); row < std::min(mask->height, int(r.bottom) - y); ++
+                    for (int row = std::max(0, static_cast<int>(r.top) - y); row < std::min(mask->height, static_cast<int>(r.bottom) - y); ++
                          row) {
-                        int col = std::max(0, int(r.left) - x);
-                        const int end = std::min(mask->width, int(r.right) - x);
+                        int col = std::max(0, static_cast<int>(r.left) - x);
+                        const int end = std::min(mask->width, static_cast<int>(r.right) - x);
                         for (; col < end - 3; col += 4) {
-                            auto *destination = coverage.data() + std::size_t(row + y - r.top) * result.width + col + x
+                            auto *destination = coverage.data() + static_cast<std::size_t>(row + y - r.top) * result.width + col + x
                                                 - r.left;
-                            const auto *source = mask->pixels.data() + std::size_t(row) * mask->stride + col;
+                            const auto *source = mask->pixels.data() + static_cast<std::size_t>(row) * mask->stride + col;
                             unsigned a = 0, b = 0;
                             std::memcpy(&a, destination, 4);
                             std::memcpy(&b, source, 4);
@@ -327,8 +327,8 @@ namespace tenhou {
                             std::memcpy(destination, &merged, 4);
                         }
                         for (; col < end; ++col) {
-                            auto &value = coverage[std::size_t(row + y - r.top) * result.width + col + x - r.left];
-                            value = std::max(value, mask->pixels[std::size_t(row) * mask->stride + col]);
+                            auto &value = coverage[static_cast<std::size_t>(row + y - r.top) * result.width + col + x - r.left];
+                            value = std::max(value, mask->pixels[static_cast<std::size_t>(row) * mask->stride + col]);
                         }
                     }
                 }
@@ -340,22 +340,22 @@ namespace tenhou {
         return result;
     }
 
-    Image ShadeTile(const Image &image, int x, int y, const ShadowMask &mask, int strength) {
+    Image ShadeTile(const Image &image, const int x, const int y, const ShadowMask &mask, const int strength) {
         Image result = image;
         const auto palette = OriginalShadowPalette(strength);
         for (int row = std::max(0, mask.y - y); row < std::min(image.height, mask.y + mask.height - y); ++row)
             for (int col = std::max(0, mask.x - x); col < std::min(image.width, mask.x + mask.width - x); ++col) {
-                auto *pixel = result.bgra.data() + (std::size_t(row) * image.width + col) * 4;
+                auto *pixel = result.bgra.data() + (static_cast<std::size_t>(row) * image.width + col) * 4;
                 if (!pixel[3]) continue;
                 const unsigned alpha =
-                        palette[mask.pixels[std::size_t(row + y - mask.y) * mask.stride + col + x - mask.x] + 2] >> 24;
-                const double factor = 1.0 - alpha * double(1.0f / 255.0f);
-                for (unsigned c = 0; c < 3; ++c) pixel[c] = static_cast<std::uint8_t>(int(pixel[c] * factor));
+                        palette[mask.pixels[static_cast<std::size_t>(row + y - mask.y) * mask.stride + col + x - mask.x] + 2] >> 24;
+                const double factor = 1.0 - alpha * static_cast<double>(1.0f / 255.0f);
+                for (unsigned c = 0; c < 3; ++c) pixel[c] = static_cast<std::uint8_t>(static_cast<int>(pixel[c] * factor));
             }
         return result;
     }
 
-    void PaintTileShadows(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, CanvasRect region, int strength) {
+    void PaintTileShadows(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, const CanvasRect region, const int strength) {
         if (!strength) return;
         auto pixels = ComposeTileShadows(scene, region, strength);
         if (pixels.bgra.empty()) return;
@@ -373,8 +373,8 @@ namespace tenhou {
         return nullptr;
     }
 
-    const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, int strength,
-                                         int canvas_w, int canvas_h) {
+    const Image *TileShadowLayer::Raster(const std::vector<TileShadow> &scene, const int strength,
+                                         const int canvas_w, const int canvas_h) {
         if (!strength || scene.empty() || canvas_w <= 0 || canvas_h <= 0) return nullptr;
         const int kCanvasW = canvas_w, kCanvasH = canvas_h;
         const bool full_rebuild = strength_ != strength || pixels_.width != kCanvasW || pixels_.height != kCanvasH ||
@@ -500,8 +500,8 @@ namespace tenhou {
         return &pixels_;
     }
 
-    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, int strength,
-                                int canvas_w, int canvas_h) {
+    void TileShadowLayer::Paint(Gdiplus::Graphics &g, const std::vector<TileShadow> &scene, const int strength,
+                                const int canvas_w, const int canvas_h) {
         if (!Raster(scene, strength, canvas_w, canvas_h)) return;
         // RGB is identically black, hence already premultiplied for every alpha.
         Gdiplus::Bitmap bitmap(pixels_.width, pixels_.height, pixels_.width * 4, PixelFormat32bppPARGB,
@@ -511,7 +511,7 @@ namespace tenhou {
 
     std::vector<RetainedScene::Damage> TileShadowDamage(const std::vector<PositionedTile> &scene,
                                                         const std::vector<TileShadow> &shadows, TableArtwork &artwork,
-                                                        bool red) {
+                                                        const bool red) {
         std::vector<RetainedScene::Damage> result;
         for (const auto &placed: scene) {
             const auto &im = artwork.Get(placed.flight ? placed.flight->sprite : placed.tile, red).image;
